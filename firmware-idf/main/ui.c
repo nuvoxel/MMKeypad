@@ -3524,6 +3524,23 @@ static void settings_add_logo(lv_obj_t *parent)
     lv_image_set_inner_align(lg, LV_IMAGE_ALIGN_CENTER);
     lv_obj_set_size(lg, tw, LOGO_INK_H * tw / srcw);
     lv_obj_set_style_image_opa(lg, LV_OPA_80, 0);
+
+    // "Buy me a coffee" QR under the wordmark — support the project. Generated
+    // from the URL at runtime (lv_qrcode), so there is no image asset to embed.
+    static const char BMC_URL[] = "https://www.buymeacoffee.com/nuvoxel";
+    int qsz = (int)(84 * s_uiscale);
+    if (qsz < 72) qsz = 72;
+    lv_obj_t *qr = lv_qrcode_create(parent);
+    lv_qrcode_set_size(qr, qsz);
+    lv_qrcode_set_dark_color(qr, lv_color_black());
+    lv_qrcode_set_light_color(qr, lv_color_white());
+    lv_qrcode_update(qr, BMC_URL, strlen(BMC_URL));
+    lv_obj_set_style_border_color(qr, lv_color_white(), 0);   // quiet zone so it scans
+    lv_obj_set_style_border_width(qr, (int)(4 * s_uiscale), 0);
+    lv_obj_t *cap = lv_label_create(parent);
+    lv_label_set_text(cap, "Buy me a coffee");
+    lv_obj_set_style_text_font(cap, F16, 0);
+    lv_obj_set_style_text_color(cap, lv_color_hex(C_SUBTLE), 0);
 }
 
 static void setup_toggle_cb(lv_event_t *e);
