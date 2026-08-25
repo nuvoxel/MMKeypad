@@ -1,13 +1,13 @@
 /* Minimal esp_http_client over BSD sockets + mbedtls. Originally just enough
- * for art.c's album-art HTTPS GET; now also serves the nuvoxel_device client's
- * HTTPS POSTs (check-in / register / entitlement), so it supports custom
- * headers, a request body (write), and the response status code.
+ * for art.c's album-art HTTPS GET; also used by the firmware updater
+ * (fwupdate.c / nv_ota_t3.c), so it supports custom headers, a request body
+ * (write), and the response status code.
  *
- * Response header/body state is per-client (the album-art fetch and the device
- * check-in run on different threads concurrently).
+ * Response header/body state is per-client (album-art fetch and the updater can
+ * run on different threads concurrently).
  *
  * Cert verification is intentionally OFF for now (a later refinement wires a CA
- * bundle); both album art and the device API are low-value to MITM on the LAN
+ * bundle); album art and update metadata are low-value to MITM on the LAN
  * and the license itself is signature-verified offline regardless. */
 #include "esp_http_client.h"
 

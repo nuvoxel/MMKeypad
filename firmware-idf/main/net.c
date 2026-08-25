@@ -37,7 +37,7 @@ static int s_conn = -1;                  // current client socket (-1 = none)
 static SemaphoreHandle_t s_tx_mtx;       // guards s_conn for sends across tasks
 static int  s_driver_proto = 0;          // driver's protocol version from `state` (0 = unknown)
 static char s_peer_ip[16] = {0};         // the connected driver/Director's IP
-static char s_last_room[48] = {0};       // last room the driver reported (for the platform report)
+static char s_last_room[48] = {0};       // last room the driver reported
 static char s_mac[18];
 
 // ── send ────────────────────────────────────────────────────────────────────
@@ -182,48 +182,6 @@ void net_ping(void)
 
 // ── Offline relay client ────────────────────────────────────────────────────
 // A panel on an isolated network can be licensed (the driver fetches that for it)
-// but could not do the two things it has to fetch ITSELF: its cloud check-in and
-// the firmware image. These helpers borrow the Director's WAN through the driver.
-// One request is in flight at a time -- both callers are slow background tasks and
-// serialising them keeps the correlation trivial.
-static SemaphoreHandle_t s_relay_mtx;      // one relay request at a time
-static SemaphoreHandle_t s_relay_done;     // signalled by the RX task with a reply
-static volatile int      s_relay_id;       // correlation id of the in-flight request
-static char             *s_relay_body;     // response body (cloudresp)
-static size_t            s_relay_body_cap;
-static volatile int      s_relay_code;     // HTTP status, or 0 on transport failure
-static uint8_t          *s_relay_bin;      // decoded bytes (fwdata)
-static volatile int      s_relay_bin_len;
-static volatile bool     s_relay_eof;
-
-static int b64_val(char c)
-{
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
-    return -1;
-}
-
-// Decode base64 into `out`; returns bytes written, or -1 if it would overflow.
-static int b64_decode(const char *in, uint8_t *out, size_t cap)
-{
-    int acc = 0, bits = 0; size_t n = 0;
-    for (const char *p = in; *p; p++) {
-        if (*p == '=' || *p == '\n' || *p == '\r') continue;
-        int v = b64_val(*p);
-        if (v < 0) continue;
-        acc = (acc << 6) | v; bits += 6;
-        if (bits >= 8) {
-            bits -= 8;
-            if (n >= cap) return -1;
-            out[n++] = (uint8_t)((acc >> bits) & 0xFF);
-        }
-    }
-    return (int)n;
-}
-
 static void send_hello(void)
 {
     cJSON *o = cJSON_CreateObject();
@@ -237,7 +195,6 @@ static void send_hello(void)
     // this device's license / OTA from nuvoxel and push it back over this link —
     // the offline-keypad path. Sent only to the bound, trusted driver.
     cJSON_AddStringToObject(o, "hwid", device_hardware_id());
-    cJSON_AddStringToObject(o, "secret", device_secret_hex());
     cJSON_AddStringToObject(o, "sku", device_sku_id());
     // Full device manifest — model, SoC/hardware ids, display, connectivity,
     // power, capabilities — so the driver adapts to *this* device (which glass,
@@ -407,21 +364,6 @@ static void handle_state(const cJSON *d)
     if (s_cb.on_state) s_cb.on_state(&st);
 }
 
-// ── OTA ───────────────────────────────────────────────────────────────────
-// Pull + flash a firmware image from a URL (driver "Check & Update Firmware").
-// Streams {t:"ota",status,msg,pct} back so the driver can show progress, and only
-// re-flashes when the image version differs from the running one.
-static void ota_status(const char *status, const char *msg, int pct)
-{
-    cJSON *o = cJSON_CreateObject();
-    cJSON_AddStringToObject(o, "t", "ota");
-    cJSON_AddStringToObject(o, "status", status);
-    if (msg) cJSON_AddStringToObject(o, "msg", msg);
-    if (pct >= 0) cJSON_AddNumberToObject(o, "pct", pct);
-    send_obj(o);
-}
-
-
 static void handle_line(const char *line)
 {
     cJSON *d = cJSON_Parse(line);
@@ -453,54 +395,10 @@ static void handle_line(const char *line)
         cJSON *p = cJSON_CreateObject();
         cJSON_AddStringToObject(p, "t", "pong");
         send_obj(p);
-    } else if (!strcmp(ts, "cloudresp")) {
-        if (get_int(d, "id", -1) == s_relay_id) {
-            s_relay_code = get_int(d, "code", 0);
-            const cJSON *b = cJSON_GetObjectItem(d, "body");
-            if (s_relay_body && s_relay_body_cap) {
-                s_relay_body[0] = 0;
-                if (cJSON_IsString(b) && b->valuestring)
-                    snprintf(s_relay_body, s_relay_body_cap, "%s", b->valuestring);
-            }
-            xSemaphoreGive(s_relay_done);
-        }
-    } else if (!strcmp(ts, "fwdata")) {
-        if (get_int(d, "id", -1) == s_relay_id) {
-            const cJSON *b = cJSON_GetObjectItem(d, "b64");
-            s_relay_eof = cJSON_IsTrue(cJSON_GetObjectItem(d, "eof"));
-            s_relay_bin_len = -1;
-            if (cJSON_IsString(b) && b->valuestring && s_relay_bin)
-                s_relay_bin_len = b64_decode(b->valuestring, s_relay_bin, 4096);
-            xSemaphoreGive(s_relay_done);
-        }
     } else if (!strcmp(ts, "reboot")) {
         // Driver "Reboot Keypad" programming command.
         ESP_LOGW(TAG, "reboot requested by driver");
         esp_restart();
-    } else if (!strcmp(ts, "license")) {
-        // C4 driver relayed a license token (fetched from nuvoxel on our behalf,
-        // since this keypad may have no WAN). Verify + persist offline; report back.
-        const cJSON *tok = cJSON_GetObjectItem(d, "token");
-        bool ok = cJSON_IsString(tok) && tok->valuestring &&
-                  device_apply_license(tok->valuestring) == 0;
-        ESP_LOGI(TAG, "license via driver: %s", ok ? "applied" : "rejected");
-        cJSON *p = cJSON_CreateObject();
-        cJSON_AddStringToObject(p, "t", "license");
-        cJSON_AddStringToObject(p, "status", ok ? "ok" : "error");
-        send_obj(p);
-    } else if (!strcmp(ts, "ota")) {
-        // The `url` override is GONE. It let whoever was on the socket hand us an
-        // arbitrary image to flash: TLS proves only that the attacker owns their own
-        // domain, and this device does not verify the image signature, so that was
-        // unauthenticated remote code execution. The device is authoritative about
-        // where it updates from -- device_ota_check_now() does an authenticated
-        // check-in and verifies the sha256 the CLOUD reported for the build.
-        if (cJSON_GetObjectItem(d, "url"))
-            ESP_LOGW(TAG, "ignoring ota url from the link; using the authenticated cloud check");
-        {
-            ota_status("checking", "cloud", -1);
-            device_ota_check_now();
-        }
     } else if (!strcmp(ts, "sip") || !strcmp(ts, "call") || !strcmp(ts, "callcfg")) {
         // Phase-3 intercom control is multiplexed onto this :6700 link (no second
         // TCP channel). sip.c provisions/registers and bridges call control; it
@@ -792,67 +690,10 @@ static void server_task(void *arg)
     }
 }
 
-// Ask the driver to POST one of our cloud endpoints on our behalf. Returns 0 on a
-// completed exchange (check *status), <0 if the link is down or the driver never
-// answered. Blocking: called from background tasks only.
-int net_relay_post(const char *path, const char *body, char *resp, size_t cap, int *status)
-{
-    if (!s_relay_mtx || !net_connected()) return -1;
-    xSemaphoreTake(s_relay_mtx, portMAX_DELAY);
-    int rc = -1;
-    s_relay_body = resp; s_relay_body_cap = cap; s_relay_code = 0;
-    s_relay_id++;
-    cJSON *o = cJSON_CreateObject();
-    cJSON_AddStringToObject(o, "t", "cloudreq");
-    cJSON_AddNumberToObject(o, "id", s_relay_id);
-    cJSON_AddStringToObject(o, "path", path);
-    cJSON_AddStringToObject(o, "body", body ? body : "{}");
-    send_obj(o);
-    // 20s: the driver has to do a WAN round trip on a slow controller.
-    if (xSemaphoreTake(s_relay_done, pdMS_TO_TICKS(20000)) == pdTRUE) {
-        if (status) *status = s_relay_code;
-        rc = 0;
-    } else {
-        ESP_LOGW(TAG, "relay: no cloudresp for %s", path);
-    }
-    s_relay_body = NULL; s_relay_body_cap = 0;
-    xSemaphoreGive(s_relay_mtx);
-    return rc;
-}
-
-// Pull one range of the firmware image through the driver. Returns bytes written
-// (0 at EOF) or <0 on failure.
-int net_relay_fetch(const char *url, size_t off, uint8_t *out, size_t cap, bool *eof)
-{
-    if (!s_relay_mtx || !net_connected()) return -1;
-    xSemaphoreTake(s_relay_mtx, portMAX_DELAY);
-    int rc = -1;
-    s_relay_bin = out; s_relay_bin_len = -1; s_relay_eof = false;
-    s_relay_id++;
-    cJSON *o = cJSON_CreateObject();
-    cJSON_AddStringToObject(o, "t", "fwget");
-    cJSON_AddNumberToObject(o, "id", s_relay_id);
-    cJSON_AddStringToObject(o, "url", url);
-    cJSON_AddNumberToObject(o, "off", (double)off);
-    cJSON_AddNumberToObject(o, "len", (double)(cap > 4096 ? 4096 : cap));
-    send_obj(o);
-    if (xSemaphoreTake(s_relay_done, pdMS_TO_TICKS(20000)) == pdTRUE) {
-        rc = s_relay_bin_len;
-        if (eof) *eof = s_relay_eof;
-    } else {
-        ESP_LOGW(TAG, "relay: no fwdata at offset %u", (unsigned)off);
-    }
-    s_relay_bin = NULL;
-    xSemaphoreGive(s_relay_mtx);
-    return rc;
-}
-
 void net_start(uint16_t port, const net_callbacks_t *cb)
 {
     s_cb = *cb;
     s_tx_mtx = xSemaphoreCreateMutex();
-    s_relay_mtx = xSemaphoreCreateMutex();
-    s_relay_done = xSemaphoreCreateBinary();
     uint8_t mac[6];
     mmk_read_mac(mac);
     snprintf(s_mac, sizeof(s_mac), "%02X:%02X:%02X:%02X:%02X:%02X",

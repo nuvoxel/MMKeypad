@@ -2,13 +2,9 @@
  * device.h implementation for the T3 (RK3188 / Linux).
  *
  * The native counterpart of firmware-idf/main/device.c: same public contract
- * (registration / OTA / license status surfaced in the shared settings UI and
- * the `hello` handshake), but built on POSIX instead of ESP-IDF —
- *   - identity        : nv_identity_t3.c (eFuse-rooted)
- *   - check-in / OTA   : nuvoxel_device nv_client/nv_http (mbedtls TLS)
- *   - entitlement      : open build -- always valid, all features (nv_open.c)
- *   - license storage  : a flat file under /data (no NVS)
- *   - background poll   : a pthread (no FreeRTOS task)
+ * (identity + the `hello` handshake), built on POSIX instead of ESP-IDF.
+ * Identity is nv_identity_t3.c (eFuse-rooted). The open build talks to no
+ * online service, so there is no check-in, licensing, or registration here.
  */
 #define _GNU_SOURCE   // strcasestr
 #include "device.h"
@@ -33,25 +29,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-// Where the keypad phones home for registration/OTA (offline-first: never
-// required to function). Overridable at build time to match the S3.
-#define LIC_DIR  "/data/nvx"
-#define LIC_PATH LIC_DIR "/license"
-
 static nv_identity_t s_id;
-
-static struct {
-  bool have_status;      // a check-in (or register) completed at least once
-  bool registered;       // the platform recognizes this device (claimed)
-  char pairing_code[12]; // shown when unregistered, to claim it in the app
-  bool update_available;
-  char latest_version[32];
-  bool licensed; // a valid, hardware-bound license token is present
-  char tier[24];
-  char features[256];
-  bool trial;      // the current license is a time-limited trial
-  int trial_days;  // days left in the trial (0 if not on trial)
-} s_st;
 
 // ── model identity (runtime-detected) ───────────────────────────────────────
 // The T3's model is only discoverable at RUNTIME, from the kernel version string:
@@ -71,7 +49,7 @@ static struct {
 // NOTE these are NOT the orderable part numbers on the Control4 datasheet, which
 // are C4-WALL7-BL / C4-WALL7-WH / C4-WALL10-BL / C4-WALL10-WH. Those encode the
 // bezel COLOUR, which nothing on the device exposes, so we deliberately do not
-// guess one; the platform can map our model code + hardware fingerprint if it
+// guess one; the model code + hardware fingerprint disambiguate it if
 // ever needs the sales SKU.
 static bool t3_variant(int *inches, bool *tabletop) {
   struct utsname u;
@@ -142,80 +120,7 @@ static const char *device_sku(void) {
 }
 
 const char *device_hardware_id(void) { return s_id.hardware_id; }
-const char *device_secret_hex(void) { return s_id.device_secret; }
 const char *device_sku_id(void) { return device_sku(); }
-
-// Open build: no cloud enrollment. The device is always "registered" to itself.
-const char *device_reg_text(void) { return "Standalone"; }
-const char *device_pair_code(void) { return ""; }
-
-// Open build: not license-gated. Fully licensed, all features, no server.
-bool device_is_licensed(void) { return true; }
-const char *device_tier_text(void) { return "Open"; }
-bool device_has_feature(const char *name) { (void)name; return true; }
-
-// Verify a token against this device's identity + sku; update in-RAM status.
-static void license_apply_status(const char *token) {
-  nv_entitlement_t e;
-  if (nv_entitlement_verify(token, &s_id, device_sku(), &e) == NV_OK && e.valid) {
-    s_st.licensed = true;
-    snprintf(s_st.tier, sizeof(s_st.tier), "%s", e.tier);
-    snprintf(s_st.features, sizeof(s_st.features), "%s", e.features);
-    s_st.trial = e.trial;
-    s_st.trial_days = 0;
-    if (e.trial && e.exp > 0) {
-      long now = (long)time(NULL);
-      if (now > 1700000000L && e.exp > now)
-        s_st.trial_days = (int)((e.exp - now + 86399) / 86400);
-    }
-  } else {
-    s_st.licensed = false;
-    s_st.tier[0] = '\0';
-    s_st.features[0] = '\0';
-    s_st.trial = false;
-    s_st.trial_days = 0;
-  }
-}
-
-
-bool device_is_trial(void) { return s_st.licensed && s_st.trial; }
-
-const char *device_license_label(void) { return "Open build"; }
-
-// Load a stored license token from /data and verify it (offline, no network).
-static void license_load(void) {
-  FILE *f = fopen(LIC_PATH, "rb");
-  if (!f) return;
-  static char tok[1600];
-  size_t n = fread(tok, 1, sizeof(tok) - 1, f);
-  fclose(f);
-  if (n == 0) return;
-  tok[n] = '\0';
-  license_apply_status(tok);
-  fprintf(stderr, "device: license from file: %s %s\n",
-          s_st.licensed ? "valid" : "INVALID", s_st.tier);
-}
-
-// Apply a license token delivered out-of-band (settings paste / QR / C4 driver).
-// Verifies offline against the baked-in key; persists iff valid. Returns 0 ok.
-int device_apply_license(const char *token) {
-  if (!token) return -1;
-  nv_entitlement_t e;
-  if (nv_entitlement_verify(token, &s_id, device_sku(), &e) != NV_OK || !e.valid) {
-    fprintf(stderr, "device: license rejected (bad signature or binding)\n");
-    return -1;
-  }
-  mkdir(LIC_DIR, 0700);
-  FILE *f = fopen(LIC_PATH, "wb");
-  if (f) {
-    fwrite(token, 1, strlen(token), f);
-    fclose(f);
-  }
-  license_apply_status(token);
-  fprintf(stderr, "device: license applied: tier %s features [%s]\n",
-          s_st.tier, s_st.features);
-  return 0;
-}
 
 void device_init(void) {
   if (nv_identity_init(&s_id) == NV_OK) {
@@ -224,7 +129,6 @@ void device_init(void) {
   } else {
     fprintf(stderr, "device: identity init failed\n");
   }
-  license_load();
   // Model is runtime-detected (see board_name()); log it so a misdetect is
   // obvious in the boot log rather than silently mislabelling the unit.
   fprintf(stderr, "device: board=%s model=%s (%s) sku=%s\n", board_name(), model_friendly(), model_code(), device_sku());
@@ -341,11 +245,11 @@ const char *device_mac(void) { hw_detect(); return s_hw.mac; }
 const char *device_link_type(void) { hw_detect(); return s_hw.link; }
 const char *device_power_source(void) { return MMK_POWER; }
 
-/* ── Full hardware inventory for the platform check-in ("phone home") ─────────
+/* ── Full hardware inventory for the `hello` manifest ────────────────────────
  * Beta units — portables especially, and later SKU revisions — may carry
  * different touch/WiFi/panel/camera silicon than the units we've profiled. So the
  * manifest reports EVERYTHING readable at runtime (raw), plus a stable
- * fingerprint, so the platform can tell variants/revisions apart even when they
+ * fingerprint, so variants/revisions can be told apart even when they
  * share a SKU, and we can refine the model mapping server-side instead of
  * hardcoding it. All best-effort — missing bits are simply omitted. */
 
@@ -557,58 +461,10 @@ void device_manifest_to_json(cJSON *m) {
   cJSON_AddBoolToObject(caps, "touch", MMK_HAS_TOUCH);
   cJSON_AddBoolToObject(caps, "audio", MMK_HAS_AUDIO);
   cJSON_AddBoolToObject(caps, "intercom", MMK_HAS_SIP);
-
-  if (s_st.licensed && s_st.features[0])
-    cJSON_AddStringToObject(m, "features", s_st.features);
 }
 
-void device_report_to_json(cJSON *r) {
-  device_manifest_to_json(cJSON_AddObjectToObject(r, "manifest"));
-  cJSON *s = cJSON_AddObjectToObject(r, "status");
-  const char *room = net_current_room();
-  if (room[0]) cJSON_AddStringToObject(s, "room", room);
-  char ip[40] = {0};
-  net_get_ip(ip, sizeof(ip));
-  if (ip[0]) cJSON_AddStringToObject(s, "ip", ip);
-  cJSON_AddBoolToObject(s, "driverConnected", net_connected());
-  if (net_peer_ip()[0]) cJSON_AddStringToObject(s, "director", net_peer_ip());
-  cJSON_AddNumberToObject(s, "orientation", g_settings.orientation);
-  cJSON_AddNumberToObject(s, "brightness", g_settings.brightness);
-  // The rest of the panel's own settings. These change how the panel BEHAVES (which
-  // screen it rests on, how it looks, when it dims), and none of it was visible from
-  // the cloud or the driver -- the driver's properties read
-  // "Auto (device setting)", i.e. the device decides and never says what it decided.
-  // Debugging a resting-screen problem meant walking up to the panel, and on an ESP
-  // board the value lives in NVS with no way to read it back at all.
-  cJSON_AddNumberToObject(s, "theme",          g_settings.theme);
-  cJSON_AddNumberToObject(s, "layout",         g_settings.layout);
-  cJSON_AddNumberToObject(s, "bgPreset",       g_settings.bg_preset);
-  cJSON_AddNumberToObject(s, "screensaverSec", g_settings.screensaver_sec);
-  cJSON_AddNumberToObject(s, "dimBrightness",  g_settings.dim_brightness);
-  cJSON_AddNumberToObject(s, "ringerVolume",   g_settings.ringer_volume);
-  cJSON_AddBoolToObject(  s, "muted",          g_settings.muted ? 1 : 0);
-  if (s_driver_ver[0]) cJSON_AddStringToObject(s, "driverVersion", s_driver_ver);
-}
 
 void device_status_to_json(cJSON *d) {
   cJSON_AddStringToObject(d, "deviceId", s_id.hardware_id);
-  // deviceSecret is exposed here for the OFFLINE claim path (a phone reads it
-  // from this local, basic-auth'd page and claims by identity). Not public.
-  cJSON_AddStringToObject(d, "deviceSecret", s_id.device_secret);
   cJSON_AddStringToObject(d, "sku", device_sku());
-  if (s_st.have_status) {
-    cJSON_AddStringToObject(d, "reg", s_st.registered ? "registered" : "unregistered");
-    if (!s_st.registered && s_st.pairing_code[0])
-      cJSON_AddStringToObject(d, "pairCode", s_st.pairing_code);
-    cJSON_AddBoolToObject(d, "otaUpdate", s_st.update_available);
-    if (s_st.update_available && s_st.latest_version[0])
-      cJSON_AddStringToObject(d, "otaLatest", s_st.latest_version);
-  } else {
-    cJSON_AddStringToObject(d, "reg", "unknown");
-  }
-  cJSON_AddBoolToObject(d, "licensed", s_st.licensed);
-  if (s_st.licensed) {
-    cJSON_AddStringToObject(d, "tier", s_st.tier);
-    cJSON_AddStringToObject(d, "features", s_st.features);
-  }
 }

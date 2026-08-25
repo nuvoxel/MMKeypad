@@ -37,10 +37,9 @@ const esp_app_desc_t *esp_app_get_description(void) {
     static esp_app_desc_t d;
     if (d.version[0] == 0) {
         /* MMK_FW_VERSION is injected by the Makefile from firmware-idf/version.txt,
-         * the same file publish-fw.sh stamps the OTA manifest from. These MUST
-         * agree: device.c OTAs whenever manifest != current, so a hardcoded
-         * placeholder here means every check-in re-downloads the same build and
-         * exits, which init's crash-loop guard turns into a rollback to factory. */
+         * It must match the published release version (the on-screen updater
+         * compares versions), so a hardcoded placeholder here would misreport
+         * what the panel is running. */
 #ifdef MMK_FW_VERSION
         strncpy(d.version, MMK_FW_VERSION, sizeof(d.version) - 1);
 #else

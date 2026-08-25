@@ -1,8 +1,8 @@
 # Home Assistant integration — scoping
 
 Status: **proposed / not started.** This scopes a Home Assistant (HA) integration
-for the NuVoxel keypad so it can be sold and run as a direct-to-consumer HA SKU,
-sitting alongside the Control4 DriverWorks driver.
+for the NuVoxel keypad so it can run as a
+direct-to-consumer HA option, alongside the Control4 DriverWorks driver.
 
 ## Goal
 
@@ -13,8 +13,7 @@ A homeowner running Home Assistant can add a NuVoxel keypad and have it:
 3. Play HA announcements out the speaker.
 4. (Phase 3) Two-way intercom.
 
-…with the same download → flash → activate → "get on with life" flow as the C4
-path, and the same licensing (Base free, Pro trial → paid).
+…with the same download → flash → add → "get on with life" flow as the C4 path.
 
 ## Prior art & inspiration
 
@@ -27,7 +26,7 @@ Two philosophies dominate HA wall displays today:
   auto-discovers it, no custom component. Validates the hardware + the
   purpose-built-UI direction, and shows how much HA users value zero-config
   discovery. We differ in that our firmware is hand-written C/LVGL with SIP
-  intercom + our own licensing, which ESPHome can't express — but the discovery
+  intercom, which ESPHome can't express — but the discovery
   expectation is the lesson (→ approaches C/D).
 
 - **Browser kiosk (generic Lovelace dashboard).**
@@ -41,7 +40,7 @@ Two philosophies dominate HA wall displays today:
   flush-mount + "phone-free" is exactly our in-wall positioning.
 
 **Where we sit:** not a generic browser dashboard — a purpose-built media/room
-keypad with SIP intercom and device-owned licensing. So we keep the custom LVGL
+keypad with SIP intercom. So we keep the custom LVGL
 UI, expose the *device* via MQTT discovery (TouchKio-style), and bridge the
 *media_player* via a thin custom component (ESPHome-native-API-style discovery is
 noted as the future "zero-component" option). ESP boards can't run a browser, so
@@ -51,9 +50,8 @@ the kiosk approach isn't applicable to our hardware anyway.
 
 The keypad is **the server** on TCP `:6700`; it speaks its own newline-delimited
 JSON protocol ([PROTOCOL.md](PROTOCOL.md)); the *driver dials in*. The Control4
-driver is one such client (Lua, in Composer). Licensing, identity, OTA, and the
-activation gate all live **in the device**, not in the driver — the driver only
-surfaces + relays.
+driver is one such client (Lua, in Composer). Identity and OTA live **in the
+device**, not in the driver — the driver only surfaces state.
 
 That means **HA does not require a firmware rewrite.** The cleanest integration
 mirrors the C4 driver: an HA **custom component** dials the keypad's `:6700`,
@@ -74,9 +72,9 @@ to know whether the peer is Control4 or Home Assistant.
 **Recommendation — layered (D + B):**
 
 - **D. MQTT discovery for the device itself** (backlight/brightness, screen power,
-  reboot, online, room/presence, fw version, **license + trial**, and each
-  programmable **button** as an event) — the TouchKio pattern. Zero HA config,
-  HA auto-creates the entities, reuses the nuvoxel broker, and keeps the core
+  reboot, online, room/presence, fw version, and each programmable **button** as
+  an event) — the TouchKio pattern. Zero HA config, HA auto-creates the entities,
+  reuses an MQTT broker, and keeps the core
   ecosystem-agnostic (MQTT isn't HA-specific). This alone makes the keypad useful
   in HA (its buttons become triggers, its hardware becomes controls) with **no
   component to install**.
@@ -119,15 +117,8 @@ A standard HA integration (HACS-installable, later HA-core-submittable):
     `media_player` service calls; fire `button` as an HA event.
 - **`__init__.py` / entities:**
   - The keypad as an HA **device** (from its manifest: model, MAC, fw, room).
-  - A **`sensor`** (or device attributes) exposing license tier / **trial · N
-    days left** / fw version / online — sourced from the same license relay.
+  - A **`sensor`** (or device attributes) exposing fw version / online.
   - Optionally a `button`/`event` entity per programmable key.
-- **License relay** — the component has WAN, so it fetches this keypad's license
-  from nuvoxel (`POST /api/v1/fw/entitlement` with the device identity from
-  `hello`) and pushes the token down the link, exactly like the C4 driver's
-  `FetchAndPushLicense`. Needed only for keypads without their own internet; a
-  keypad that reaches the cloud licenses itself. The component also **self-
-  activates** (`POST /api/v1/driver/activate`) so HA installs show up as usage.
 - **`manifest.json`** — domain `nuvoxel_keypad`, zeroconf discovery, iot_class
   `local_push`, requirements.
 
@@ -135,7 +126,7 @@ A standard HA integration (HACS-installable, later HA-core-submittable):
 
 | Keypad protocol | Direction | Home Assistant |
 |---|---|---|
-| `hello` (mac, fw, `manifest`, hwid/secret/sku) | keypad → | device registry entry; identity for the license relay |
+| `hello` (mac, fw, `manifest`, hwid/sku) | keypad → | device registry entry; identity for binding/pinning |
 | `state` (room, power, playing, title/artist/art, volume, muted, source, sources, buttons, `driverVersion`, `proto`) | → keypad | built from the bound `media_player` attributes (`state`, `media_title`, `media_artist`, `entity_picture`, `volume_level`, `is_volume_muted`, `source`, `source_list`); `room` = area name |
 | `cmd` (play/pause/next/prev/stop/…/roomoff) | keypad → | `media_player.media_play_pause`, `media_next_track`, `media_previous_track`, `media_stop`; `roomoff` → `media_player.turn_off` (area) |
 | `vol` (level 0–100 \| dir up/down) | keypad → | `media_player.volume_set` / stepped `volume_up`/`down` |
@@ -143,18 +134,9 @@ A standard HA integration (HACS-installable, later HA-core-submittable):
 | `source` (id) | keypad → | `media_player.select_source` |
 | `button` (id) | keypad → | fire event `nuvoxel_keypad_button` (device_id, button) → automations |
 | `announce` (text, chime) | → keypad | driven by an HA automation/`tts` targeting the keypad (see below) |
-| `ota` / `license` | keypad ↔ | surface as device attributes; license relay result |
 
 Thumbs / shuffle / repeat and full source browse map to fewer HA primitives than
 C4's MSP — v1 exposes what `media_player` supports; richer browse is a later item.
-
-## Licensing — already ecosystem-agnostic
-
-No new licensing work. The keypad registers, pulls its Base/Pro-trial license,
-shows the **activation gate** when unlicensed and **"Trial (Pro) · N days left"**
-on its own screen — identical whether paired with C4, HA, or nothing. The HA
-component only *surfaces* it (a sensor) and *relays* it for offline keypads. The
-paywall stays in activation, so the freely-downloadable HA component leaks no IP.
 
 ## Announcements
 
@@ -178,8 +160,8 @@ media bridge.
 
 1. **P0 — MQTT discovery (device), no component.** Firmware MQTT client publishes
    HA discovery for: backlight/brightness (`light`/`number`), screen power
-   (`switch`), reboot (`button`), online (`binary_sensor`), room + fw + IP +
-   **license/tier + trial days** (`sensor`), and each programmable **button** as
+   (`switch`), reboot (`button`), online (`binary_sensor`), room + fw + IP
+   (`sensor`), and each programmable **button** as
    an `event`/`device_trigger`. HA auto-creates everything; the keypad's buttons
    become automation triggers and its hardware becomes HA controls with **no
    install**. Reuses the nuvoxel broker (or the user's HA Mosquitto). *~medium
@@ -192,12 +174,8 @@ media bridge.
 4. **P3 — Discovery + device linking.** mDNS `_nuvoxel._tcp` in firmware + HA
    zeroconf config_flow; tie the P0 MQTT device and the component together in the
    device registry (one HA device). *~small (firmware: add the mDNS record).*
-5. **P4 — License relay + activation.** Component fetches + pushes the license for
-   offline keypads; self-activation telemetry (already surfaced via P0 MQTT for
-   online keypads). *~small (ports the C4 relay to Python).*
-6. **P5 — Packaging.** HACS repo, docs, then submit to HA core. *Public repo — see
-   the open-source boundary.*
-7. **Phase 3 — Intercom** via external Asterisk. Independent of the above.
+5. **P4 — Packaging.** HACS repo, docs, then submit to HA core.
+6. **Phase 3 — Intercom** via external Asterisk. Independent of the above.
 
 > Note: a keypad on HA that only wants **hardware controls + button triggers**
 > (no media display) is fully served by **P0 alone** — no component. The media
@@ -214,8 +192,8 @@ media bridge.
 - **Which broker for P0:** the nuvoxel broker (we already run it) vs the user's HA
   Mosquitto add-on. Prefer configurable, default to the HA add-on for locality.
 - **Announcement UX:** documented automation (v1) vs a `notify` entity (v2).
-- **Repo:** the HA component is public (community can contribute), same boundary
-  as the driver + `nuvoxel_device`; firmware/backend/keys stay private.
+- **Repo:** the HA component is public (community can contribute), like the rest
+  of this repository.
 - **mDNS vs SDDP:** SDDP is Control4-specific; add a parallel mDNS record for HA
   zeroconf rather than making HA speak SDDP.
 - **ESPHome native API (C):** deferred, not rejected — it's the only path to a
@@ -228,4 +206,3 @@ media bridge.
   ESPHome native API (C) is deferred, not in v1.
 - No intercom through HA (external Asterisk only).
 - No full media browse (MSP-style) — `media_player` primitives only.
-- No HA-hosted licensing — licensing stays in the device + nuvoxel backend.

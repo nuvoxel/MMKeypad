@@ -2,10 +2,8 @@
  * nv_ota_open.c — open-build OTA apply for ESP-IDF.
  *
  * Downloads a firmware image over HTTPS and writes it to the inactive OTA
- * partition via esp_https_ota, then the caller restarts into it. This replaces
- * the closed component's cloud-relayed OTA; the image URL comes from the
- * on-screen updater (GitHub Releases) or a local/USB flow, never a cloud
- * manifest.
+ * partition via esp_https_ota, then restarts into it. The image URL comes from
+ * the on-screen updater (GitHub Releases); there is no cloud manifest.
  *
  * sha256 (hex, optional) is logged for now; esp_https_ota already validates the
  * image header and the app descriptor, and the transport is TLS-authenticated

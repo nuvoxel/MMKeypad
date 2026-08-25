@@ -3,8 +3,8 @@
 # Flash:  idf.py -p /dev/cu.usbmodem4101 flash monitor
 cmake_minimum_required(VERSION 3.16)
 
-# Open build: identity / entitlement / OTA are provided locally by main/
-# (nv_open.c, nv_identity_open.c, nv_ota_open.c) -- no external component tree.
+# Open build: identity and OTA-apply are provided locally by main/
+# (nv_identity_open.c, nv_ota_open.c) -- no external component tree.
 # Point EXTRA_COMPONENT_DIRS at a directory only if you add out-of-tree
 # components via NUVOXEL_COMPONENTS_DIR.
 if(DEFINED ENV{NUVOXEL_COMPONENTS_DIR})

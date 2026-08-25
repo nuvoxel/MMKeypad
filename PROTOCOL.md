@@ -44,13 +44,10 @@ the device just keeps listening.
 | `getfavorites` | —                                | Request this room's favorite tiles (device sends when the favorites grid opens) → driver replies with `favorites`. Room-level (no source id). |
 | `favorite` | `id` (str, favorite id)             | Play the favorite tile with this id. The driver resolves the play from the favorite's kind: `broadcast` → exact `SELECT_AUDIO_MEDIA`; `stream` → select the favorite's source (`DEVICE_SELECTED`, resumes that source — exact station play is navigator-gated). Legacy `mediaid` (str) instead of `id` still plays a broadcast-audio preset directly. |
 | `button` | `id` (int, programmable keypad button)  | A keypad button was tapped → driver raises the keypad-proxy action |
-| `ota`    | `status` ∈ `checking\|updating\|uptodate\|ok\|error`, `msg` (str, optional), `pct` (0–100, optional) | Firmware-update progress/result → driver's `Firmware Update Status` |
-| `license`| `status` ∈ `ok\|error`                  | Result of a driver-relayed license push → driver's `License Status` |
 | `ping`   | —                                       | Keepalive |
 
-`hello` also carries the device **identity** — `hwid` (hex), `secret` (hex HMAC),
-`sku` — so the driver (which has WAN via the Director) can fetch this keypad's
-license/OTA from nuvoxel and relay it, for keypads with no internet of their own.
+`hello` also carries the device **identity** — `hwid` (hex) and `sku` — which the
+driver pins on first connect so a spoofed announce can't swap the bound device.
 
 ### Device `manifest` (self-description)
 
@@ -67,7 +64,7 @@ serves several models (e.g. Control4 T3-7 / T3-10 / T4 / T5). Fields:
 | `soc` | `"rk3188"` | SoC family |
 | `fw` | `"t3-linux-0.1"` | firmware version |
 | `hwid` | `"ff72f3bb…"` | hardware identity (eFuse-derived on the T3) |
-| `mac` | `"00:0f:ff:81:ca:08"` | primary NIC MAC |
+| `mac` | `"00:0f:ff:xx:xx:xx"` | primary NIC MAC |
 | `driverVersion` | `"84"` | last driver version the device saw (echoed back) |
 | `display` | `{"w":1280,"h":800}` | panel dimensions |
 | `net` | `{"link":"ethernet"}` | active link: `ethernet` \| `wifi` |
@@ -80,7 +77,7 @@ Unknown manifest fields MUST be ignored (forward-compat). The driver surfaces
 
 Example:
 ```json
-{"t":"hello","mac":"00:0f:ff:81:ca:08","fw":"t3-linux-0.1","intercom":false,"hwid":"ff72f3bb3ca1f145f4daafcb","secret":"…","sku":"mmk-t3","manifest":{"sku":"mmk-t3","model":"Control4 T3-7","board":"t3-7","soc":"rk3188","fw":"t3-linux-0.1","mac":"00:0f:ff:81:ca:08","display":{"w":1280,"h":800},"net":{"link":"ethernet"},"power":{"source":"wall"},"caps":{"display":true,"touch":true,"audio":true,"intercom":false}}}
+{"t":"hello","mac":"00:0f:ff:xx:xx:xx","fw":"t3-linux-0.1","intercom":false,"hwid":"mmkxxxxxxxxxxxx","sku":"mmk-t3","manifest":{"sku":"mmk-t3","model":"Control4 T3-7","board":"t3-7","soc":"rk3188","fw":"t3-linux-0.1","mac":"00:0f:ff:xx:xx:xx","display":{"w":1280,"h":800},"net":{"link":"ethernet"},"power":{"source":"wall"},"caps":{"display":true,"touch":true,"audio":true,"intercom":false}}}
 {"t":"cmd","cmd":"playpause"}
 {"t":"vol","level":35}
 {"t":"source","id":"118"}
@@ -288,31 +285,12 @@ with a room-level `SELECT_AUDIO_DEVICE`: `DEVICE_SELECTED` to the source alone l
 the room powered OFF.
 
 
-### `license` — relay a license token (for offline keypads)
-```json
-{"t":"license","token":"nvl1.<b64url payload>.<b64url sig>"}
-```
-The driver fetches the keypad's license from nuvoxel (using the `hwid`/`secret` the
-device advertised in `hello`) and pushes it here. The device verifies the token
-**offline** against its firmware-baked public key (hardware-bound to its `hwid` +
-`sku`), persists it in NVS, and replies `{"t":"license","status":"ok|error"}`. This
-lets a keypad with no internet of its own still get licensed via the C4 driver.
-
 ### `reboot` — restart the device
 ```json
 {"t":"reboot"}
 ```
 Device reboots (`esp_restart`). Sent by the driver's `RebootDevice` programming
 command. No fields.
-
-### `ota` — check & update firmware
-```json
-{"t":"ota","url":"https://example.com/firmware/mmkeypad.bin"}
-```
-Device pulls the image over HTTPS (TLS verified via the cert bundle) and flashes it
-with `esp_https_ota`, reporting progress back as `ota` messages. It compares the new
-image's embedded version against the running one and **only re-flashes if they differ**
-(otherwise reports `status:"uptodate"`); on success it reboots into the new image.
 
 ---
 
@@ -352,11 +330,7 @@ runs if audio (ES8311) came up at boot; otherwise these messages are ignored.
 | `t`         | Fields | Meaning |
 |-------------|--------|---------|
 | `sipstate`  | `registered` (bool), `user` (str, opt) | SIP registration changed → driver's `SIP Registration` property + proxy `CURRENT_STATE`/`SIP_USERNAME_CHANGED`. |
-| `cloudreq` | `id` (int), `path` (str, `/api/v1/fw/…`), `body` (str, raw JSON) | **Offline relay.** The device asks the driver to POST one of ITS cloud endpoints on its behalf, for a panel with no route of its own. The driver authenticates as the device (it already holds `hwid`/`secret` from `hello`) and answers with `cloudresp`. `path` is constrained to the device API — the driver must not become a general-purpose proxy for whatever is on the socket. The device only sends this when its OWN request failed, so a panel with internet never uses it. |
-| `fwget` | `id` (int), `url` (str), `off` (int), `len` (int ≤ 4096) | **Offline relay.** One byte-range of a firmware image, answered with `fwdata`. The device PULLS chunk by chunk, so the transfer is flow-controlled and neither side buffers an image — the device writes each chunk straight into its OTA partition and verifies the sha256 over the whole thing before switching boot. Chunks are small because the device's line buffer is 8 KB. The driver only serves our own catalogue/blob hosts. |
 | `callctl` | `action` ∈ `mute\|door`; `on` (bool, for `mute`); `id` (str) + `remote` (str, for `door`) | On-screen call controls. `mute` reports the panel's mic-mute back up so the driver mirrors it to the proxy (`NOTIFY.Mute_Audio_Changed`) and Navigator's call UI agrees — it is the return path for `callcfg.mute`/`MUTE_CALL`. `door` fires one of the door's advertised `actions` (`id` as given in `endpoints`); Control4's intercom proxy has **no** door/relay command and `GET_DEVICE_LIST`'s `device_props` carry no relay info, so the driver raises a programming **event** (`Door Action 1`/`2`, with `LAST_DOOR_PEER` set) for the dealer to wire to a relay, lock or macro. |
-| `cloudresp` | `id` (int), `code` (int, 0 = transport failure), `body` (str), `err` (str, opt) | Reply to `cloudreq`. |
-| `fwdata` | `id` (int), `off` (int), `len` (int), `b64` (str), `eof` (bool), `err` (str, opt) | Reply to `fwget`: base64 of that range. |
 | `callstate` | `event` ∈ `incoming\|outgoing\|accepted\|ended\|rejected`, `remoteAor` (str), `session` (opt) | SIP call state → driver emits the matching `intercomproxy` notification (`INCOMING_CALL`, `CALL_ACCEPTED`, `CALL_ENDED`, …). |
 
 ```json

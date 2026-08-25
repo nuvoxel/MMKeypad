@@ -1,67 +1,39 @@
-// Device registration + OTA status via the shared nuvoxel_device client.
-// Computes the eFuse-HMAC identity at boot and, when the device has an IP,
-// best-effort checks in with the platform to learn its registration and OTA
-// status (surfaced in the settings page).
+// Device identity + self-description for the `hello` handshake and settings.
+// Open build: identity is a stable local id (device MAC); there is no online
+// service, registration, or licensing.
 #pragma once
 #include "cJSON.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
-// Compute the device identity (eFuse-HMAC). Call once early in app_main.
+// Compute the device identity (from the device MAC). Call once early in app_main.
 void device_init(void);
 
-// Spawn the best-effort cloud check-in task (safe to call before WiFi is up;
-// it waits for an IP). Call after networking/services are started.
+// Start device services after networking is up. Open build: no-op (there is no
+// online service); kept so main.c's start sequence is unchanged.
 void device_start(void);
 
-// Manual firmware check + force-update from the cloud (driver "Check & Update
-// Firmware"). One-shot; no-op if cloud check-in is disabled.
+// Trigger a firmware check. Open build: a no-op — updates come from the
+// on-screen GitHub-Releases updater (see fwupdate.c) and USB flashing.
 void device_ota_check_now(void);
 
-// Add device / registration / OTA / license fields to the settings JSON.
+// Add device identity fields to the settings JSON.
 void device_status_to_json(cJSON *d);
 
-// Apply an out-of-band license token (settings paste / QR / C4 driver). Verifies
-// offline against the baked-in key and persists to NVS iff valid. Returns 0 on success.
-int device_apply_license(const char *token);
-
-// Identity accessors (used by net.c's `hello` so the C4 driver can fetch a
-// license / claim on the device's behalf when the device has no WAN).
+// Identity accessors (used by net.c's `hello` so the driver can pin the device).
 const char *device_hardware_id(void);
-const char *device_secret_hex(void);
 const char *device_sku_id(void);
-
-// One-line status for the on-screen settings card.
-const char *device_reg_text(void);   // "Registered" | "Not registered" | "Checking…"
-const char *device_pair_code(void);  // pairing code when unregistered, else ""
-bool device_is_licensed(void);
-const char *device_tier_text(void);  // tier name when licensed, else ""
-
-// True iff the current license grants this named feature (e.g. "intercom",
-// "walkup"). Used to gate Pro capabilities — Base keypads return false even when
-// the hardware supports it. Always false when unlicensed.
-bool device_has_feature(const char *name);
-
-// Human-readable license label for the settings page:
-// "Trial (Pro) · 28 days left" | "Pro" | "Base" | "Unlicensed".
-const char *device_license_label(void);
-bool device_is_trial(void);   // current license is a trial grant
 
 // -------- device manifest (self-description) -----------------------------
 // A structured descriptor of what this unit *is* and *can do*: model/SKU,
 // SoC + hardware identifiers (MAC, chip id), firmware/protocol versions,
 // display, connectivity (wifi/ethernet), power source, and capabilities. The
 // device emits it in the `hello` handshake (so the C4 driver adapts to the
-// device instead of hardcoding per-SKU) and on platform check-in (stored on
-// the station). Family-aware: the model is resolved from SoC + panel so one
+// device instead of hardcoding per-SKU). Family-aware: the model is resolved
+// from SoC + panel so one
 // build serves several Control4 glass models (T3-7 / T3-10 / T4 / T5).
 void device_manifest_to_json(cJSON *m);
-
-// The full check-in report the device sends to the platform: the static manifest
-// plus live status (room, IP, driver connection, orientation, brightness). Stored
-// on the station so the fleet UI shows what/where each keypad is.
-void device_report_to_json(cJSON *r);
 
 // Individual manifest fields, also surfaced on the on-screen settings page.
 const char *device_model_name(void);    // friendly model, e.g. "Control4 T3-7"

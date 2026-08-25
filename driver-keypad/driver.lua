@@ -55,10 +55,8 @@ HWID_VAR   = "NV_HWID"         -- read-only variable exposing our NuVoxel hardwa
 HWID_KEY   = "nv_hwid"         -- persisted hardwareId (see gHwidFromDevice below).
                                -- NOT always the MAC: ESP32 boards derive the hwid FROM the
                                -- MAC, but the T3 derives it from the RK3188 eFuse
-                               -- (SHA-256(efuse_val)[:12]), so a MAC here would never match
-                               -- the cloud roster and identity-match silently fell through
-                               -- to name-match. The device reports the real one in its
-                               -- manifest (mf.hwid); that value wins.
+                               -- (SHA-256(efuse_val)[:12]). The device reports the real one
+                               -- in its manifest (mf.hwid); that value wins.
 KEYPAD_BINDING = 5002 -- keypad proxy (programmable on-screen buttons + LEDs)
 BTN_LINK_BASE  = 300  -- per-button BUTTON_LINK binding id = BTN_LINK_BASE + BUTTON_ID
 -- Buttons 1..6 are declared STATICALLY in driver.xml (connections 301-306). That set is
@@ -215,7 +213,6 @@ end
 local gDeviceManifest = nil       -- device's self-described manifest (model/hw ids/connectivity/power/caps)
 local gAggWatchId = nil          -- digital-audio aggregator device currently var-watched
 local gDevHwid   = nil            -- device identity (from hello), pinned on first use
-local gDevSecret = nil
 local gDevSku    = nil
 
 -- normalize a MAC to lowercase hex, no separators. Defined up here (not beside
@@ -292,9 +289,9 @@ function OnDriverLateInit(initType)
   local ok, r = pcall(function() return C4:RoomGetId() end)
   if ok and r and r ~= 0 then gRoom = tostring(r) end
   dbg("room =", tostring(gRoom))
-  -- State now, proxy registration on the debounce: the BUTTON_LINK bindings and the
-  -- first portal pull both land moments from here and each used to force its own
-  -- re-register. EnsureButtons() makes gButtons usable immediately regardless.
+  -- State now, proxy registration on the debounce: the BUTTON_LINK bindings land
+  -- moments from here and each used to force its own re-register. EnsureButtons()
+  -- makes gButtons usable immediately regardless.
   EnsureButtons()
   ScheduleInitKeypad()
   WatchRoomVars()
@@ -395,8 +392,8 @@ function ExecuteCommand(cmd, params)
   if cmd == "NV_SET_TARGET_MAC" and params and params.mac then
     SetTargetMac(params.mac, "agent handoff"); return
   end
-  -- Agent MAC->IP handoff: the agent resolved our device's current LAN IP (cloud
-  -- roster) and pushes it so we bind directly — bypassing unreliable multicast SDDP.
+  -- A caller can hand us our device's current LAN IP so we bind directly —
+  -- bypassing unreliable multicast SDDP.
   if cmd == "NV_SET_TARGET_IP" and params and params.ip then
     SetTargetIp(params.ip, "agent handoff"); return
   end
@@ -446,9 +443,9 @@ function ExecuteCommand(cmd, params)
     local n = tonumber(params and params.Button)
     local b = n and gButtons and gButtons[n]
     local hex = NamedHex(params and params.Color)
-    -- Programming owns this at runtime; it is not a dealer edit, so it is NOT mirrored
-    -- to the portal. It does change a fingerprinted field though, so drop the cached
-    -- print or a later portal edit back to the old value would look like a no-op.
+    -- Programming owns this at runtime; it is not a dealer edit. It does change a
+    -- fingerprinted field though, so drop the cached print or a later edit back to the
+    -- old value would look like a no-op.
     if b and hex then b.color = hex; gKpPrintInvalidate(); PushState(true); dbg("SetButtonLEDColor", n, hex) end
   elseif cmd == "SetButtonLabel" then
     local n = tonumber(params and params.Button)
@@ -592,7 +589,7 @@ function ForgetDevice()
   pcall(function() C4:NetDisconnect(BINDING_NET, DEVICE_PORT) end)
   gConnected = false
   gTargetMac, gHwidFromDevice = nil, false
-  gDevHwid, gDevSecret, gDevSku = nil, nil, nil
+  gDevHwid, gDevSku = nil, nil
   for _, k in ipairs({ HWID_KEY, MAC_KEY, IP_KEY }) do
     pcall(function() C4:PersistSetValue(k, "") end)
   end
@@ -615,10 +612,10 @@ function SetTargetMac(mac, why)
   StartSddp()
 end
 
--- Agent MAC->IP handoff. The device reports its own LAN IP to the cloud on check-in;
--- the agent reads it from the roster and pushes it here. We point binding 6001 at it
--- and dial directly — the reliable path when multicast SDDP discovery is flaky (WiFi
--- APs / cross-subnet). Idempotent: no-op if we're already connected to this IP.
+-- MAC->IP handoff. A caller (e.g. right after AddDevice) can hand us the device's
+-- current LAN IP; we point binding 6001 at it and dial directly — the reliable path
+-- when multicast SDDP discovery is flaky (WiFi APs / cross-subnet). Idempotent:
+-- no-op if we're already connected to this IP.
 function SetTargetIp(ip, why)
   ip = tostring(ip or ""):match("^%s*(%d+%.%d+%.%d+%.%d+)%s*$")
   if not ip then return end
@@ -814,28 +811,6 @@ function SendAnnounce(text, chime)
   pcall(function() C4:FireEvent("Announcement Played") end)
 end
 
--- This driver's Control4 device id (0 if unavailable). Inlined because the
--- myDeviceId() helper is a local defined further down.
-local function drvControllerId()
-  local ok, id = pcall(function() return C4:GetDeviceID() end)
-  return (ok and id) or 0
-end
-
--- A stable, anonymous id for THIS driver install, generated once and persisted.
--- Not tied to any account — just so repeat check-ins are the same install.
-function DriverInstanceId()
-  local id
-  pcall(function() id = C4:PersistGetValue("nv_instance_id") end)
-  if type(id) == "string" and id ~= "" then return id end
-  -- Generate: controller id + a random suffix (telemetry-grade, not a secret).
-  local dev = drvControllerId()
-  math.randomseed((os.time() or 0) + dev)
-  local rnd = string.format("%x%x", math.random(1, 0x7fffffff), math.random(1, 0x7fffffff))
-  id = "drv-" .. tostring(dev) .. "-" .. rnd
-  pcall(function() C4:PersistSetValue("nv_instance_id", id) end)
-  return id
-end
-
 
 
 
@@ -899,7 +874,7 @@ function HandleMessage(line)
     end
     -- The keypad advertises its identity (hwid/secret/sku) on hello; we pin it on
     -- first use so a spoofed announce can't swap the device we're bound to.
-    if msg.hwid and msg.secret and msg.sku then
+    if msg.hwid and msg.sku then
       -- Pin the identity on FIRST use. SDDP cannot authenticate the peer, so a
       -- spoofed announce can get us to dial an impostor; what it must not also do
       -- is swap the identity we relay licences for. Once a hwid is known (persisted
@@ -919,7 +894,7 @@ function HandleMessage(line)
         setStatus("Wrong keypad (use Forget Device to re-pair)")
         return
       end
-      gDevHwid, gDevSecret, gDevSku = tostring(msg.hwid), tostring(msg.secret), tostring(msg.sku)
+      gDevHwid, gDevSku = tostring(msg.hwid), tostring(msg.sku)
     end
     -- `hello` is the real "device is ready" edge: it arrives after the device's app
     -- is up, whereas the TCP ONLINE edge only means the socket connected. So push the
@@ -988,8 +963,7 @@ end
 -- KNOWN LIMITATION (control4/docs-driverworks#8): a binding added AFTER driver load is
 -- created but comes up UNCONNECTED, and there is no documented API to connect it
 -- programmatically. That is fine here — a dealer connects it on Composer's Connections
--- page like any other binding — but it does block a future "portal wires up the
--- buttons for you" feature. Not solved here.
+-- page like any other binding. Not solved here.
 local BTN_BIND_KEY = "nv_btn_bindings"   -- persisted list of the binding ids we created
 
 -- Highest button index that has ever had a binding in this install. InitKeypad uses it
@@ -1108,10 +1082,8 @@ end
 --
 -- PERSISTENCE: button config lives in the driver's own persisted state; it is not
 -- mirrored into
--- C4:PersistSetValue: a local copy is a third source of truth that can only be stale,
--- and it would resurrect old labels over the portal's during the pull window — the
--- exact bug class this change removes. Revisit only if a real install shows the pull
--- gap is user-visible.
+-- C4:PersistSetValue: a local copy is a second source of truth that can only be
+-- stale. The driver's own persisted state is authoritative.
 local BTN_DEFAULT = { label = "", icon = "", color = "ffffff", tracks = true, on = false }
 
 -- Grow/shrink gButtons to the device's button count WITHOUT disturbing entries that
@@ -1153,7 +1125,7 @@ function ButtonIcon(i)
   return (p == "None") and "" or p
 end
 
--- Colors reach us as rrggbb from the proxy and as {r,g,b} from the portal; store one
+-- Colors reach us as rrggbb from the proxy; store one
 -- canonical form so the two editors can be compared for equality at all.
 function NormalizeHex(v)
   v = tostring(v or ""):gsub("^#", ""):lower()
@@ -1172,8 +1144,8 @@ end
 
 -- How many buttons this keypad has. The DEVICE decides, via its manifest caps.buttons
 -- (gMaxButtons) — not a dealer-set count. There used to be a "Buttons" property layered
--- on top, and a stale value arriving from the portal silently shrank a 6-button keypad
--- to 5 (see the note on gMaxButtons). Hardware capacity is the only honest answer.
+-- on top, and a stale value silently shrank a 6-button keypad to 5 (see the note on
+-- gMaxButtons). Hardware capacity is the only honest answer.
 --
 -- The clamp is KEYPAD_MAX (a sanity bound on binding ids), NOT the six static XML
 -- connections: those are the base set, not the ceiling — bindings past them are created
@@ -1233,9 +1205,9 @@ function ApplyManifestPropVisibility(mf)
   local maxBtn = tonumber(caps.buttons) or (hasTouch and KEYPAD_STATIC or 0)
   local hasButtons = maxBtn > 0
 
-  -- Keypad buttons: the per-button config properties are gone (Composer's native keypad
-  -- panel and the portal are the editors), so all that is left to gate here is the
-  -- section header and the shared button style.
+  -- Keypad buttons: the per-button config properties are gone (Composer's native
+  -- keypad panel is the editor), so all that is left to gate here is the section
+  -- header and the shared button style.
   show("Keypad Buttons", hasButtons)
 
   -- On-screen views / chrome: touch devices only.
@@ -1314,7 +1286,7 @@ end
 --
 -- The 400ms timer alone did not do it: the triggers are not a burst. A live trace showed
 -- four InitKeypad runs across ten seconds — LateInit, then the BUTTON_LINK bindings
--- settling, then two portal-settings pulls arriving off the network seconds apart. No
+-- settling, then further init triggers arriving seconds apart. No
 -- debounce window covers that without also making a genuine edit feel broken. So the
 -- debounce only handles same-tick storms and InitKeypad's fingerprint handles the rest:
 -- a redundant trigger now costs one string compare. EVERY caller goes through here
@@ -1385,9 +1357,9 @@ function HandleButtonLink(n, idBinding, cmd, p)
   end
 end
 
--- Composer's NATIVE keypad editor -> us: the dealer set an LED color / engraving / state
--- on a button. This is one of the two peer editors of gButtons, so an edit here is
--- pushed to the device AND mirrored up to the portal (the other editor's store).
+-- Composer's NATIVE keypad editor -> us: the dealer set an LED color / engraving /
+-- state on a button. It is the editor of gButtons, so an edit here is pushed to the
+-- device.
 function HandleKeypadProxy(strCommand, tParams)
   if not gButtons then return end
   local function btn(id) id = tonumber(id); return id and gButtons[id] end

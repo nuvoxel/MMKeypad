@@ -12,36 +12,17 @@
 #if defined(CONFIG_SPIRAM)
 #include "esp_psram.h"
 #endif
-#include "nvs.h"
-#include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-// NVS storage for the perpetual license token (survives reboots; applied offline).
-#define NV_LIC_NS  "nvx_dev"
-#define NV_LIC_KEY "license"
-
 static const char *TAG = "device";
 
 extern esp_netif_t *mmk_default_netif(void);
 
 static nv_identity_t s_id;
-
-static struct {
-  bool have_status;       // a check-in (or register) completed at least once
-  bool registered;        // the platform recognizes this device (claimed)
-  char pairing_code[12];  // shown when unregistered, to claim it in the app
-  bool update_available;
-  char latest_version[32];
-  bool licensed;          // a valid, hardware-bound license token is present
-  char tier[24];
-  char features[256];
-  bool trial;             // the current license is a time-limited trial
-  int trial_days;         // days left in the trial (0 if not on trial)
-} s_st;
 
 // Map the compiled board to its platform SKU.
 static const char *device_sku(void) {
@@ -54,81 +35,7 @@ static const char *device_sku(void) {
 }
 
 const char *device_hardware_id(void) { return s_id.hardware_id; }
-const char *device_secret_hex(void) { return s_id.device_secret; }
 const char *device_sku_id(void) { return device_sku(); }
-
-// Open build: no cloud enrollment. The device is always "registered" to itself.
-const char *device_reg_text(void) { return "Standalone"; }
-const char *device_pair_code(void) { return ""; }
-
-// Open build: not license-gated. Every unit is fully licensed with all
-// features, so the activation screen never shows and nothing is feature-gated.
-bool device_is_licensed(void) { return true; }
-const char *device_tier_text(void) { return "Open"; }
-bool device_has_feature(const char *name) { (void)name; return true; }
-
-// Verify a token against this device's identity + sku; update in-RAM status.
-static void license_apply_status(const char *token) {
-  nv_entitlement_t e;
-  if (nv_entitlement_verify(token, &s_id, device_sku(), &e) == NV_OK && e.valid) {
-    s_st.licensed = true;
-    snprintf(s_st.tier, sizeof(s_st.tier), "%s", e.tier);
-    snprintf(s_st.features, sizeof(s_st.features), "%s", e.features);
-    s_st.trial = e.trial;
-    s_st.trial_days = 0;
-    if (e.trial && e.exp > 0) {
-      long now = (long)time(NULL);
-      if (now > 1700000000L && e.exp > now)
-        s_st.trial_days = (int)((e.exp - now + 86399) / 86400);
-    }
-  } else {
-    s_st.licensed = false;
-    s_st.tier[0] = '\0';
-    s_st.features[0] = '\0';
-    s_st.trial = false;
-    s_st.trial_days = 0;
-  }
-}
-
-bool device_is_trial(void) { return s_st.licensed && s_st.trial; }
-
-const char *device_license_label(void) { return "Open build"; }
-
-// Load a stored license token from NVS and verify it (offline, no network).
-static void license_load(void) {
-  nvs_handle_t h;
-  if (nvs_open(NV_LIC_NS, NVS_READONLY, &h) != ESP_OK) return;
-  size_t len = 0;
-  if (nvs_get_str(h, NV_LIC_KEY, NULL, &len) == ESP_OK && len > 1 && len < 1600) {
-    char *tok = malloc(len);
-    if (tok && nvs_get_str(h, NV_LIC_KEY, tok, &len) == ESP_OK) {
-      license_apply_status(tok);
-      ESP_LOGI(TAG, "license from NVS: %s %s", s_st.licensed ? "valid tier" : "INVALID", s_st.tier);
-    }
-    free(tok);
-  }
-  nvs_close(h);
-}
-
-// Apply a license token delivered out-of-band (settings paste / QR / C4 driver).
-// Verifies offline against the baked-in key; persists to NVS iff valid. Returns 0 ok.
-int device_apply_license(const char *token) {
-  if (!token) return -1;
-  nv_entitlement_t e;
-  if (nv_entitlement_verify(token, &s_id, device_sku(), &e) != NV_OK || !e.valid) {
-    ESP_LOGW(TAG, "license rejected (bad signature or binding)");
-    return -1;
-  }
-  nvs_handle_t h;
-  if (nvs_open(NV_LIC_NS, NVS_READWRITE, &h) == ESP_OK) {
-    nvs_set_str(h, NV_LIC_KEY, token);
-    nvs_commit(h);
-    nvs_close(h);
-  }
-  license_apply_status(token);
-  ESP_LOGI(TAG, "license applied: tier %s features [%s]", s_st.tier, s_st.features);
-  return 0;
-}
 
 void device_init(void) {
   if (nv_identity_init(&s_id) == NV_OK) {
@@ -136,7 +43,6 @@ void device_init(void) {
   } else {
     ESP_LOGW(TAG, "identity init failed");
   }
-  license_load();
 }
 
 // Open build: no cloud check-in, no enrollment, no cloud OTA. device_start()
@@ -217,7 +123,7 @@ const char *device_power_source(void) { return MMK_POWER; }
 // Runtime hardware inventory (mirrors the T3's device_hw_json). ESP boards are
 // far more homogeneous than the repurposed T3 glass, but chip revision, flash/
 // PSRAM size and the MAC still vary across units/revisions — report them + a
-// stable fingerprint so the platform can spot a silent hardware change in beta.
+// stable fingerprint to spot a silent hardware change.
 static void hwfp_add(unsigned *h, const char *s) {
   if (!s) return;
   for (; *s; s++) { *h ^= (unsigned char)*s; *h *= 16777619u; }
@@ -319,59 +225,10 @@ void device_manifest_to_json(cJSON *m) {
   // Max programmable keypad buttons this device can show (0 = no keypad). The
   // driver treats it as an "up to" ceiling and clamps to its own capacity.
   cJSON_AddNumberToObject(caps, "buttons", MMK_HAS_TOUCH ? MMK_MAX_BUTTONS : 0);
-
-  if (s_st.licensed && s_st.features[0])
-    cJSON_AddStringToObject(m, "features", s_st.features);
 }
 
-void device_report_to_json(cJSON *r) {
-  device_manifest_to_json(cJSON_AddObjectToObject(r, "manifest"));
-  cJSON *s = cJSON_AddObjectToObject(r, "status");
-  const char *room = net_current_room();
-  if (room[0]) cJSON_AddStringToObject(s, "room", room);
-  char ip[40] = {0};
-  net_get_ip(ip, sizeof(ip));
-  if (ip[0]) cJSON_AddStringToObject(s, "ip", ip);
-  cJSON_AddBoolToObject(s, "driverConnected", net_connected());
-  if (net_peer_ip()[0]) cJSON_AddStringToObject(s, "director", net_peer_ip());
-  cJSON_AddNumberToObject(s, "orientation", g_settings.orientation);
-  cJSON_AddNumberToObject(s, "brightness", g_settings.brightness);
-  // The rest of the panel's own settings. These change how the panel BEHAVES (how it
-  // looks, when it dims), and none of it was visible from the cloud or the driver --
-  // the driver's properties read "Auto (device setting)", i.e. the device decides and
-  // never says what it decided. Debugging meant walking up to the panel, and on an
-  // ESP board the value lives in NVS with no way to read it back at all.
-  cJSON_AddNumberToObject(s, "theme",          g_settings.theme);
-  cJSON_AddNumberToObject(s, "layout",         g_settings.layout);
-  cJSON_AddNumberToObject(s, "bgPreset",       g_settings.bg_preset);
-  cJSON_AddNumberToObject(s, "screensaverSec", g_settings.screensaver_sec);
-  cJSON_AddNumberToObject(s, "dimBrightness",  g_settings.dim_brightness);
-  cJSON_AddNumberToObject(s, "ringerVolume",   g_settings.ringer_volume);
-  cJSON_AddBoolToObject(  s, "muted",          g_settings.muted ? 1 : 0);
-  if (s_driver_ver[0]) cJSON_AddStringToObject(s, "driverVersion", s_driver_ver);
-}
 
 void device_status_to_json(cJSON *d) {
   cJSON_AddStringToObject(d, "deviceId", s_id.hardware_id);
-  // deviceSecret is exposed here for the OFFLINE claim path (a phone reads it from
-  // this local, basic-auth'd page and claims by identity). Not for public exposure.
-  cJSON_AddStringToObject(d, "deviceSecret", s_id.device_secret);
   cJSON_AddStringToObject(d, "sku", device_sku());
-  if (s_st.have_status) {
-    cJSON_AddStringToObject(d, "reg", s_st.registered ? "registered" : "unregistered");
-    if (!s_st.registered && s_st.pairing_code[0]) {
-      cJSON_AddStringToObject(d, "pairCode", s_st.pairing_code);
-    }
-    cJSON_AddBoolToObject(d, "otaUpdate", s_st.update_available);
-    if (s_st.update_available && s_st.latest_version[0]) {
-      cJSON_AddStringToObject(d, "otaLatest", s_st.latest_version);
-    }
-  } else {
-    cJSON_AddStringToObject(d, "reg", "unknown");
-  }
-  cJSON_AddBoolToObject(d, "licensed", s_st.licensed);
-  if (s_st.licensed) {
-    cJSON_AddStringToObject(d, "tier", s_st.tier);
-    cJSON_AddStringToObject(d, "features", s_st.features);
-  }
 }

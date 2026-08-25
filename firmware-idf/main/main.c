@@ -9,7 +9,7 @@
 #include "net.h"
 #include "sddp.h"
 #include "board.h"
-#include "device.h"  // device identity + registration/OTA status (nuvoxel_device client)
+#include "device.h"  // device identity + manifest
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_netif.h"
@@ -203,9 +203,7 @@ void app_main(void)
     ESP_LOGI(TAG, "board: %s (display=%d audio=%d eth=%d wifi=%d)",
              MMK_BOARD_NAME, MMK_HAS_DISPLAY, MMK_HAS_AUDIO, MMK_NET_ETH, MMK_NET_WIFI);
 
-    // Device identity + registration/OTA status (shared nuvoxel_device client).
-    // Computes the eFuse-HMAC identity now (burns eFuse KEY5 on first boot);
-    // device_start() below spawns the best-effort cloud check-in.
+    // Device identity (local): a stable id from the device MAC.
     device_init();
 
 #if MMK_HAS_DISPLAY
@@ -320,8 +318,7 @@ void app_main(void)
     net_start(6700, &cb);
     sddp_start(6700);
 
-    // Best-effort cloud check-in (registration + OTA status). Waits for an IP
-    // internally; never required for the keypad to work.
+    // Start device services (open build: a no-op).
     device_start();
 
 #if MMK_HAS_AUDIO

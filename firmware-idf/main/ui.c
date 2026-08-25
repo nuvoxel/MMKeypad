@@ -238,16 +238,14 @@ static lv_obj_t *s_favPanel, *s_favGrid;
 static favorite_t s_favs[NET_MAX_FAVORITES];
 static int       s_nFavs;
 
-// Intercom availability is a LOCAL, offline determination: this panel can do SIP
-// and its cached entitlement grants "intercom". It deliberately does NOT depend
-// on s_nEps (the driver-pushed call-target list) — a device shows the intercom
-// feature because it's licensed for it, and the target list fills in when the
-// driver enumerates the roster. Coupling visibility to s_nEps hid the whole
-// feature on a fully-entitled keypad whenever the endpoint push was missing.
-// The intercom screen itself renders "No intercom targets" while s_nEps == 0.
+// Intercom availability is purely a hardware fact: the panel shows the intercom
+// feature iff the board has SIP audio. It deliberately does NOT depend on s_nEps
+// (the driver-pushed call-target list) — the intercom screen itself renders
+// "No intercom targets" while s_nEps == 0, so an unconfigured driver just shows
+// an empty target list rather than hiding the feature entirely.
 static inline bool ic_available(void)
 {
-    return MMK_HAS_SIP != 0 && device_has_feature("intercom");
+    return MMK_HAS_SIP != 0;
 }
 // X4-inspired home/main screen (modern, not a C4 clone): room name + a few big
 // glass cards (Listen/Intercom/Keypad) + a mini-player bar. Shown by default;
@@ -1266,9 +1264,9 @@ static void ui_show_settings(void) {
             lv_obj_set_style_text_font(fwlbl, F16, 0);
             lv_obj_set_style_text_color(fwlbl, lv_color_hex(C_TEXT), 0);
         }
-        // Model / Device ID / MAC / link type / power source / registration are all
-        // reported to the cloud on every check-in and shown in the portal and the
-        // driver, so they are not repeated here. What stays is what you need while
+        // Model / Device ID / MAC / link type / power source are all shown by the
+        // Control4 driver, so they are not repeated here. What stays is what you need
+        // while
         // STANDING AT the panel: is it talking to Control4, which room, what address,
         // what firmware (and can I update it), and is it licensed.
         settingsCycler(card, "Platform", OPT_PLATFORM, 2, &g_settings.theme, 3);

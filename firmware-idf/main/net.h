@@ -121,10 +121,6 @@ void net_step_volume(bool up);
 void net_toggle_mute(void);
 void net_art_debug(int slot, bool ok, int bytes, int w, int h);  // thumbnail telemetry
 
-// Offline relay: borrow the Director's WAN through the driver when this panel has
-// no route of its own. Blocking; background tasks only. See net.c.
-int net_relay_post(const char *path, const char *body, char *resp, size_t cap, int *status);
-int net_relay_fetch(const char *url, size_t off, uint8_t *out, size_t cap, bool *eof);
 // Intercom call control from the on-screen buttons.
 void net_call_mute(bool on);           // report mic mute up (-> NOTIFY.Mute_Audio_Changed)
 void net_call_door(const char *remote, const char *action_id);   // fire a door action

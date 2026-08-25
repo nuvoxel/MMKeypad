@@ -61,4 +61,4 @@ C4DIR="$HOME/Documents/Control4/Drivers"
 if [[ -d "$C4DIR" ]]; then
   cp -f "$OUT" "$C4DIR/" && echo "Copied to $C4DIR/$OUT"
 fi
-echo "The NuVoxel Agent installs + binds this driver per licensed device; a dealer never adds it by hand."
+echo "Add this driver to the project and bind it to the keypad (see README.md)."

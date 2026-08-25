@@ -12,11 +12,6 @@
  *                  changes. Falls back to the eth0 MAC (a real Control4 OUI)
  *                  only if the eFuse can't be read.
  *
- *   device_secret = 32 random bytes, generated once and persisted to
- *                   /data/nvx/secret (0600). Unlike the ESP32, the RK3188 has
- *                   no application-readable *secret* hardware key (efuse_val is
- *                   world-readable), so the secret is provisioned locally. The
- *                   platform records it at registration; it is stable across
  *                   reboots and only re-mints if /data is wiped (full reflash),
  *                   which forces a re-register — acceptable and expected.
  *
@@ -35,8 +30,6 @@
 
 #define EFUSE_PATH  "/sys/devices/system/cpu/efuse_val"
 #define MAC_PATH    "/sys/class/net/eth0/address"
-#define SECRET_DIR  "/data/nvx"
-#define SECRET_PATH SECRET_DIR "/secret"
 
 static const char HEX[] = "0123456789abcdef";
 
@@ -85,40 +78,11 @@ static int derive_hardware_id(char *out /* NV_HWID_MAX */) {
   return -1;
 }
 
-/* device_secret: load the persisted one, else generate + persist. 0 on success. */
-static int load_or_make_secret(char *out /* NV_SECRET_MAX */) {
-  char hex[NV_SECRET_MAX];
-  int n = read_small(SECRET_PATH, hex, sizeof(hex));
-  if (n >= 64) { /* 32 bytes hex */
-    memcpy(out, hex, 64);
-    out[64] = '\0';
-    return 0;
-  }
-  /* Generate 32 fresh random bytes and persist them (0600). */
-  unsigned char rnd[32];
-  FILE *ur = fopen("/dev/urandom", "rb");
-  if (!ur) return -1;
-  size_t got = fread(rnd, 1, sizeof(rnd), ur);
-  fclose(ur);
-  if (got != sizeof(rnd)) return -1;
-  to_hex(rnd, 32, out);
-
-  mkdir(SECRET_DIR, 0700);
-  FILE *f = fopen(SECRET_PATH, "wb");
-  if (f) {
-    fchmod(fileno(f), 0600);
-    fwrite(out, 1, 64, f);
-    fclose(f);
-  }
-  return 0;
-}
-
 nv_err_t nv_identity_init(nv_identity_t *out) {
   if (!out) return NV_ERR_ARG;
   memset(out, 0, sizeof(*out));
 
   if (derive_hardware_id(out->hardware_id) != 0) return NV_ERR_IDENTITY;
-  if (load_or_make_secret(out->device_secret) != 0) return NV_ERR_IDENTITY;
   out->provisioned = true;
   return NV_OK;
 }

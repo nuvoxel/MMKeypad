@@ -171,8 +171,8 @@ void sddp_start(uint16_t control_port)
     /* Host is the unique instance id the C4 keypad driver matches its device on,
      * and Composer renders the Discovered "Address" column as Type + "-" + Host.
      *
-     * Use the device's stable hardware_id -- the SAME id reported to the portal and
-     * handed to the keypad driver by the NuVoxel Agent -- NOT a network-interface
+     * Use the device's stable hardware_id -- the SAME id the device reports in its
+     * manifest -- NOT a network-interface
      * MAC. The interface MAC is the wrong key on multi-transport hardware:
      *   - P4 (WS43/PoE): WiFi runs on the ESP32-C6 co-processor, so the netif MAC is
      *     the C6's; on Ethernet it is the P4 EMAC's -- neither equals hardware_id.

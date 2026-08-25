@@ -19,13 +19,10 @@ TINYALSA := ../thirdparty/tinyalsa
 LIBRE    := ../thirdparty/libre
 BUILD    := build
 
-# The version this binary REPORTS at check-in. It must match, byte for byte, the
-# version publish-fw.sh records in the OTA manifest -- device.c updates whenever
-# manifest != current, so a build that misreports its version re-downloads the
-# same image forever, exits each time, and init's crash-loop guard rolls it back
-# to factory. publish-fw.sh writes version.txt BEFORE invoking this build, so
-# reading it here keeps the two ends automatically in lockstep. The `dev` default
-# is for local builds that were never published.
+# The version this binary REPORTS. It must match the version of the published
+# image (the on-screen updater compares versions), so reading it from
+# firmware-idf/version.txt keeps the build and the release tag in lockstep. The
+# `dev` default is for local builds that were never published.
 FW_VERSION ?= $(shell cat ../../firmware-idf/version.txt 2>/dev/null || echo dev)
 
 CFLAGS := -target $(TARGET) -mcpu=$(MCPU) -static -Os \
@@ -56,7 +53,7 @@ APP_SRCS := shared/ui.c shared/net.c shared/config.c shared/art.c shared/sddp.c 
             $(IDF_MAIN)/mmk_icons_24.c $(IDF_MAIN)/mmk_icons_34.c \
             $(IDF_MAIN)/mmk_roboto.c $(IDF_MAIN)/mmk_lucide.c \
             $(IDF_MAIN)/mmk_c4icons.c $(IDF_MAIN)/mmk_ha_icons.c \
-            $(IDF_MAIN)/nv_open.c $(IDF_MAIN)/fwupdate.c
+            $(IDF_MAIN)/fwupdate.c
 
 # Platform layer (incl. real album-art HTTPS client + tinyalsa audio backend).
 PLAT_SRCS := $(PLAT)/bsp_linux.c $(PLAT)/stubs.c $(PLAT)/nvs_file.c \
@@ -65,9 +62,9 @@ PLAT_SRCS := $(PLAT)/bsp_linux.c $(PLAT)/stubs.c $(PLAT)/nvs_file.c \
 
 # Device-plane, target-native pieces: identity from the RK3188 eFuse, the
 # device.h implementation, the Linux app-overlay OTA, and the baked license
-# public key. Open build: entitlement is nv_open.c (always-valid).
+# device identity (eFuse) + the T3 overlay OTA.
 PLAT_SRCS += $(PLAT)/nv_identity_t3.c $(PLAT)/device_t3.c \
-             $(PLAT)/nv_ota_t3.c $(PLAT)/nv_license_pubkey.c
+             $(PLAT)/nv_ota_t3.c
 
 # tinyalsa (hardware backend; snd_card_plugin.c provides snd_utils_* dev-node
 # helpers the hw backend needs — its dlopen plugin path is unused for hw cards).
@@ -88,9 +85,9 @@ SRCS := main_linux.c $(APP_SRCS) $(PLAT_SRCS) $(TINYALSA_SRCS) $(JPEG_SRCS) $(MB
 # lv_conf.h) MUST force a rebuild since we compile in one shot with no object
 # tracking. (Missing this silently shipped a stale decoder buffer once.)
 # version.txt is a REAL dependency: it feeds -DMMK_FW_VERSION, so a version bump
-# with no source change must still relink. Without it `publish-fw.sh auto` bumps
-# version.txt, make says "nothing to be done", and we ship a binary stamped with
-# the PREVIOUS version -- which then never matches the manifest and re-installs
+# with no source change must still relink. Without it a version bump in
+# version.txt would leave `make` saying "nothing to be done", shipping a binary
+# stamped with the PREVIOUS version -- which then never matches the release
 # itself forever (the exact loop the stamping was added to prevent).
 HDR_DEPS := lv_conf.h Makefile ../../firmware-idf/version.txt \
             $(wildcard $(COMPAT)/*.h) $(wildcard $(PLAT)/*.h)

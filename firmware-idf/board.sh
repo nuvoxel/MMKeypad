@@ -23,7 +23,7 @@ esac
 # Release hardening: MMK_RELEASE=1 layers sdkconfig.release (logs/asserts/error
 # strings stripped, build paths hidden — see that file) on top of the board
 # defaults, in a separate *.rel build dir so it never clobbers the dev config.
-# publish-fw.sh sets this for every OTA image it ships.
+# Set it when building a release image to publish (see OTA.md).
 if [ -n "${MMK_RELEASE:-}" ]; then
   DEFS="${DEFS};sdkconfig.release"
   B="${B}.rel"

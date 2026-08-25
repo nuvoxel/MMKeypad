@@ -1,10 +1,10 @@
 # MMKeypad — native ESP-IDF firmware
 
 
-> **Open build — standalone.** This firmware is not license-gated and talks to no
-> online service. Identity, entitlement, and OTA-apply are provided locally by
-> `main/nv_open.c`, `main/nv_identity_open.c`, and `main/nv_ota_open.c`; there is
-> no cloud check-in. It connects to Control4 purely over the local network
+> **Open build — standalone.** This firmware talks to no online service: no
+> account, no licensing, no cloud check-in. Identity is derived locally from the
+> device MAC (`main/nv_identity_open.c`) and OTA-apply is `esp_https_ota`
+> (`main/nv_ota_open.c`). It connects to Control4 purely over the local network
 > (`:6700` + SDDP).
 
 This is the firmware tree — native **ESP-IDF + LVGL**, one FreeRTOS scheduler,

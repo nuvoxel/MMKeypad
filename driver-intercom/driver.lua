@@ -104,7 +104,7 @@ end
 function OnDriverInit(initType)
   C4:UpdateProperty("Driver Version", DRIVER_VERSION)
   setRelay("Not linked")
-  -- Read-only identity var so the NuVoxel Agent can reconcile this intercom to its
+  -- Read-only identity var so this intercom can be reconciled to its
   -- keypad on resync (our room == the keypad's room) and never install a duplicate —
   -- the intercom analogue of the keypad's NV_HWID. Set in LateInit once the room is known.
   pcall(function() C4:AddVariable("NV_ROOM", "", "STRING", true, true) end)

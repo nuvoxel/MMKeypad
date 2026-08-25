@@ -334,8 +334,7 @@ int main(void) {
     /* Load persisted settings (flat-file NVS shim on /data). */
     settings_load();
 
-    /* Compute the eFuse-rooted device identity + load any stored license
-     * (offline). The cloud check-in itself is started later, after net is up. */
+    /* Compute the eFuse-rooted device identity (local; no online service). */
     device_init();
 
 #if MMK_HAS_AUDIO
@@ -387,8 +386,7 @@ int main(void) {
     net_start(6700, &cb);
     sddp_start(6700);   /* SDDP discovery so the C4 Director finds us */
 
-    /* Best-effort cloud check-in (registration / license sync / OTA). Runs on
-     * its own thread and waits for connectivity; never required to function. */
+    /* Start device services (open build: a no-op). */
     device_start();
 
     /* If the device has no network yet (BYOH T3 ships WiFi-only), put up the

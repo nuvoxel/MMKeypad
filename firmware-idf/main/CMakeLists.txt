@@ -19,7 +19,7 @@ message(STATUS "main: MMK_BOARD='${MMK_BOARD}'")
 
 # Shared (every board): protocol server, discovery, settings web/OTA, config.
 set(srcs   "main.c" "config.c" "net.c" "sddp.c" "device.c"
-           "nv_open.c" "nv_identity_open.c" "nv_ota_open.c" "fwupdate.c")
+           "nv_identity_open.c" "nv_ota_open.c" "fwupdate.c")
 set(reqs   nvs_flash esp_netif esp_event lwip json esp_hw_support
            esp_http_server esp_http_client esp_https_ota esp-tls mbedtls
            app_update esp_timer esp_driver_i2c esp_driver_gpio
