@@ -6,6 +6,18 @@ thirdparty/
 build/
 lvgl-app/build/
 
+# Belt and braces on top of `build/` above. Two things living under build/ are
+# NOT build output and must never reach a public repo, so they are named
+# explicitly — if `build/` is ever narrowed, these stay ignored:
+#   build/firmware/     Control4's extracted factory firmware. Proprietary, and
+#                       not ours to redistribute. Supply it from your own unit.
+#   build/backup-*/     Full per-unit dumps taken off a panel over USB loader or
+#                       the network. They carry that unit's identity and are the
+#                       only way back if a reflash goes wrong — irreplaceable,
+#                       and specific to one piece of hardware.
+build/firmware/
+build/backup-*/
+
 # Serial/console capture logs.
 log/
 
