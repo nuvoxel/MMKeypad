@@ -9,9 +9,10 @@ standards-based SIP endpoint — all through a custom **Control4 DriverWorks
 `.c4z` driver**.
 
 This repository is the whole MMKeypad project: the device firmware, the Control4
-drivers, the protocol specification, and the hardware documentation (supported
-ESP32 boards and a full Control4 T3 panel teardown). It is fully open source and
-talks to no online service.
+drivers, the protocol specification, the hardware documentation (supported ESP32
+boards and a full Control4 T3 panel teardown), the design notes behind the
+awkward decisions, and the Control4 reverse-engineering that made any of it
+possible. It is fully open source and talks to no online service.
 Licensed under the **Apache License 2.0** — see [Licensing](#licensing).
 
 UX inspired by [`esphome-media-player`](https://github.com/jtenniswood/esphome-media-player)
@@ -135,11 +136,13 @@ SDK files — see [`driver-intercom/README.md`](driver-intercom/README.md)).
 ### Updating firmware
 
 The open build does not auto-update from a cloud. Instead, on the panel go to
-**Settings → Check for update**: it lists the firmware images published on this
-project's [GitHub Releases](https://github.com/nuvoxel/MMKeypad/releases) for the
-board's SKU, and applies the one you pick (the panel downloads it and restarts).
-Local **USB flashing** (`./board.sh <board> flash`, or the T3 flash tooling) also
-works and is the fallback if a panel has no network route.
+**Settings → Check for update**: it lists the assets published on this project's
+[GitHub Releases](https://github.com/nuvoxel/MMKeypad/releases) for the image that
+board runs, and applies the one you pick (the panel downloads it and restarts).
+This works on the T3 too — its asset is a `t3-bundle` tar rather than an app
+image. Local **USB flashing** (`./board.sh <board> flash`, or the T3 flash
+tooling) is the fallback if a panel has no network route, and is how a T3 gets
+its first image. See [OTA.md](OTA.md).
 
 ## What is not in this repository
 

@@ -3,16 +3,17 @@
 The open firmware talks to no online service, so there is no cloud check-in,
 manifest, or auto-update policy. Firmware reaches a device three ways:
 
-1. **On-screen, from GitHub Releases** — the primary path.
+1. **On-screen, from GitHub Releases** — the primary path, on every board
+   including the T3.
 2. **USB flashing** — the fallback, and how you flash the very first image.
-3. **From source** — the only path for the T3 (RK3188) Linux build.
+3. **From source** — always available, and still how a T3 gets its first image.
 
-## On-screen updater (ESP boards)
+## On-screen updater
 
 On the panel: **Settings → Check for update**. The keypad queries this project's
-GitHub Releases, lists the images published for **its own SKU**
-(`device_sku_id()` → `mmk-s3` / `mmk-poe` / `mmk-nano` / `mmk-ws43`), and installs
-the one you pick — it downloads the asset over HTTPS, writes it to the inactive
+GitHub Releases, lists the assets published for **the image it runs**
+(`device_fw_image_id()` → `mmk-s3` / `mmk-poe` / `mmk-nano` / `mmk-ws43` /
+`mmk-t3`), and installs the one you pick — it downloads the asset over HTTPS, writes it to the inactive
 OTA partition (`esp_https_ota`), and restarts into it. The running version is
 marked *installed* in the list.
 
@@ -61,9 +62,21 @@ cd firmware-idf
 
 ## T3 (RK3188 Linux) updates
 
-The T3 build is not an ESP app image and is not published as a release asset. Its
-update mechanism is the persistent app/init **overlay swap** applied by
-[`firmware-linux-t3/platform/nv_ota_t3.c`](firmware-linux-t3/platform/nv_ota_t3.c)
-(download → sha256 → swap `/data/mmkeypad` + `/data/init.overlay` → reboot, with
-crash-loop rollback), and it is flashed/updated from source — see
-[`firmware-linux-t3/README.md`](firmware-linux-t3/README.md).
+The T3 updates from Releases like the ESP boards, but its artifact is different:
+a **`t3-bundle` tar** (`mmk-t3-<version>.tar`) holding `meta.json`, the app, and
+the init overlay — not a flashable app image. The updater accepts `.tar` for this
+build and `.bin` for the ESP boards.
+
+Applying it is the persistent app/init **overlay swap** in
+[`firmware-linux-t3/platform/nv_ota_t3.c`](firmware-linux-t3/platform/nv_ota_t3.c):
+download → sha256 → swap `/data/mmkeypad` + `/data/init.overlay` → reboot, with
+crash-loop rollback to the previous binary.
+
+Two things this does **not** cover. The bundle carries the app and init only, so
+a change to `boot.img` — kernel, mounts, vendor modules — still needs a full
+reflash from source. And a panel has to already be running a build that
+understands `.tar` assets before it can see a T3 release at all; earlier builds
+filtered for `.bin` and matched on the specific SKU (`mmk-t3-10`) rather than the
+shared `mmk-t3` image, so they list nothing. Get to a current build once from
+source — see [`firmware-linux-t3/README.md`](firmware-linux-t3/README.md) — and
+it is self-updating from then on.

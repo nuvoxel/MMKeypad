@@ -5,7 +5,7 @@
 > data/control architecture resolved 2026-07-22. Companion to
 > `ARCHITECTURE.md` and `PROTOCOL.md` — which now live in the open repo,
 > [github.com/nuvoxel/MMKeypad](https://github.com/nuvoxel/MMKeypad) — and
-> our internal Director-access notes (not published). RE assets in [reference/](reference/), verified
+> our internal Director-access notes (not published). RE assets in [reference/](../reference/control4/), verified
 > command vocabulary in [../reference/control4/media-commands.md](../reference/control4/media-commands.md).
 
 ## Why this doc — the lesson from the CPU incident
