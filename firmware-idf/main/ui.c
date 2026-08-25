@@ -1271,12 +1271,6 @@ static void ui_show_settings(void) {
         // driver, so they are not repeated here. What stays is what you need while
         // STANDING AT the panel: is it talking to Control4, which room, what address,
         // what firmware (and can I update it), and is it licensed.
-        if (device_pair_code()[0])   // claiming still needs the code on-device
-            settings_info_row(card, "Pairing code", device_pair_code(), C_GREEN);
-        settings_info_row(card, "License", device_license_label(),
-                          !device_is_licensed() ? C_SUBTLE
-                          : device_is_trial()   ? 0xE0A030   /* amber for trial */
-                                                : C_GREEN);
         settingsCycler(card, "Platform", OPT_PLATFORM, 2, &g_settings.theme, 3);
     }
 
@@ -2132,143 +2126,6 @@ static void snap_task(void *arg)
 void ui_snapshot_start(void) { xTaskCreate(snap_task, "snap", 8192, NULL, 3, NULL); }
 #endif
 
-// Full-screen activation gate, shown while the keypad is unlicensed (not yet
-// claimed to an account). The keypad does nothing until it's claimed: scanning
-// the QR claims it — that works even if the keypad itself has no internet, since
-// the phone claims it by identity — and the pairing code is the in-app
-// alternative once the keypad has reached the cloud.
-#ifdef ESP_PLATFORM
-// Defined further down (with the settings footer); forward-declared so the claim
-// screen can reuse the embedded-logo path on ESP.
-static void setup_logo_init(void);
-static lv_image_dsc_t s_setup_logo;
-#endif
-
-static void build_activation(lv_obj_t *scr, int W, int H)
-{
-    lv_obj_set_style_bg_color(scr, lv_color_hex(HOME_BG_TOP), 0);
-    lv_obj_set_style_bg_grad_color(scr, lv_color_hex(HOME_BG_BOT), 0);
-    lv_obj_set_style_bg_grad_dir(scr, LV_GRAD_DIR_VER, 0);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-
-    lv_obj_t *col = lv_obj_create(scr);
-    lv_obj_remove_style_all(col);
-    lv_obj_set_size(col, W, H);
-    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    // This stack (logo + title + QR + code + model/IP) is ~230px tall before row
-    // gaps, so it only gets tight when the panel is SHORT — the 2.8" in landscape
-    // (320x240) rather than portrait (240x320). Key the tightening on H, not on
-    // the short side: in portrait the short side is the WIDTH (240) and there is
-    // no vertical pressure at all, so keying on shortSide needlessly cramped the
-    // portrait layout. The column centers its content, so an overrun clips at
-    // BOTH edges and takes the IP line with it.
-    //
-    // The QR stays sized off the short side (it has to fit the narrow axis) and
-    // is never shrunk to buy space: the claim URL lands at QR version 7 (45x45
-    // modules), so below ~130px it drops under ~3px/module and phones start
-    // failing to scan — which would break the primary claim path.
-    const int shortSide = (W < H) ? W : H;
-    const bool compact = (H <= 240);
-    lv_obj_set_style_pad_row(col, (int)((compact ? 6 : 10) * s_uiscale), 0);
-    lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
-
-    // NuVoxel logo above the title. Loaded from the rootfs via LVGL's file
-    // driver (present on the T3 at /usr/share/nuvoxel-logo.png). On builds
-    // without that path the image simply renders empty — no crash/link error.
-    // NB: set_scale only scales the RENDER; the object still reserves the full
-    // 480x384 layout box unless we size it — so size the box to the scaled image,
-    // else it eats vertical space and pushes content off-screen.
-    // Scale to ~42% of screen width so big panels (T3 10", 1280px) get a bold,
-    // prominent wordmark, but never below the compact size the small ESP screens
-    // (320px) use. The small panels hit the lsc floor regardless (320*.42 -> 68,
-    // floored to 92); the pct/cap only move the big panels. Cap raised to 520 so
-    // the 10" isn't clipped back to the old 360.
-    int logo_w = W * 42 / 100; if (logo_w > 520) logo_w = 520;
-    uint16_t lsc = (uint16_t)(logo_w * 256 / 480); if (lsc < 92) lsc = 92;
-    lv_obj_t *brand = lv_image_create(col);
-#ifdef ESP_PLATFORM
-    // ESP boards have no POSIX FS — use the embedded logo.png (same as the
-    // settings footer, see settings_add_logo), so the claim logo shows there too.
-    setup_logo_init();
-    if (s_setup_logo.data) lv_image_set_src(brand, &s_setup_logo);
-#else
-    lv_image_set_src(brand, "A:/usr/share/nuvoxel-logo.png");
-#endif
-    lv_image_set_scale(brand, lsc);
-    lv_image_set_inner_align(brand, LV_IMAGE_ALIGN_CENTER);
-    // The wordmark occupies only y=147..206 of the 480x384 canvas (rest is
-    // transparent) — 59 rows. Reserve a box just tall enough for that content
-    // (centered via inner_align) instead of the full 384, else the empty box
-    // pushes the model/IP lines off the bottom edge. 72 = the 59 rows plus a
-    // little breathing room; the old 140 reserved ~2.4x the content and ate
-    // ~29px of dead space on the 2.8" S3, squeezing out the IP line.
-    lv_obj_set_size(brand, 480 * lsc / 256, 72 * lsc / 256);
-    // lift it off the dark-blue gradient (blue wordmark was low-contrast)
-    lv_obj_set_style_image_recolor(brand, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_image_recolor_opa(brand, LV_OPA_20, 0);
-
-    lv_obj_t *t = lv_label_create(col);
-    lv_label_set_text(t, "Claim this keypad");
-    lv_obj_set_style_text_font(t, F24, 0);
-    lv_obj_set_style_text_color(t, lv_color_hex(0xFFFFFF), 0);
-
-    // QR encodes the offline-claim URL (identity + secret) — the phone opens it
-    // and claims the keypad to the signed-in account.
-    static char url[240];
-    snprintf(url, sizeof(url), "https://nuvoxel.com/keypad/claim?hw=%s&sku=%s&s=%s",
-             device_hardware_id(), device_sku_id(), device_secret_hex());
-    int qsz = (int)(shortSide * 0.55);
-    if (qsz > 240) qsz = 240;
-    lv_obj_t *qr = lv_qrcode_create(col);
-    lv_qrcode_set_size(qr, qsz);
-    lv_qrcode_set_dark_color(qr, lv_color_black());
-    lv_qrcode_set_light_color(qr, lv_color_white());
-    lv_qrcode_update(qr, url, strlen(url));
-    lv_obj_set_style_border_color(qr, lv_color_white(), 0);
-    lv_obj_set_style_border_width(qr, (int)(6 * s_uiscale), 0);
-
-    // Pairing code, bare, directly under the QR — no explanatory copy. What the
-    // code is and where to enter it is explained on the claim web page, which
-    // has room for it; the panel just has to render the value legibly.
-    const char *pc = device_pair_code();
-    if (pc && pc[0]) {
-        lv_obj_t *code = lv_label_create(col);
-        lv_label_set_text(code, pc);
-        lv_obj_set_style_text_font(code, F16, 0);
-        lv_obj_set_style_text_color(code, lv_color_hex(0x8FE0D5), 0);
-    }
-
-    // Model + local IP on one line below the QR: the model identifies the unit at
-    // a glance, the IP lets an installer reach it while it waits to be claimed
-    // (omitted if still offline).
-    //
-    // Colour: these were 0x6B7683, which is only ~1.5:1 against the X4 gradient's
-    // lower stop (0x235E97) — unreadable. 0xD8DEE6 clears 4.5:1 (WCAG AA for
-    // normal text) while staying visually below the pure-white title.
-    const char *mdl = device_model_name();
-    char ip[24]; net_get_ip(ip, sizeof(ip));
-    const bool haveMdl = (mdl && mdl[0]), haveIp = (ip[0] != 0);
-
-    if (haveMdl || haveIp) {
-        lv_obj_t *ml = lv_label_create(col);
-        if (haveMdl && haveIp) lv_label_set_text_fmt(ml, "%s   %s", mdl, ip);
-        else if (haveMdl)      lv_label_set_text(ml, mdl);
-        else                   lv_label_set_text_fmt(ml, "IP  %s", ip);
-        lv_obj_set_style_text_font(ml, F16, 0);
-        lv_obj_set_style_text_color(ml, lv_color_hex(0xD8DEE6), 0);
-        lv_obj_set_style_pad_top(ml, (int)(6 * s_uiscale), 0);
-        // A long model name + IP can exceed the panel width; clip with an
-        // ellipsis rather than letting the label overflow the screen edge.
-        lv_obj_set_width(ml, W - (int)(16 * s_uiscale));
-        lv_label_set_long_mode(ml, LV_LABEL_LONG_DOT);
-        lv_obj_set_style_text_align(ml, LV_TEXT_ALIGN_CENTER, 0);
-    }
-}
-
-// True while the current build is the licensed (normal) UI — the license-watch
-// tick compares against device_is_licensed() to flip when a claim lands.
-static bool s_licBuilt;
 
 // Swallows the touch that WAKES a dimmed panel. Without it the wake tap also
 // lands on whatever happens to be under the finger -- walk up to a dark screen,
@@ -2314,16 +2171,6 @@ void ui_begin(void)
     const int W = lv_display_get_horizontal_resolution(NULL);
     const int H = lv_display_get_vertical_resolution(NULL);
     ui_apply_font_scale(W, H);   // pick resolution-appropriate font sizes first
-
-    // Licensing gate: an unlicensed keypad (not claimed to an account) is inert
-    // — it shows only the activation screen. Base/Pro keypads fall through to
-    // the full UI below. The license-watch tick requests a rebuild here the
-    // moment a claim/sync grants a license, flipping to the normal UI.
-    s_licBuilt = device_is_licensed();
-    if (!s_licBuilt) {
-        build_activation(scr, W, H);
-        return;
-    }
 
     const bool landscape = (W >= H);
     // X4 two-column now-playing: album-art card atop stacked controls in a left
@@ -3139,27 +2986,11 @@ void ui_tick_screensaver(void)
     static uint32_t s_favTick;
     if (s_connected && ++s_favTick >= FAV_REFRESH_SEC) { s_favTick = 0; net_request_favorites(); }
 
-    // Flip between the activation screen and the full UI when the license state
-    // changes (a claim/sync grants it; loss/expiry removes it).
-    if (device_is_licensed() != s_licBuilt) { ui_request_rebuild(); return; }
-
-    // A base->pro upgrade (or any change that turns the "intercom" feature on/off)
-    // keeps device_is_licensed() true, so the check above misses it. The intercom
-    // card is gated on ic_available(); rebuild when that flips vs what home shows.
+    // The intercom card is gated on ic_available(); rebuild when that flips vs
+    // what home currently shows.
     if (s_home && ic_available() != s_homeIcShown) { ui_request_rebuild(); return; }
 
-    // While the activation screen is up, the pairing code is fetched by the async
-    // check-in a few seconds AFTER boot (the screen was built with it still empty).
-    // Rebuild once it lands so no-camera users get the "or enter <code>" line.
-    static bool s_pairShown;
-    bool pc = device_pair_code()[0] != 0;
-    if (!s_licBuilt && pc != s_pairShown) { s_pairShown = pc; ui_request_rebuild(); return; }
-
     uint16_t ss = g_settings.screensaver_sec;
-    // While the activation/claim screen is up (unlicensed), keep the screen
-    // bright much longer (10 min floor) so an installer/tester has time to scan
-    // the QR and claim it before it dims. Normal screensaver applies once claimed.
-    if (!device_is_licensed() && ss > 0 && ss < 600) ss = 600;
     static int applied = -1;   // last backlight % pushed; -1 = none yet
     uint32_t idle = lv_display_get_inactive_time(NULL);
     bool shouldDim = (ss > 0) && !s_keepAwake && !s_call && (idle > (uint32_t)ss * 1000);
@@ -3559,7 +3390,7 @@ static void setup_build(void)
     const lv_font_t *f_hint  = big ? F24 : F16;
     int qr_sz = big ? 168 : 108;
 
-    // NuVoxel wordmark up top, styled exactly like the Claim screen: white recolor
+    // NuVoxel wordmark up top: white recolor
     // at low opacity so the blue wordmark lifts off the blue gradient, and the
     // layout box sized to the ACTUAL wordmark height (the art is a 480x384 canvas
     // that is ~85% transparent vertical padding), so it doesn't eat the space the
@@ -3573,7 +3404,7 @@ static void setup_build(void)
         lv_image_set_scale(lg, lsc);
         lv_image_set_inner_align(lg, LV_IMAGE_ALIGN_CENTER);
         lv_obj_set_size(lg, (int)s_setup_logo.header.w * lsc / 256, 72 * lsc / 256);
-        // Solid white wordmark, not the Claim screen's 20% ghost: the blue art
+        // Solid white wordmark: the blue art
         // over the blue gradient washes out at low opacity, and this screen is a
         // deliberate brand moment (it matches the white wordmark on the captive
         // portal the QR leads to). Recolor keeps the art's alpha, so only the
@@ -3669,9 +3500,8 @@ void ui_show_setup(const char *ap_name, const char *ap_pass, const char *pop)
     s_setup = ov;
     lv_obj_remove_style_all(ov);
     lv_obj_set_size(ov, LV_PCT(100), LV_PCT(100));
-    // Match the claim/activation screen: the NuVoxel blue gradient (indigo ->
-    // blue, vertical), not a flat grey — Wi-Fi setup and Claim are the same
-    // onboarding moment and should read as one screen. HOME_BG_* is the X4/HA
+    // The NuVoxel blue gradient (indigo -> blue, vertical), matching the home
+    // screen so Wi-Fi setup reads as part of the same UI. HOME_BG_* is the X4/HA
     // theme's home gradient; ui_apply_theme() has already picked the theme.
     lv_obj_set_style_bg_color(ov, lv_color_hex(HOME_BG_TOP), 0);
     lv_obj_set_style_bg_grad_color(ov, lv_color_hex(HOME_BG_BOT), 0);
