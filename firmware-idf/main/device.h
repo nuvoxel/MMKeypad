@@ -25,6 +25,12 @@ void device_status_to_json(cJSON *d);
 const char *device_hardware_id(void);
 const char *device_sku_id(void);
 
+// Which firmware IMAGE this unit takes, which is not always its SKU: several
+// SKUs can share one build (every T3 variant runs the same "mmk-t3" image), so
+// the release-asset name is keyed off this, not off device_sku_id(). On boards
+// where one SKU means one image it simply returns device_sku_id().
+const char *device_fw_image_id(void);
+
 // -------- device manifest (self-description) -----------------------------
 // A structured descriptor of what this unit *is* and *can do*: model/SKU,
 // SoC + hardware identifiers (MAC, chip id), firmware/protocol versions,

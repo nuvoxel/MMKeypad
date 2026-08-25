@@ -121,6 +121,12 @@ static const char *device_sku(void) {
 
 const char *device_hardware_id(void) { return s_id.hardware_id; }
 const char *device_sku_id(void) { return device_sku(); }
+// Every T3 variant — 7", 10", portable — runs the SAME build, so they all take
+// the one "mmk-t3" image. device_sku() deliberately reports the specific variant
+// (so a 7" is distinguishable from a 10"); the release asset is keyed off this
+// generic id instead, or a 10" would go looking for an "mmk-t3-10-" asset that
+// is never published.
+const char *device_fw_image_id(void) { return "mmk-t3"; }
 
 void device_init(void) {
   if (nv_identity_init(&s_id) == NV_OK) {

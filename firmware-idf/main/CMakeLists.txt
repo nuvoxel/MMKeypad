@@ -133,3 +133,18 @@ if(MMK_BOARD STREQUAL "s3_matrix")
         "LODEPNG_NO_COMPILE_ENCODER;LODEPNG_NO_COMPILE_DISK;LODEPNG_NO_COMPILE_ALLOCATORS;LODEPNG_NO_COMPILE_CPP;LODEPNG_NO_COMPILE_ERROR_TEXT"
         COMPILE_OPTIONS "-Wno-error")
 endif()
+
+# Force-keep esp_log so the prebuilt SIP/RTP lib can always resolve it.
+#
+# espressif__esp_media_protocols (esp_rtc) hard-references esp_log(). That symbol
+# lives in liblog.a(log.c.obj), which the linker only pulls in if something ELSE
+# already referenced it -- and a release build (sdkconfig.release compiles every
+# ESP_LOGx out) leaves the app referencing it nowhere. On the display boards LVGL
+# and the UI stack still drag it in, which is why only p4_poe_eth -- the one
+# headless board, no ui_srcs -- failed to link, and only in the .rel config:
+#   undefined reference to `esp_log' (esp_rtc.c: _rtp_audio_recv, _sip_event_handler, ...)
+# `-u esp_log` makes that object unconditionally live. It costs one function, not
+# the log STRINGS (those are gone with the macros), so the hardening in
+# sdkconfig.release is untouched. Same shape as the _esp_error_check_failed trap
+# documented in that file -- the prebuilt lib needs symbols our stripping removes.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-u esp_log")

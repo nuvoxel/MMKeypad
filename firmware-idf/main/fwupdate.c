@@ -6,10 +6,17 @@
  * tasks (shimmed on the T3, same as art.c / net.c). The UI polls the state and
  * reads the result array; nothing here runs on the LVGL thread.
  *
- * Asset convention: a release carries one image per SKU named
- *   <sku>-<version>.bin      e.g.  mmk-s3-2026.08.24.001.bin
- * where <sku> is device_sku_id(). Only assets matching THIS device's SKU are
- * offered.
+ * Asset convention: a release carries one image per FIRMWARE IMAGE named
+ *   <image-id>-<version><ext>   e.g.  mmk-s3-2026.08.24.001.bin
+ *                                     mmk-t3-2026.08.25.004.tar
+ * where <image-id> is device_fw_image_id() -- the image this unit takes, which
+ * is not always its SKU (every T3 variant shares the one "mmk-t3" build). Only
+ * assets matching THIS device's image are offered.
+ *
+ * <ext> is per platform because the artifacts genuinely differ: the ESP boards
+ * take a raw app image, the T3 takes a `t3-bundle` tar (app + init overlay) that
+ * nv_ota_apply unpacks. Matching on the wrong extension is how the T3 ended up
+ * unable to see any release at all.
  */
 #include "fwupdate.h"
 #include "nuvoxel_device.h"   // nv_ota_apply
@@ -32,6 +39,15 @@ static const char *TAG = "fwupdate";
 #define FWUPDATE_RELEASES_URL \
   "https://api.github.com/repos/nuvoxel/MMKeypad/releases?per_page=30"
 #endif
+
+// Artifact this platform installs. The T3's updater takes a t3-bundle tar (app +
+// init overlay); every ESP board takes a raw app image.
+#ifdef MMK_BOARD_T3
+#define FWU_ASSET_EXT ".tar"
+#else
+#define FWU_ASSET_EXT ".bin"
+#endif
+#define FWU_EXT_LEN (sizeof(FWU_ASSET_EXT) - 1)
 
 #define FWU_MAX     16          // most versions we list
 #define FWU_BODYCAP (128 * 1024) // response cap; releases JSON is well under this
@@ -87,7 +103,7 @@ static int http_get(const char *url, char *buf, int cap) {
 // Parse the releases JSON, filling s_rel with the assets that match our SKU.
 static void parse_releases(const char *body) {
   char sku[48];
-  snprintf(sku, sizeof(sku), "%s-", device_sku_id());  // "mmk-s3-"
+  snprintf(sku, sizeof(sku), "%s-", device_fw_image_id());  // "mmk-s3-" / "mmk-t3-"
   size_t skulen = strlen(sku);
   char core[48];
   running_core(core, sizeof(core));
@@ -116,8 +132,9 @@ static void parse_releases(const char *body) {
       if (!cJSON_IsString(name) || !cJSON_IsString(url)) continue;
       const char *nm = name->valuestring;
       size_t nl = strlen(nm);
-      if (strncmp(nm, sku, skulen) != 0) continue;       // wrong SKU
-      if (nl < 4 || strcmp(nm + nl - 4, ".bin") != 0) continue;
+      if (strncmp(nm, sku, skulen) != 0) continue;       // wrong image
+      if (nl < FWU_EXT_LEN ||
+          strcmp(nm + nl - FWU_EXT_LEN, FWU_ASSET_EXT) != 0) continue;
 
       fwupdate_rel_t *e = &s_rel[s_count++];
       snprintf(e->version, sizeof(e->version), "%s", tag->valuestring);
@@ -131,7 +148,7 @@ static void parse_releases(const char *body) {
   cJSON_Delete(root);
 
   if (s_count == 0) {
-    snprintf(s_err, sizeof(s_err), "no builds published for %s", device_sku_id());
+    snprintf(s_err, sizeof(s_err), "no builds published for %s", device_fw_image_id());
     s_state = FWU_ERROR;
   } else {
     s_state = FWU_READY;

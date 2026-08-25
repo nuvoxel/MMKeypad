@@ -36,6 +36,8 @@ static const char *device_sku(void) {
 
 const char *device_hardware_id(void) { return s_id.hardware_id; }
 const char *device_sku_id(void) { return device_sku(); }
+// One SKU, one image on the ESP boards — each builds its own binary.
+const char *device_fw_image_id(void) { return device_sku(); }
 
 void device_init(void) {
   if (nv_identity_init(&s_id) == NV_OK) {
