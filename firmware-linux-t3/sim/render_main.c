@@ -185,9 +185,9 @@ int main(int argc, char **argv)
      * out-of-date page. */
     {
         static favorite_t favs[] = {
-            { .id = "ra.1", .title = "Mike DeLuca's Station", .kind = "stream", .art_url = "https://x/1.jpg" },
-            { .id = "ra.2", .title = "Electronic Station",    .kind = "stream", .art_url = "https://x/2.jpg" },
-            { .id = "ra.3", .title = "Chill Jazz",            .kind = "stream", .art_url = "https://x/3.jpg" },
+            { .id = "ra.1", .title = "Morning Radio",         .kind = "stream" },
+            { .id = "ra.2", .title = "Electronic Station",    .kind = "stream" },
+            { .id = "ra.3", .title = "Chill Jazz",            .kind = "stream" },
             { .id = "ra.4", .title = "Classic Rock",          .kind = "stream" },
             { .id = "ra.5", .title = "Morning Coffee",        .kind = "stream" },
         };

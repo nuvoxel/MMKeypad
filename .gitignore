@@ -12,9 +12,6 @@ firmware-linux-t3/thirdparty/
 firmware-linux-t3/sim/build/
 firmware-linux-t3/sim/shots/
 firmware-linux-t3/log/
-# Vendor firmware extracted from your own device — never distributed.
-# See firmware-linux-t3/README.md.
-/reference/
 
 # --- Developer SSH keys (MMK_DEV=1 builds only) ---
 firmware-linux-t3/dev-keys/authorized_keys

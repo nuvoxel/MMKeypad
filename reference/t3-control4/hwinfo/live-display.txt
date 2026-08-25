@@ -1,0 +1,65 @@
+############## DISPLAY / LCD ##############
+===== framebuffer fb0 =====
+modes         : U:800x1280p-54
+U:800x1280p-0
+virtual_size  : 800,3840
+bits_per_pixel: 32
+stride        : 3200
+name          : fb0
+state         : 0
+fb0
+fb1
+===== wm size/density (logical) =====
+Physical size: 1280x800
+Physical density: 213
+===== Rockchip display class =====
+-- /sys/class/display/*/
+===== rk_fb / lcdc sysfs & debugfs =====
+lrwxrwxrwx root     root              1969-12-31 16:00 driver -> ../../../bus/platform/drivers/rk-fb
+drwxr-xr-x root     root              1969-12-31 16:00 graphics
+-r--r--r-- root     root         4096 1969-12-31 16:00 modalias
+drwxr-xr-x root     root              1969-12-31 16:00 power
+lrwxrwxrwx root     root              1969-12-31 16:00 subsystem -> ../../../bus/platform
+-rw-r--r-- root     root         4096 1969-12-31 16:00 uevent
+lrwxrwxrwx root     root              1969-12-31 16:00 driver -> ../../../bus/platform/drivers/rk30-lcdc
+-r--r--r-- root     root         4096 1969-12-31 16:00 modalias
+drwxr-xr-x root     root              1969-12-31 16:00 power
+lrwxrwxrwx root     root              1969-12-31 16:00 subsystem -> ../../../bus/platform
+-rw-r--r-- root     root         4096 1969-12-31 16:00 uevent
+-rw-r--r-- root     root            0 1969-12-31 16:00 apanic
+drwxr-xr-x root     root              1969-12-31 16:00 asoc
+drwxr-xr-x root     root              1969-12-31 16:00 bdi
+drwxr-xr-x root     root              1969-12-31 16:00 binder
+drwxr-xr-x root     root              1969-12-31 16:00 bluetooth
+drwxr-xr-x root     root              1969-12-31 16:00 extfrag
+-r--r--r-- root     root            0 1969-12-31 16:00 gpio
+drwxr-xr-x root     root              1969-12-31 16:00 hid
+drwxr-xr-x root     root              1969-12-31 16:00 ieee80211
+drwxr-xr-x root     root              1969-12-31 16:00 ion
+===== backlight =====
+-- /sys/class/backlight/rk28_bl/
+max_brightness  : 255
+brightness      : 229
+actual_brightness: 255
+type            : raw
+===== dmesg: display/lcd/lvds/mipi/screen/pwm/backlight/pixclock =====
+<6>[    0.000000] memory reserve: Memory(base:0x97c00000 size:12M) reserved for <fb0 buf>
+<6>[    0.000000] sched_clock: 32 bits at 24MHz, resolution 41ns, wraps every 178956ms
+<6>[    0.417753] lcdc0 is used as primary display device contoller!
+<6>[    0.424277] warning:lcdc1 not add to system!
+<4>[    0.896449] lcdc0:reg_phy_base = 0x1010c000,reg_vir_base:0xdf0ac000
+<4>[    1.087842] fb0:win0
+<4>[    1.088025] rk3188 lcdc0 clk enable...
+<4>[    1.152895] rk3188 lcdc0 clk disable...
+<4>[    1.177554] fb0:phy:97c00000>>vir:e0000000>>len:0xc00000
+<4>[    1.177844] rk_fb_register>>>>>fb0
+<4>[    1.186552] rk_fb_register>>>>>fb1
+<4>[    1.186668] rk3188 lcdc0 clk enable...
+<4>[    1.186708] lcdc0: dclk:64000000>>fps:55 
+<6>[    1.186743] rk30-lcdc rk30-lcdc.0: rk3188_load_screen for lcdc0 ok!
+<6>[    1.211837] lcdc0 wakeup from standby!
+<6>[    1.211871] lcdc0 win0 open,atv layer:1
+<4>[    1.212363] rk3188 lcdc0 probe ok!
+<4>[    1.226310] RK29 Backlight Driver Initialized.
+<6>[    4.111724] Skipping unavailable LED gpio -1 (button-backlight)
+<6>[   14.739426] rk30-lcdc rk30-lcdc.0: blank mode:0

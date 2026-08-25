@@ -1,0 +1,8 @@
+# Control4-proprietary binaries extracted from an owned device — LOCAL ONLY,
+# never committed. Supply these yourself from your own unit (see README.md).
+firmware/
+apks/
+control4-system/
+log/
+*.bin
+*.apk

@@ -8,7 +8,8 @@ intercom as a standards-based SIP endpoint — all through a custom **Control4
 DriverWorks `.c4z` driver**.
 
 This repository is the open part of the project: the device firmware, the
-Control4 drivers, and the protocol specification.
+Control4 drivers, the protocol specification, and the hardware documentation
+(supported ESP32 boards and a full Control4 T3 panel teardown).
 Licensed under the **Apache License 2.0** — see [Licensing](#licensing).
 
 UX inspired by [`esphome-media-player`](https://github.com/jtenniswood/esphome-media-player)
@@ -25,6 +26,8 @@ driven entirely by Control4.
 | Agent driver | [`driver-agent/`](driver-agent/) | DriverWorks Lua agent — one per project; installs and configures the per-device drivers from an account roster. |
 | Intercom driver | [`driver-intercom/`](driver-intercom/) | Standalone intercom endpoint driver. **Requires files from Control4's DriverWorks SDK that are not in this repo** — see [`driver-intercom/README.md`](driver-intercom/README.md). |
 | Removal tool | [`print/T3_RemovalTool/`](print/T3_RemovalTool/) | A printable (or laser-cut) spudger for releasing a T3 panel from its wall bracket — a service aid. OpenSCAD source plus a generator script. |
+| Supported hardware | [`docs/HARDWARE.md`](docs/HARDWARE.md) | The ESP32 boards the firmware targets, with vendor links, plus UI screenshots at each panel size. |
+| T3 reference | [`reference/t3-control4/`](reference/t3-control4/) | Full teardown of the Control4 T3 touch panel — SoC, audio, display, camera, the two variants, and how to run our firmware on one you own. |
 
 ## Documentation
 
@@ -72,8 +75,10 @@ absent:
 - **Control4's own SDK material.** The DriverWorks intercom proxy templates that
   `driver-intercom` builds against are Copyright Control4 Corporation and are not
   redistributable. You supply them from the SDK.
-- **Reverse-engineering notes on Control4 internals**, device teardown material,
-  and stock vendor firmware images.
+- **Control4-proprietary binaries.** The teardown and RE notes are published
+  (see [`reference/t3-control4/`](reference/t3-control4/)), but the extracted
+  Control4 firmware images, APKs, and `/system` contents are not redistributed —
+  supply those from a unit you own.
 - **The nuvoxel cloud backend** — device licensing, the OTA manifest service, and
   the account roster the agent driver reads. The protocol it speaks is
   documented in [OTA.md](OTA.md); the implementation is not open.
