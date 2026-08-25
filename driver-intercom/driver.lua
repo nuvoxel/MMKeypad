@@ -138,6 +138,7 @@ end
 
 function OnDriverDestroyed(initType)
   StopLevelPoll()
+  StopCommAgentSync()   -- don't leave a pending re-scan firing into a dead driver
   gKeypad = nil; gSipReg = false; gInCall = false
   INTERCOM_DEBUG.END()
 end
@@ -640,6 +641,64 @@ function SendDeviceProps()
   }, "NOTIFY") end)
 end
 
+-- ============================================================================
+-- Communication-agent enrolment
+-- ============================================================================
+-- REGISTERING IS NOT ENROLMENT. Reporting our SIP username to the proxy makes the
+-- Director provision the account, and the device then REGISTERs successfully -- but
+-- Control4's Communication agent keeps its OWN SIP directory (FreeSWITCH xml_curl),
+-- and it only picks up a third-party endpoint when it re-scans. Until it does, the
+-- endpoint is provisioned-but-not-enrolled and every call to it is answered with
+-- "Can't find user": the driver looks healthy, the device looks registered, and
+-- nothing anywhere says why the intercom does not work.
+--
+-- The agent exposes that re-scan as SYNC_REGISTERED_DEVICES, so we fire it ourselves
+-- after provisioning. Idempotent -- re-syncing an already-enrolled endpoint is a
+-- no-op -- so it is safe on every link-up, reload and Director restart.
+--
+-- Look the agent up by BOTH extensions: C4:GetDevicesByC4iName wants the name as the
+-- project records it, which is ".c4z" on some OS versions and ".c4i" on others.
+-- Matching only one silently finds nothing, which is indistinguishable from "no
+-- Communication agent installed".
+local COMM_AGENT_C4Z = { "control4_communication_agent_v2.c4z",
+                         "control4_communication_agent_v2.c4i" }
+local gCommSyncTimer = nil
+local function nudgeCommAgentNow()
+  local seen, hit = {}, false
+  for _, nm in ipairs(COMM_AGENT_C4Z) do
+    local ok, devs = pcall(function() return C4:GetDevicesByC4iName(nm) end)
+    if ok and type(devs) == "table" then
+      for id in pairs(devs) do
+        if not seen[id] then
+          seen[id] = true; hit = true
+          pcall(function() C4:SendToDevice(id, "SYNC_REGISTERED_DEVICES", {}) end)
+          dbg("Communication agent", id, "SYNC_REGISTERED_DEVICES (enrol intercom)")
+        end
+      end
+    end
+  end
+  if not hit then dbg("Communication agent not found — intercom enrol skipped") end
+end
+-- Debounced. The re-scan has to run AFTER the Director has finished provisioning the
+-- account we just reported; firing it in the same breath scans the old directory and
+-- enrols nothing. The delay also collapses the burst of PushSipConfig calls that a
+-- reload or a rebind produces into one scan.
+function StopCommAgentSync()
+  if gCommSyncTimer then
+    pcall(function()
+      if type(gCommSyncTimer) == "table" then gCommSyncTimer:Cancel()
+      else C4:KillTimer(gCommSyncTimer) end
+    end)
+    gCommSyncTimer = nil
+  end
+end
+local function scheduleCommAgentSync()
+  StopCommAgentSync()
+  gCommSyncTimer = C4:SetTimer(8000, function()
+    gCommSyncTimer = nil; nudgeCommAgentNow()
+  end, false)
+end
+
 -- Provision the auto-generated SIP account: report it to the proxy (→ Director) and
 -- push it to the device (via the relay). Called on link-up. No dealer entry needed.
 function PushSipConfig()
@@ -676,6 +735,7 @@ function PushSipConfig()
   PushCallCfg()                  -- auto-answer / monitor / mute (live, no re-register)
   PushLevels()                   -- restore persisted ringer/speaker/mic on the device
   RefreshDoorStations()          -- push the door-station set so the device flags doorbells
+  scheduleCommAgentSync()        -- make the Communication agent actually ENROL us
   dbg("provisioned SIP:", user .. "@" .. server)
 end
 

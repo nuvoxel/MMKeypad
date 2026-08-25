@@ -39,6 +39,31 @@ that integration is the host function `MMK_SendDevice()` provided by
 socket — so porting the fill-ins is a small job against whatever version of the
 templates your SDK ships.
 
+## Registering is not enrolling
+
+A freshly added intercom can look completely healthy and still fail every call
+with **"Can't find user"** from the Director's FreeSWITCH.
+
+Reporting our SIP username to the proxy makes the Director provision the
+account, and the device then REGISTERs fine — but Control4's **Communication
+agent** keeps its own SIP directory (`xml_curl`) and only picks up a
+third-party endpoint when it re-scans. Until it does, the endpoint is
+provisioned but not enrolled, and nothing in the driver, the device, or the
+Director log says so.
+
+`driver.lua` handles this: after provisioning it sends
+`SYNC_REGISTERED_DEVICES` to the Communication agent, on an 8-second debounce
+so the Director has finished provisioning the account first. The call is
+idempotent, so it is safe on every link-up, reload, and Director restart.
+
+If calls still land on "Can't find user", turn Debug Mode on and look for:
+
+    Communication agent <id> SYNC_REGISTERED_DEVICES (enrol intercom)
+
+If instead you see `Communication agent not found`, the project has no
+Communication agent installed — add one in Composer (Agents → Communication),
+because without it no third-party intercom can be enrolled at all.
+
 ## Filename is load-bearing
 
 Control4 fixes a driver's proxy set when the driver is first **added** to a
