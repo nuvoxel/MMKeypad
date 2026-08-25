@@ -322,7 +322,8 @@ supply in the 120 V variant). They join over a single ribbon.
 - **Linux kernel 3.0.36** (from `.ko` suffixes `*.3.0.36+`).
 - **Control4 OS 4.0.0** Navigator — the last officially-supported T3 version.
 - EOL: superseded by Control4 **T4** (1920×1200, dual-mic) and **T5** (8"/11",
-  quad-mic). T4/T5 **reuse the T3 back box** (relevant for a hardware-swap path).
+  quad-mic). T4/T5 use their **own** back boxes — they are **not** T3-back-box
+  compatible, so there is no drop-in hardware-swap path from a T4/T5.
 
 ### Kernel modules (driver baseline) — from `/system/lib/modules`
 `mali.ko`, `ump.ko` (GPU) · `vpu_service.ko` (video codec) · `rk29-ipp.ko`,
