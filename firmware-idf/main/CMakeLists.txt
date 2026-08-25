@@ -18,12 +18,12 @@ endif()
 message(STATUS "main: MMK_BOARD='${MMK_BOARD}'")
 
 # Shared (every board): protocol server, discovery, settings web/OTA, config.
-set(srcs   "main.c" "config.c" "net.c" "sddp.c" "device.c")
+set(srcs   "main.c" "config.c" "net.c" "sddp.c" "device.c"
+           "nv_open.c" "nv_identity_open.c" "nv_ota_open.c")
 set(reqs   nvs_flash esp_netif esp_event lwip json esp_hw_support
            esp_http_server esp_http_client esp_https_ota esp-tls mbedtls
            app_update esp_timer esp_driver_i2c esp_driver_gpio
-           spi_flash esp_psram   # device.c hw inventory: esp_flash.h / esp_psram.h
-           nuvoxel_device)
+           spi_flash esp_psram)  # device.c hw inventory: esp_flash.h / esp_psram.h
 
 # LVGL UI sources shared by the display boards.
 # nav_poc.c removed: a navigator-browse render proof-of-concept that was

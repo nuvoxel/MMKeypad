@@ -26,12 +26,6 @@
 
 static const char *TAG = "device";
 
-// Where the keypad phones home for registration/OTA (offline-first: this is
-// never required to function).
-#ifndef DEVICE_CLOUD_URL
-#define DEVICE_CLOUD_URL "https://nuvoxel.com"
-#endif
-
 extern esp_netif_t *mmk_default_netif(void);
 
 static nv_identity_t s_id;
@@ -63,30 +57,15 @@ const char *device_hardware_id(void) { return s_id.hardware_id; }
 const char *device_secret_hex(void) { return s_id.device_secret; }
 const char *device_sku_id(void) { return device_sku(); }
 
-const char *device_reg_text(void) {
-  if (!s_st.have_status) return "Checking\xE2\x80\xA6"; // "Checking…"
-  return s_st.registered ? "Registered" : "Not registered";
-}
-const char *device_pair_code(void) {
-  return (s_st.have_status && !s_st.registered) ? s_st.pairing_code : "";
-}
-bool device_is_licensed(void) { return s_st.licensed; }
-const char *device_tier_text(void) { return s_st.licensed ? s_st.tier : ""; }
+// Open build: no cloud enrollment. The device is always "registered" to itself.
+const char *device_reg_text(void) { return "Standalone"; }
+const char *device_pair_code(void) { return ""; }
 
-// Whole-token match against the comma-joined features from the license.
-bool device_has_feature(const char *name) {
-  if (!s_st.licensed || !name || !name[0]) return false;
-  size_t nl = strlen(name);
-  const char *f = s_st.features;
-  while (*f) {
-    const char *c = strchr(f, ',');
-    size_t len = c ? (size_t)(c - f) : strlen(f);
-    if (len == nl && strncmp(f, name, nl) == 0) return true;
-    if (!c) break;
-    f = c + 1;
-  }
-  return false;
-}
+// Open build: not license-gated. Every unit is fully licensed with all
+// features, so the activation screen never shows and nothing is feature-gated.
+bool device_is_licensed(void) { return true; }
+const char *device_tier_text(void) { return "Open"; }
+bool device_has_feature(const char *name) { (void)name; return true; }
 
 // Verify a token against this device's identity + sku; update in-RAM status.
 static void license_apply_status(const char *token) {
@@ -111,42 +90,9 @@ static void license_apply_status(const char *token) {
   }
 }
 
-// Drop the cached license (NVS + in-RAM status). Only for the confirmed-
-// unclaimed path: the cloud rejected our identity AND issued a pairing code, so
-// this unit was unclaimed server-side. Without this, the stale signed token
-// keeps the unit "licensed" until expiry and the claim screen never returns.
-static void license_clear(void) {
-  if (!s_st.licensed) return;
-  nvs_handle_t h;
-  if (nvs_open(NV_LIC_NS, NVS_READWRITE, &h) == ESP_OK) {
-    nvs_erase_key(h, NV_LIC_KEY);
-    nvs_commit(h);
-    nvs_close(h);
-  }
-  s_st.licensed = false;
-  s_st.tier[0] = '\0';
-  s_st.features[0] = '\0';
-  s_st.trial = false;
-  s_st.trial_days = 0;
-  ESP_LOGW(TAG, "cloud disowned this unit -> cached license cleared");
-}
-
 bool device_is_trial(void) { return s_st.licensed && s_st.trial; }
 
-const char *device_license_label(void) {
-  static char buf[48];
-  if (!s_st.licensed) return "Unlicensed";
-  const char *tier = (strcmp(s_st.tier, "pro") == 0) ? "Pro" : "Base";
-  if (s_st.trial) {
-    if (s_st.trial_days > 0)
-      snprintf(buf, sizeof(buf), "Trial (%s) \xC2\xB7 %d day%s left", tier,
-               s_st.trial_days, s_st.trial_days == 1 ? "" : "s");
-    else
-      snprintf(buf, sizeof(buf), "Trial (%s)", tier);
-    return buf;
-  }
-  return tier;
-}
+const char *device_license_label(void) { return "Open build"; }
 
 // Load a stored license token from NVS and verify it (offline, no network).
 static void license_load(void) {
@@ -193,151 +139,16 @@ void device_init(void) {
   license_load();
 }
 
-static bool have_ip(void) {
-  esp_netif_t *n = mmk_default_netif();
-  esp_netif_ip_info_t ip;
-  return n && esp_netif_get_ip_info(n, &ip) == ESP_OK && ip.ip.addr != 0;
-}
-
-static void checkin_once(bool force_ota) {
-  nv_checkin_result_t r;
-  // Build the report (manifest + live status) for the platform; freed after.
-  char *report = NULL;
-  cJSON *rj = cJSON_CreateObject();
-  if (rj) {
-    device_report_to_json(rj);
-    report = cJSON_PrintUnformatted(rj);
-    cJSON_Delete(rj);
-  }
-  nv_err_t e = nv_checkin(DEVICE_CLOUD_URL, &s_id, device_sku(), fw_version(), report, &r);
-  if (report) cJSON_free(report);
-  if (e == NV_OK) {
-    s_st.registered = true;
-    s_st.update_available = r.update_available;
-    if (r.update_available) {
-      snprintf(s_st.latest_version, sizeof(s_st.latest_version), "%s", r.version);
-    }
-    s_st.have_status = true;
-    ESP_LOGI(TAG, "check-in: registered, update=%d policy=%s", r.update_available, r.policy);
-    // Sync the on-device license to what the platform currently grants, so the
-    // device always reflects the DB tier (not a stale/previously-pushed token).
-    static char tok[1200];
-    if (nv_entitlement_fetch(DEVICE_CLOUD_URL, &s_id, tok, sizeof(tok)) == NV_OK) {
-      device_apply_license(tok);
-    }
-    // Auto-OTA: if a newer build is offered and this device is set to auto-update
-    // (or a manual "Check & Update" forced it), download + verify (sha256) + apply,
-    // then reboot into the new image.
-    if (r.update_available && r.url[0] && (force_ota || strcmp(r.policy, "auto") == 0)) {
-      ESP_LOGI(TAG, "auto-OTA -> %s", r.version);
-      if (nv_ota_apply(r.url, r.sha256) == NV_OK) {
-        ESP_LOGI(TAG, "OTA applied; rebooting");
-        esp_restart();
-      } else {
-        ESP_LOGW(TAG, "OTA failed");
-      }
-    }
-  } else if (e == NV_ERR_IDENTITY) {
-    // Not claimed yet — fetch a pairing code to display for enrollment. The
-    // register response ALSO carries an OTA offer, so a still-unclaimed unit
-    // updates itself rather than shipping stale firmware to the installer.
-    char code[12] = {0};
-    nv_checkin_result_t r2;
-    if (nv_register(DEVICE_CLOUD_URL, &s_id, device_sku(), fw_version(), code, sizeof(code), &r2) == NV_OK) {
-      s_st.registered = false;
-      snprintf(s_st.pairing_code, sizeof(s_st.pairing_code), "%s", code);
-      s_st.update_available = r2.update_available;
-      if (r2.update_available) {
-        snprintf(s_st.latest_version, sizeof(s_st.latest_version), "%s", r2.version);
-      }
-      s_st.have_status = true;
-      ESP_LOGI(TAG, "not registered; pairing code %s (update=%d)", code, r2.update_available);
-      // The server affirmatively disowned us (identity rejected + fresh pairing
-      // code — not a transient network error, which lands in the else branch
-      // below). An unclaimed unit must fall back to the claim screen, so any
-      // license cached from a previous claim is now stale: drop it.
-      license_clear();
-      // Unclaimed devices have no per-device update policy yet, so apply any
-      // offered update. After reboot the device re-registers on the new version
-      // and the offer clears — self-limiting, no loop.
-      if (r2.update_available && r2.url[0]) {
-        ESP_LOGI(TAG, "unclaimed auto-OTA -> %s", r2.version);
-        if (nv_ota_apply(r2.url, r2.sha256) == NV_OK) {
-          ESP_LOGI(TAG, "OTA applied; rebooting");
-          esp_restart();
-        } else {
-          ESP_LOGW(TAG, "unclaimed OTA failed");
-        }
-      }
-    } else {
-      ESP_LOGW(TAG, "register failed");
-    }
-  } else {
-    ESP_LOGW(TAG, "check-in failed: %d", e);
-  }
-}
-
-static void checkin_task(void *arg) {
-  (void)arg;
-  for (;;) {
-    if (have_ip()) {
-      checkin_once(false);
-      uint32_t delay_ms;
-      if (s_st.registered) {
-        delay_ms = 6UL * 60 * 60 * 1000;   // registered: light heartbeat/OTA poll
-      } else if (s_st.have_status) {
-        delay_ms = 10UL * 60 * 1000;       // have a pairing code: refresh before its ~15 min TTL
-      } else {
-        delay_ms = 30UL * 1000;            // check-in failed (e.g. weak WiFi): retry soon, don't stick on "Checking…"
-      }
-      vTaskDelay(pdMS_TO_TICKS(delay_ms));
-    } else {
-      vTaskDelay(pdMS_TO_TICKS(10 * 1000)); // wait for connectivity
-    }
-  }
-}
-
-// Bridge the platform library's relay hooks to the :6700 link. A panel with no
-// route of its own then still checks in (presence, telemetry, and the OTA offer)
-// and can still take a firmware image -- both carried by the Control4 driver,
-// which has the Director's WAN. Installed unconditionally: the relay is only ever
-// consulted when the device's OWN attempt fails, so a panel with internet never
-// touches it.
-static int relay_http(const char *path, const char *body, char *resp, size_t cap, int *status)
-{
-  return net_relay_post(path, body, resp, cap, status);
-}
-static int relay_fetch(const char *url, size_t off, unsigned char *out, size_t cap, bool *eof)
-{
-  return net_relay_fetch(url, off, out, cap, eof);
-}
-
+// Open build: no cloud check-in, no enrollment, no cloud OTA. device_start()
+// has nothing to spawn -- the device is fully functional the moment it boots
+// and connects to Control4 over the :6700 link + SDDP. Firmware updates come
+// from the on-screen updater (GitHub Releases) and local/USB flashing.
 void device_start(void) {
-  nv_http_set_relay(relay_http);
-  nv_ota_set_fetch_relay(relay_fetch);
-  // Cloud check-in defaults to DEVICE_CLOUD_URL (https://nuvoxel.com). A build
-  // can opt out entirely by defining it blank (-D DEVICE_CLOUD_URL=""), e.g. a
-  // from-source device with no account — it still works fully offline, and the
-  // C4-driver license/OTA relay over the :6700 link is unaffected.
-  if (DEVICE_CLOUD_URL[0] == '\0') {
-    ESP_LOGI(TAG, "cloud check-in disabled (DEVICE_CLOUD_URL blank)");
-    return;
-  }
-  xTaskCreate(checkin_task, "nv_checkin", 8192, NULL, 4, NULL);
 }
 
-// Manual "check & update firmware now" (driver action): run one cloud check-in
-// and force-apply an available update regardless of the auto-update policy. No-op
-// if check-in is disabled. Runs off a short-lived task so it never blocks the net
-// receive path that invokes it.
-static void checkin_now_task(void *arg) {
-  (void)arg;
-  if (have_ip()) checkin_once(true);
-  vTaskDelete(NULL);
-}
+// The on-screen updater triggers an OTA directly via nv_ota_apply(); there is
+// no cloud "check now" in the open build.
 void device_ota_check_now(void) {
-  if (DEVICE_CLOUD_URL[0] == '\0') return;
-  xTaskCreate(checkin_now_task, "nv_check1", 8192, NULL, 4, NULL);
 }
 
 // ---- device manifest: model + hardware identifiers + connectivity ----------
@@ -466,15 +277,6 @@ void device_manifest_to_json(cJSON *m) {
   cJSON_AddStringToObject(m, "hwid", s_id.hardware_id);
   cJSON_AddStringToObject(m, "mac", device_mac());
   if (s_driver_ver[0]) cJSON_AddStringToObject(m, "driverVersion", s_driver_ver);
-
-  // Endpoints the device itself uses — the driver surfaces these read-only so the
-  // dealer never hand-configures them (the device is authoritative). Both are the
-  // cloud base today; reported separately so a dedicated firmware host can diverge
-  // later. Omitted when check-in is disabled (blank DEVICE_CLOUD_URL).
-  if (DEVICE_CLOUD_URL[0]) {
-    cJSON_AddStringToObject(m, "cloudUrl", DEVICE_CLOUD_URL);
-    cJSON_AddStringToObject(m, "fwUrl", DEVICE_CLOUD_URL);
-  }
 
   cJSON *disp = cJSON_AddObjectToObject(m, "display");
   cJSON_AddNumberToObject(disp, "w", LCD_WIDTH);

@@ -1,5 +1,10 @@
 # MMKeypad — Linux firmware (ARM panel target)
 
+
+> **Open build — standalone.** Not license-gated, no online service. Entitlement
+> is `nv_open.c` (always valid); identity and OTA are the local `platform/nv_*_t3.c`
+> files. It connects to Control4 over the local network only.
+
 A from-scratch Linux userspace for an ARM (RK3188, Cortex-A9) in-wall touch
 panel: a static `init`, a BusyBox rootfs, Dropbear, wpa_supplicant, and an LVGL
 application that shares its UI and protocol code with the ESP-IDF firmware.

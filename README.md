@@ -67,6 +67,59 @@ prerequisites this repo does not ship.
 produces the `.c4z` and drops it in `~/Documents/Control4/Drivers`. Built `.c4z`
 files are build artifacts and are not committed.
 
+## Flashing a device and connecting it to Control4
+
+The firmware in this repository is **standalone**: it talks to no online service,
+is not license-gated, and connects to a Control4 system entirely over the local
+network. There is no account, no activation, and no cloud check-in — a freshly
+flashed unit boots straight to a working keypad.
+
+### 1. Flash the firmware
+
+**ESP32 boards** (see [`docs/HARDWARE.md`](docs/HARDWARE.md) for which board is
+which):
+
+```sh
+cd firmware-idf
+./board.sh s3 flash monitor      # or: poe | nano | ws43 | matrix
+```
+
+**Control4 T3 panel** — build and flash the Linux image onto a panel you own; you
+supply its own kernel and a couple of tools. Full procedure:
+[`firmware-linux-t3/README.md`](firmware-linux-t3/README.md), with the teardown,
+access method, and variants in [`reference/t3-control4/`](reference/t3-control4/).
+
+On boot the device runs the protocol server on `:6700` and announces itself over
+**SDDP**, so a Control4 Director on the same network discovers it automatically.
+
+### 2. Add the driver in Composer Pro
+
+```sh
+cd driver-keypad && ./build.sh   # -> NuVoxelKeypad.c4z, copied to ~/Documents/Control4/Drivers
+```
+
+Then in **Composer Pro**: the keypad advertises over SDDP, so add it from
+discovered devices — or **System Design → Search → Add Driver**, place it in the
+keypad's room, and bind its **Media Keypad Network** connection to the device.
+That is the whole connection: the driver dials the device's `:6700`, reads the
+room's now-playing state, and relays transport / volume / source. See
+[`driver-keypad/README.md`](driver-keypad/README.md).
+
+> The [`driver-agent/`](driver-agent/) driver (account roster / auto-install) is
+> part of the hosted service and is **not** needed for a standalone install —
+> add the keypad driver directly as above.
+
+For the SIP intercom endpoint, also build `driver-intercom` (it needs Control4
+SDK files — see [`driver-intercom/README.md`](driver-intercom/README.md)).
+
+### Updating firmware
+
+The open build does not auto-update from a cloud. Updates come from **local
+flashing** (`./board.sh <board> flash` over USB, or the T3 flash tooling) and,
+on-screen, from the project's **GitHub Releases** — the panel can list published
+versions and apply one it downloads. (The on-screen release picker is in
+progress; local + USB flashing work today.)
+
 ## What is not in this repository
 
 This is the open part of a product that also has a closed part. Deliberately
@@ -79,9 +132,11 @@ absent:
   (see [`reference/t3-control4/`](reference/t3-control4/)), but the extracted
   Control4 firmware images, APKs, and `/system` contents are not redistributed —
   supply those from a unit you own.
-- **The nuvoxel cloud backend** — device licensing, the OTA manifest service, and
-  the account roster the agent driver reads. The protocol it speaks is
-  documented in [OTA.md](OTA.md); the implementation is not open.
+- **The nuvoxel hosted service** — the account portal, device licensing, and the
+  roster the agent driver reads. The open firmware does not use or need it (it is
+  not license-gated and never phones home); it is simply the closed half of the
+  commercial product. [OTA.md](OTA.md) documents the hosted OTA design for
+  reference; the open build updates locally and from GitHub Releases instead.
 
 ## Licensing
 

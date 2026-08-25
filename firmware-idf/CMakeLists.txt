@@ -3,14 +3,12 @@
 # Flash:  idf.py -p /dev/cu.usbmodem4101 flash monitor
 cmake_minimum_required(VERSION 3.16)
 
-# Shared nuvoxel device-plane client (identity / check-in / OTA / entitlement).
-# Lives at the monorepo root: firmware/components. Override with
-# NUVOXEL_COMPONENTS_DIR if this tree is checked out somewhere unusual.
-# (firmware-idf/ -> apps/mmkeypad -> apps -> <repo root>/firmware/components)
+# Open build: identity / entitlement / OTA are provided locally by main/
+# (nv_open.c, nv_identity_open.c, nv_ota_open.c) -- no external component tree.
+# Point EXTRA_COMPONENT_DIRS at a directory only if you add out-of-tree
+# components via NUVOXEL_COMPONENTS_DIR.
 if(DEFINED ENV{NUVOXEL_COMPONENTS_DIR})
   set(EXTRA_COMPONENT_DIRS "$ENV{NUVOXEL_COMPONENTS_DIR}")
-else()
-  set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../../firmware/components")
 endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

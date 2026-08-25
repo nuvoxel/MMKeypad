@@ -6,7 +6,7 @@
  * the `hello` handshake), but built on POSIX instead of ESP-IDF —
  *   - identity        : nv_identity_t3.c (eFuse-rooted)
  *   - check-in / OTA   : nuvoxel_device nv_client/nv_http (mbedtls TLS)
- *   - entitlement      : nuvoxel_device nv_entitlement (offline P-256 verify)
+ *   - entitlement      : open build -- always valid, all features (nv_open.c)
  *   - license storage  : a flat file under /data (no NVS)
  *   - background poll   : a pthread (no FreeRTOS task)
  */
@@ -35,10 +35,6 @@
 
 // Where the keypad phones home for registration/OTA (offline-first: never
 // required to function). Overridable at build time to match the S3.
-#ifndef DEVICE_CLOUD_URL
-#define DEVICE_CLOUD_URL "https://nuvoxel.com"
-#endif
-
 #define LIC_DIR  "/data/nvx"
 #define LIC_PATH LIC_DIR "/license"
 
@@ -149,30 +145,14 @@ const char *device_hardware_id(void) { return s_id.hardware_id; }
 const char *device_secret_hex(void) { return s_id.device_secret; }
 const char *device_sku_id(void) { return device_sku(); }
 
-const char *device_reg_text(void) {
-  if (!s_st.have_status) return "Checking\xE2\x80\xA6"; // "Checking…"
-  return s_st.registered ? "Registered" : "Not registered";
-}
-const char *device_pair_code(void) {
-  return (s_st.have_status && !s_st.registered) ? s_st.pairing_code : "";
-}
-bool device_is_licensed(void) { return s_st.licensed; }
-const char *device_tier_text(void) { return s_st.licensed ? s_st.tier : ""; }
+// Open build: no cloud enrollment. The device is always "registered" to itself.
+const char *device_reg_text(void) { return "Standalone"; }
+const char *device_pair_code(void) { return ""; }
 
-// Whole-token match against the comma-joined features from the license.
-bool device_has_feature(const char *name) {
-  if (!s_st.licensed || !name || !name[0]) return false;
-  size_t nl = strlen(name);
-  const char *f = s_st.features;
-  while (*f) {
-    const char *c = strchr(f, ',');
-    size_t len = c ? (size_t)(c - f) : strlen(f);
-    if (len == nl && strncmp(f, name, nl) == 0) return true;
-    if (!c) break;
-    f = c + 1;
-  }
-  return false;
-}
+// Open build: not license-gated. Fully licensed, all features, no server.
+bool device_is_licensed(void) { return true; }
+const char *device_tier_text(void) { return "Open"; }
+bool device_has_feature(const char *name) { (void)name; return true; }
 
 // Verify a token against this device's identity + sku; update in-RAM status.
 static void license_apply_status(const char *token) {
@@ -197,37 +177,10 @@ static void license_apply_status(const char *token) {
   }
 }
 
-// Drop the cached license (file + in-RAM status). Only for the confirmed-
-// unclaimed path: the cloud rejected our identity AND issued a pairing code, so
-// this unit was unclaimed server-side. Without this, the stale signed token
-// keeps the unit "licensed" until expiry and the claim screen never returns.
-static void license_clear(void) {
-  if (!s_st.licensed) return;
-  remove(LIC_PATH);
-  s_st.licensed = false;
-  s_st.tier[0] = '\0';
-  s_st.features[0] = '\0';
-  s_st.trial = false;
-  s_st.trial_days = 0;
-  fprintf(stderr, "device: cloud disowned this unit -> cached license cleared\n");
-}
 
 bool device_is_trial(void) { return s_st.licensed && s_st.trial; }
 
-const char *device_license_label(void) {
-  static char buf[48];
-  if (!s_st.licensed) return "Unlicensed";
-  const char *tier = (strcmp(s_st.tier, "pro") == 0) ? "Pro" : "Base";
-  if (s_st.trial) {
-    if (s_st.trial_days > 0)
-      snprintf(buf, sizeof(buf), "Trial (%s) \xC2\xB7 %d day%s left", tier,
-               s_st.trial_days, s_st.trial_days == 1 ? "" : "s");
-    else
-      snprintf(buf, sizeof(buf), "Trial (%s)", tier);
-    return buf;
-  }
-  return tier;
-}
+const char *device_license_label(void) { return "Open build"; }
 
 // Load a stored license token from /data and verify it (offline, no network).
 static void license_load(void) {
@@ -277,136 +230,16 @@ void device_init(void) {
   fprintf(stderr, "device: board=%s model=%s (%s) sku=%s\n", board_name(), model_friendly(), model_code(), device_sku());
 }
 
-// A non-loopback IPv4 address on any interface means we can try to check in.
-static bool have_ip(void) {
-  struct ifaddrs *ifa, *p;
-  bool up = false;
-  if (getifaddrs(&ifa) != 0) return false;
-  for (p = ifa; p; p = p->ifa_next) {
-    if (!p->ifa_addr || p->ifa_addr->sa_family != AF_INET) continue;
-    struct sockaddr_in *s = (struct sockaddr_in *)p->ifa_addr;
-    uint32_t a = s->sin_addr.s_addr;
-    if (a != 0 && a != htonl(0x7f000001)) { up = true; break; }
-  }
-  freeifaddrs(ifa);
-  return up;
-}
-
-static void checkin_once(bool force_ota) {
-  nv_checkin_result_t r;
-  // Build the report (manifest + live status) for the platform; freed after.
-  char *report = NULL;
-  cJSON *rj = cJSON_CreateObject();
-  if (rj) {
-    device_report_to_json(rj);
-    report = cJSON_PrintUnformatted(rj);
-    cJSON_Delete(rj);
-  }
-  nv_err_t e = nv_checkin(DEVICE_CLOUD_URL, &s_id, device_sku(), fw_version(), report, &r);
-  if (report) cJSON_free(report);
-  if (e == NV_OK) {
-    s_st.registered = true;
-    s_st.update_available = r.update_available;
-    if (r.update_available)
-      snprintf(s_st.latest_version, sizeof(s_st.latest_version), "%s", r.version);
-    s_st.have_status = true;
-    fprintf(stderr, "device: check-in ok, update=%d policy=%s\n",
-            r.update_available, r.policy);
-    // Sync the on-device license to what the platform currently grants.
-    static char tok[1600];
-    if (nv_entitlement_fetch(DEVICE_CLOUD_URL, &s_id, tok, sizeof(tok)) == NV_OK)
-      device_apply_license(tok);
-    // Auto-OTA: newer build offered + station set to auto → download, verify
-    // (sha256), apply, then restart into it. (nv_ota_apply is the T3 updater.)
-    if (r.update_available && r.url[0] && (force_ota || strcmp(r.policy, "auto") == 0)) {
-      fprintf(stderr, "device: auto-OTA -> %s\n", r.version);
-      if (nv_ota_apply(r.url, r.sha256) == NV_OK) {
-        fprintf(stderr, "device: OTA applied; restarting\n");
-        // nv_ota_apply restarts on success; if it returns, fall through.
-      } else {
-        fprintf(stderr, "device: OTA failed\n");
-      }
-    }
-  } else if (e == NV_ERR_IDENTITY) {
-    // Not claimed yet — fetch a pairing code to display for enrollment. The
-    // register response also carries an OTA offer (unclaimed devices update too).
-    char code[12] = {0};
-    nv_checkin_result_t r2;
-    if (nv_register(DEVICE_CLOUD_URL, &s_id, device_sku(), fw_version(), code, sizeof(code), &r2) == NV_OK) {
-      s_st.registered = false;
-      snprintf(s_st.pairing_code, sizeof(s_st.pairing_code), "%s", code);
-      s_st.update_available = r2.update_available;
-      if (r2.update_available)
-        snprintf(s_st.latest_version, sizeof(s_st.latest_version), "%s", r2.version);
-      s_st.have_status = true;
-      fprintf(stderr, "device: not registered; pairing code %s (update=%d)\n",
-              code, r2.update_available);
-      // The server affirmatively disowned us (identity rejected + fresh pairing
-      // code — not a transient network error, which lands in the else branch
-      // below). An unclaimed unit must fall back to the claim screen, so any
-      // license cached from a previous claim is now stale: drop it.
-      license_clear();
-      // Unclaimed: no per-device policy yet, so apply any offered update.
-      // nv_ota_apply restarts on success; falls through on failure.
-      if (r2.update_available && r2.url[0]) {
-        fprintf(stderr, "device: unclaimed OTA -> %s\n", r2.version);
-        if (nv_ota_apply(r2.url, r2.sha256) != NV_OK)
-          fprintf(stderr, "device: unclaimed OTA failed\n");
-      }
-    } else {
-      fprintf(stderr, "device: register failed\n");
-    }
-  } else {
-    fprintf(stderr, "device: check-in failed: %d\n", e);
-  }
-  // Durable check-in outcome (app stderr goes to /dev/console, uncapturable) so
-  // the backend round-trip can be verified in the field: nv error / registered /
-  // pairing code. Overwritten each check-in.
-  FILE *cl = fopen("/data/checkin.log", "w");
-  if (cl) {
-    fprintf(cl, "nv_checkin=%d have_status=%d registered=%d pairing_code=\"%s\"\n",
-            (int)e, (int)s_st.have_status, (int)s_st.registered, s_st.pairing_code);
-    fclose(cl);
-  }
-}
-
-static void *checkin_thread(void *arg) {
-  (void)arg;
-  for (;;) {
-    unsigned delay_s;
-    if (have_ip()) {
-      checkin_once(false);
-      if (s_st.registered)
-        delay_s = 6u * 60 * 60; // registered: light heartbeat/OTA poll
-      else if (s_st.have_status)
-        delay_s = 10u * 60; // have a pairing code: refresh before its ~15 min TTL
-      else
-        delay_s = 30; // check-in failed (e.g. no net yet): retry soon
-    } else {
-      delay_s = 10; // wait for connectivity
-    }
-    sleep(delay_s);
-  }
-  return NULL;
-}
-
+// Open build: no cloud check-in / enrollment / cloud OTA. device_start() has
+// nothing to spawn -- the panel is fully functional at boot and connects to
+// Control4 over the :6700 link + SDDP. Updates come from the on-screen updater
+// (GitHub Releases) and local/USB flashing, never a server.
 void device_start(void) {
-  pthread_t t;
-  pthread_create(&t, NULL, checkin_thread, NULL);
-  pthread_detach(t);
 }
 
-// Manual "check & update firmware now" (driver action → net.c ota with no url):
-// one forced cloud check-in + update, off a detached thread.
-static void *checkin_now_thread(void *arg) {
-  (void)arg;
-  if (have_ip()) checkin_once(true);
-  return NULL;
-}
+// The on-screen updater applies an image directly via nv_ota_apply(); no cloud
+// "check now" in the open build.
 void device_ota_check_now(void) {
-  if (DEVICE_CLOUD_URL[0] == '\0') return;
-  pthread_t t;
-  if (pthread_create(&t, NULL, checkin_now_thread, NULL) == 0) pthread_detach(t);
 }
 
 // ---- device manifest: model + hardware identifiers + connectivity ----------

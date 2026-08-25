@@ -1,5 +1,12 @@
 # MMKeypad — native ESP-IDF firmware
 
+
+> **Open build — standalone.** This firmware is not license-gated and talks to no
+> online service. Identity, entitlement, and OTA-apply are provided locally by
+> `main/nv_open.c`, `main/nv_identity_open.c`, and `main/nv_ota_open.c`; there is
+> no cloud check-in. It connects to Control4 purely over the local network
+> (`:6700` + SDDP).
+
 This is the firmware tree — native **ESP-IDF + LVGL**, one FreeRTOS scheduler,
 no Arduino core underneath. It implements the now-playing/keypad UI, the
 protocol client + SDDP discovery, cover-art decode, and (where the board has

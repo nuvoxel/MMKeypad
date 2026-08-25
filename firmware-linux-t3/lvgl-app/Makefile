@@ -19,12 +19,6 @@ TINYALSA := ../thirdparty/tinyalsa
 LIBRE    := ../thirdparty/libre
 BUILD    := build
 
-# Shared nuvoxel device-plane client (identity/check-in/OTA/entitlement),
-# same component the S3 uses. Cross-repo sibling by default; override with
-# NUVOXEL_COMPONENTS_DIR to relocate (mirrors firmware-idf/CMakeLists.txt).
-NVDEV     ?= $(if $(NUVOXEL_COMPONENTS_DIR),$(NUVOXEL_COMPONENTS_DIR)/nuvoxel_device,../../../../firmware/components/nuvoxel_device)
-NVDEV_INC := $(NVDEV)/include
-
 # The version this binary REPORTS at check-in. It must match, byte for byte, the
 # version publish-fw.sh records in the OTA manifest -- device.c updates whenever
 # manifest != current, so a build that misreports its version re-downloads the
@@ -39,7 +33,7 @@ CFLAGS := -target $(TARGET) -mcpu=$(MCPU) -static -Os \
           -DMMK_BOARD_T3 \
           -I. -Iinclude_alias -I$(PLAT) -I$(COMPAT) -I$(CJSON) \
           -I$(ESPJPEG) -I$(ESPJPEG)/tjpgd -I$(MBEDTLS)/include \
-          -I$(TINYALSA)/include -I$(NVDEV_INC) -I$(LIBRE)/include \
+          -I$(TINYALSA)/include -I$(LIBRE)/include \
           -I$(IDF_MAIN) -I$(LVGL_DIR) -I$(LVGL_DIR)/src \
           -DLV_CONF_INCLUDE_SIMPLE \
           -ffunction-sections -fdata-sections
@@ -61,7 +55,8 @@ APP_SRCS := shared/ui.c shared/net.c shared/config.c shared/art.c shared/sddp.c 
             $(IDF_MAIN)/mmk_text_24.c $(IDF_MAIN)/mmk_text_32.c \
             $(IDF_MAIN)/mmk_icons_24.c $(IDF_MAIN)/mmk_icons_34.c \
             $(IDF_MAIN)/mmk_roboto.c $(IDF_MAIN)/mmk_lucide.c \
-            $(IDF_MAIN)/mmk_c4icons.c $(IDF_MAIN)/mmk_ha_icons.c
+            $(IDF_MAIN)/mmk_c4icons.c $(IDF_MAIN)/mmk_ha_icons.c \
+            $(IDF_MAIN)/nv_open.c
 
 # Platform layer (incl. real album-art HTTPS client + tinyalsa audio backend).
 PLAT_SRCS := $(PLAT)/bsp_linux.c $(PLAT)/stubs.c $(PLAT)/nvs_file.c \
@@ -70,16 +65,9 @@ PLAT_SRCS := $(PLAT)/bsp_linux.c $(PLAT)/stubs.c $(PLAT)/nvs_file.c \
 
 # Device-plane, target-native pieces: identity from the RK3188 eFuse, the
 # device.h implementation, the Linux app-overlay OTA, and the baked license
-# public key. These stand in for nuvoxel_device's nv_identity.c / nv_ota.c.
+# public key. Open build: entitlement is nv_open.c (always-valid).
 PLAT_SRCS += $(PLAT)/nv_identity_t3.c $(PLAT)/device_t3.c \
              $(PLAT)/nv_ota_t3.c $(PLAT)/nv_license_pubkey.c
-
-# The rest of nuvoxel_device, reused verbatim but compiled with -DESP_PLATFORM
-# so it takes the embedded backends (mbedtls + esp_http_client shim) instead of
-# the host OpenSSL/libcurl ones. Built as separate objects because the main app
-# must NOT define ESP_PLATFORM.
-NVDEV_SRCS  := nv_crypto.c nv_http.c nv_client.c nv_entitlement.c nv_json.c
-NVDEV_OBJS  := $(addprefix $(BUILD)/nvdev/,$(NVDEV_SRCS:.c=.o))
 
 # tinyalsa (hardware backend; snd_card_plugin.c provides snd_utils_* dev-node
 # helpers the hw backend needs — its dlopen plugin path is unused for hw cards).
@@ -110,20 +98,15 @@ HDR_DEPS := lv_conf.h Makefile ../../firmware-idf/version.txt \
 .PHONY: all clean
 all: $(BUILD)/mmk-app
 
-# nuvoxel_device reuse objects — compiled with -DESP_PLATFORM (embedded backend).
-$(BUILD)/nvdev/%.o: $(NVDEV)/src/%.c
-	mkdir -p $(BUILD)/nvdev
-	$(ZIG) $(CFLAGS) -DESP_PLATFORM -c $< -o $@
-
 # Fetch + cross-build libre on first use (mirrors how build-wpa.sh populates the
 # gitignored thirdparty/ tree). Rebuilding it is slow and it changes only when the
 # pinned tag moves, so this is an order-only-style existence check, not a timestamp dep.
 $(LIBRE_A):
 	../tools/build-libre.sh
 
-$(BUILD)/mmk-app: $(SRCS) $(NVDEV_OBJS) $(HDR_DEPS) $(LIBRE_A)
+$(BUILD)/mmk-app: $(SRCS) $(HDR_DEPS) $(LIBRE_A)
 	mkdir -p $(BUILD)
-	$(ZIG) $(CFLAGS) -o $@ $(SRCS) $(NVDEV_OBJS) $(LIBRE_A) $(LDFLAGS)
+	$(ZIG) $(CFLAGS) -o $@ $(SRCS) $(LIBRE_A) $(LDFLAGS)
 	@echo "built $@"
 
 clean:
