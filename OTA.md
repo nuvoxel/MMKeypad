@@ -1,104 +1,69 @@
-# MMKeypad OTA — publishing & auto-update
+# MMKeypad firmware updates
 
-How firmware reaches devices in the field, for every keypad SKU. One control
-plane (check-in → manifest → policy → download → verify → apply → rollback); two
-install mechanisms (ESP native A/B, T3 split-init overlays).
+The open firmware talks to no online service, so there is no cloud check-in,
+manifest, or auto-update policy. Firmware reaches a device three ways:
 
-## The shared control plane
+1. **On-screen, from GitHub Releases** — the primary path.
+2. **USB flashing** — the fallback, and how you flash the very first image.
+3. **From source** — the only path for the T3 (RK3188) Linux build.
 
-Every device, on a periodic **check-in** to `DEVICE_CLOUD_URL` (`https://nuvoxel.com`),
-sends its **identity + SKU + current `fw_version`**. The platform's `/api/v1/fw/check`
-resolves the SKU → firmware image id (`SkuDef.fw`) → the newest entry for the
-device's channel in the **firmware manifest**, and returns
-`{update_available, version, url, sha256, policy}`.
+## On-screen updater (ESP boards)
 
-- **`policy`** (platform/station setting) gates auto-apply: `auto` = download +
-  apply now; `notify` = surface it but wait; `off` = ignore. The device only
-  self-updates on `auto` (or an explicit "check now").
-- Update happens on the **next check-in after** a newer version is published +
-  the platform is deployed — within the check-in interval, not instantly.
-- Integrity is **sha256** over HTTPS; authenticity is the committed manifest
-  (+ ESP Secure Boot v2 signature on ESP images).
+On the panel: **Settings → Check for update**. The keypad queries this project's
+GitHub Releases, lists the images published for **its own SKU**
+(`device_sku_id()` → `mmk-s3` / `mmk-poe` / `mmk-nano` / `mmk-ws43`), and installs
+the one you pick — it downloads the asset over HTTPS, writes it to the inactive
+OTA partition (`esp_https_ota`), and restarts into it. The running version is
+marked *installed* in the list.
 
-## Publishing (all SKUs): `firmware-idf/tools/publish-fw.sh`
+Implementation: [`firmware-idf/main/fwupdate.c`](firmware-idf/main/fwupdate.c)
+(GitHub Releases client + apply) and the picker overlay in
+[`firmware-idf/main/ui.c`](firmware-idf/main/ui.c). The releases endpoint and the
+asset-name convention are the only contract:
 
 ```
-publish-fw.sh <version|auto> <channel> [sku ...]
-  publish-fw.sh auto beta t3          # T3 only, today's next seq
-  publish-fw.sh auto stable           # every SKU (s3 poe nano ws43 matrix t3)
-  publish-fw.sh 2026.07.18.001FW beta t3   # explicit version
+GET https://api.github.com/repos/nuvoxel/MMKeypad/releases
+asset name:  <sku>-<version>.bin      e.g.  mmk-s3-2026.08.24.001.bin
 ```
 
-Per SKU it builds a **release** image, hashes it, uploads to the public Blob
-container (`keypad/<fw-id>/…`), and records `{version, url, sha256, size,
-format, formatVersion}` in the manifest (`../nuvoxel/apps/web/public/fw/
-manifest.json`, top-level `schemaVersion`). **Then commit + deploy `nuvoxel`** to
-serve it (the manifest is a static asset the check handler reads).
+## Publishing a release
 
-Prereqs: `FW_STORAGE_KEY` or `az login` (Blob upload); `FW_SIGN_KEY` **only** when
-an ESP SKU is in the set (the T3 is sha256-only, no Secure Boot). Version scheme
-is the shared date-based `YYYY.MM.DD.NNN` + `FW` (`tools/nvversion.sh`); `auto`
-advances `version.txt`, which the build stamps as `fw_version()` so the device
-reports EXACTLY what the manifest records (the OTA "is it newer?" compare).
+Build the image for each SKU and attach them to a GitHub Release named for the
+version. The asset name is load-bearing (the on-screen picker filters by
+`<sku>-` prefix and detects the installed version from the version substring).
 
-## ESP SKUs (`mmk-s3`, `mmk-poe`, `mmk-nano`, `mmk-ws43`, `mmk-matrix` — art-only, no touch/audio)
+```sh
+cd firmware-idf
+VER=2026.08.24.001
+for b in s3 poe nano ws43; do ./board.sh $b build; done
+# rename each build/*/mmkeypad_idf.bin to mmk-<sku>-$VER.bin, then:
+gh release create v$VER --repo nuvoxel/MMKeypad --target main \
+  mmk-s3-$VER.bin mmk-poe-$VER.bin mmk-nano-$VER.bin mmk-ws43-$VER.bin
+```
 
-- **Mechanism:** native ESP-IDF OTA. The app is a single monolithic image flashed
-  to an inactive **A/B partition** (`ota_0`/`ota_1` + `ota_data`); on the next
-  boot it runs, and a healthy run marks it valid — a boot failure **rolls back**
-  to the previous partition (`esp_ota` rollback). Full-image update, no separate
-  kernel/init to worry about.
-- **Artifact:** a Secure-Boot-v2-**signed** `.bin` (`format: esp-bin`). Publish
-  also emits a merged first-flash image + an esp-web-tools manifest for the
-  in-browser add-device flasher.
-- **What updates:** everything (the whole firmware). Bootloader stays.
+Version scheme is the shared date-based `YYYY.MM.DD.NNN` + `FW`
+(`tools/nvversion.sh`); `firmware-idf/version.txt` is what the build stamps as
+`fw_version()`, so the device reports exactly what the release tag says.
 
-## T3 SKU (`mmk-t3`, incl. size variants `mmk-t3-7`/`-10` → same `fw: mmk-t3`)
+Integrity/authenticity: the download is TLS-authenticated to `github.com` /
+`objects.githubusercontent.com` against the bundled CA roots, and `esp_https_ota`
+validates the image header and app descriptor before it boots. (ESP Secure Boot
+is not enabled in the open build.)
 
-The T3 is repurposed Control4 glass running our **Linux** userspace, so there's
-no monolithic app to A/B-swap — there's a kernel, an init, and an LVGL app. We
-make the two things that ever change **OTA-updatable via `/data` overlays**, and
-leave the (stock, never-changing) kernel fixed:
+## USB flashing
 
-- **Split init (`init.c`, one binary, two roles):** a **bootstrap** baked into
-  `boot.img` (PID 1, never updated) does the can't-fail bring-up — mount
-  `/dev`/`/proc`/`/sys`, NAND, `/data`, `/system`, network + dropbear + USB serial
-  so the unit is **always reachable** — then execs `/data/init.overlay` if
-  installed + healthy, else runs a built-in worker. The overlay (same binary,
-  `"overlay"` arg) runs the worker (wifi detect+load, app launch/respawn/OTA) and
-  commits itself after `INIT_CONFIRM_SEC`. A crashing overlay (PID1 panic →
-  auto-reboot; we set `kernel.panic`) climbs a **trial counter** until the
-  bootstrap quarantines it (`.bad`) and falls back to built-in — no brick, no
-  manual power-cycle. The boot partition is **never rewritten at runtime**.
-- **App overlay (`/data/mmkeypad`):** init prefers it over the factory
-  `/usr/bin/mmkeypad`; crash-loops roll back to `.prev`/factory.
-- **Artifact:** a **versioned tar bundle** (`format: t3-bundle`, `formatVersion`)
-  carrying `meta.json` + `mmkeypad` (app) + `init.overlay` (init). `nv_ota_t3.c`:
-  download → sha256 → **gate on `formatVersion`** (refuse a format newer than
-  `T3_BUNDLE_MAX`) → extract → install both overlays (each keeping `.prev`) → if
-  the init overlay changed, reset its trials + **reboot** so the bootstrap runs
-  the new init under rollback; else exit for PID 1 to respawn the app.
-- **What updates:** app + init (every real release). **Fixed:** the stock RK3188
-  kernel — byte-identical across units, panel/peripherals auto-detected at
-  runtime, so it never needs to change. (If it ever did: a `flash.sh --net`
-  reflash, not OTA — see `firmware-linux-t3/README.md`.)
+The fallback, and how a fresh board gets its first image:
 
-## Versioning (so schema/format can evolve safely)
+```sh
+cd firmware-idf
+./board.sh ws43 -p /dev/cu.usbmodemXXXX flash monitor   # or s3 | poe | nano | matrix
+```
 
-- **`schemaVersion`** (manifest, top-level) — the manifest structure. Bump on a
-  structural change; tooling/platform gate on it.
-- **`formatVersion`** (per entry + inside the T3 bundle's `meta.json`) — the
-  artifact layout. The device **refuses** a bundle whose `formatVersion` exceeds
-  what it understands (`T3_BUNDLE_MAX`) rather than mis-installing — so an old
-  device is safe against a newer format.
-- Bump-gated in the publisher via `MANIFEST_SCHEMA` / `T3_BUNDLE_VERSION`.
+## T3 (RK3188 Linux) updates
 
-## Releasing, end to end
-
-1. `publish-fw.sh auto <channel> [skus]` — builds, uploads, updates the manifest,
-   bumps `version.txt`.
-2. Commit `version.txt` (+ `publish-fw.sh` if changed) in this repo; commit the
-   manifest in `nuvoxel` and **push** — CI (`.github/workflows/deploy.yml`)
-   deploys and the new manifest is served.
-3. On their next check-in, `auto`-policy devices pull + apply + (self-)rollback on
-   failure. ESP via A/B; T3 via app+init overlays.
+The T3 build is not an ESP app image and is not published as a release asset. Its
+update mechanism is the persistent app/init **overlay swap** applied by
+[`firmware-linux-t3/platform/nv_ota_t3.c`](firmware-linux-t3/platform/nv_ota_t3.c)
+(download → sha256 → swap `/data/mmkeypad` + `/data/init.overlay` → reboot, with
+crash-loop rollback), and it is flashed/updated from source — see
+[`firmware-linux-t3/README.md`](firmware-linux-t3/README.md).

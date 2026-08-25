@@ -43,7 +43,7 @@
 
   <h2>Installation</h2>
   <ul>
-    <li>Power the keypad and connect it to the network (Wi-Fi setup via the on-device portal).</li>
+    <li>Power the keypad and connect it to the network (Wi-Fi setup via the on-device setup page).</li>
     <li>The keypad advertises over <strong>SDDP</strong> — add it from Composer's discovered
         devices, or add the <em>Media Keypad</em> driver and bind its <strong>Media Keypad
         Network</strong> connection to the device.</li>
@@ -60,15 +60,15 @@
   <h2>Key properties</h2>
   <table>
     <tr><th>Sources</th><td>Which sources the on-screen picker offers: Listen, Watch, or Both.</td></tr>
-    <tr><th>Portal Settings</th><td>Read-only. The keypad's settings are owned by the NuVoxel portal and mirrored here: edits made in Composer are pushed up, and portal edits are pulled down. If both change at once, the portal wins.</td></tr>
     <tr><th>Display Orientation / Layout</th><td>Screen rotation and now-playing layout (Cover / Fit / Compact).</td></tr>
     <tr><th>Active / Idle Brightness</th><td>Backlight while active and after the idle timeout (Idle = <em>Screen off</em> turns the display fully dark; a touch wakes it).</td></tr>
     <tr><th>Idle Timeout</th><td>How long after the last touch the screen dims/sleeps. Never dims while media is playing.</td></tr>
     <tr><th>Button Style / Background / Halo</th><td>Keypad button appearance, background gradient, and the RGB accent LED.</td></tr>
   </table>
 
-  <div class="note">Firmware updates are delivered over the air — set the
-  <strong>Firmware Update URL</strong> and run <em>Check &amp; Update Firmware</em>.</div>
+  <div class="note">Firmware updates are done on the keypad itself: <strong>Settings &rarr;
+  Check for update</strong> lists the images published on the project's GitHub Releases and
+  installs the one you pick. USB flashing also works.</div>
 
   <footer>© 2026 NuVoxel · shop.nuvoxel.com</footer>
 </div>

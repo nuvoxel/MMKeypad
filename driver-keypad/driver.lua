@@ -12,9 +12,9 @@
     5002 keypad (PRIMARY)  — programmable on-screen buttons + LEDs
     5003 intercomproxy     — SIP intercom endpoint (see intercom.lua)
 
-  Settings are PORTAL-authoritative: the nuvoxel portal owns the configuration and
-  this driver mirrors it into Composer properties both ways (see "Portal settings
-  mirror" below). Composer stays editable; the portal wins on conflict.
+  Settings are owned by the driver's Composer properties (local; there is no
+  online service). An edit is applied straight to the device over the :6700
+  protocol.
 
   Each keypad is an independent IP device. The DEVICE listens (TCP server);
   THIS driver connects OUT to it via a network binding (6001), so the installer
@@ -78,7 +78,7 @@ KEYPAD_MAX     = 64
 -- the device's SIP/call traffic to/from it over a control binding (the firmware :6700
 -- server is single-client, so there's no second connection). See INTERCOM-*.md.
 RELAY_BINDING  = 700  -- CONTROL binding the companion intercom driver consumes
-INTERCOM_C4Z   = "NuVoxelKeypadIntercom.c4z"  -- installed + bound by the NuVoxel Agent when licensed
+INTERCOM_C4Z   = "NuVoxelKeypadIntercom.c4z"  -- the companion intercom endpoint driver
 
 print("NuVoxelKeypad: driver.lua loading v" .. DRIVER_VERSION)
 
@@ -108,7 +108,6 @@ local ROOM_VAR = {
 -- Runtime state -------------------------------------------------------------
 local gPollMs    = 1000
 local gConnected = false
-local gOtaAutoChecked = false     -- once-per-session guard for the auto firmware check on first connect
 local gRoom      = nil            -- the room this instance is placed in
 local gRoomSessionDev = nil       -- our room's current media-session device id (the
                                   -- <deviceid> in room var 1031). "" = idle/no session,
@@ -215,23 +214,9 @@ function RelayRxTick(json)
 end
 local gDeviceManifest = nil       -- device's self-described manifest (model/hw ids/connectivity/power/caps)
 local gAggWatchId = nil          -- digital-audio aggregator device currently var-watched
-local gDevHwid   = nil            -- device identity (from hello), kept for the periodic license/name refresh
+local gDevHwid   = nil            -- device identity (from hello), pinned on first use
 local gDevSecret = nil
 local gDevSku    = nil
-local gLicenseTimer = nil         -- repeating license + name + SETTINGS refresh (FetchAndPushLicense)
-local LICENSE_REFRESH_MS = 600000 -- 10 min: re-fetch license/name/settings so portal edits reach C4 without a reconnect
-local gSettingsRev  = nil         -- settingsRev of the portal state we last applied (nil = never pulled)
-local gApplying     = false       -- true while writing portal values into Properties (suppresses push-back)
-local gSettingsPush = nil         -- debounce timer for a Composer edit -> portal PATCH
--- Floor on cloud round-trips (see SyncSettingsNow). Declared here, with the rest of
--- the sync state, because OnDriverDestroyed's teardown cancels gSyncDeferred and a
--- local declared further down would not be in scope there -- the cancel would
--- silently miss and the timer could fire into a half-reloaded driver.
-local SYNC_MIN_GAP_S = 60
-local gLastSyncAt    = 0
-local gSyncDeferred  = nil        -- pending boundary sync
-local gSyncDeferPush = false      -- strongest pushLocal seen while deferring
-gLastSettingsJson   = nil         -- last state synced with the portal (push loop breaker)
 
 -- normalize a MAC to lowercase hex, no separators. Defined up here (not beside
 -- the SDDP code that also uses it) because OnDriverLateInit calls it — a `local
@@ -292,9 +277,8 @@ function OnDriverInit(initType)
   print("NuVoxelKeypad: OnDriverInit (" .. tostring(initType) .. ")")
   C4:UpdateProperty("Driver Version", DRIVER_VERSION)
   setStatus("Not bound")
-  -- Publish our identity as a read-only, hidden variable so the NuVoxel Agent can
-  -- reconcile this instance to a roster device by identity (see HWID_VAR). Created
-  -- empty here; filled once we learn our MAC (persist load / agent handoff / hello).
+  -- Publish our identity as a read-only, hidden variable (see HWID_VAR). Created
+  -- empty here; filled once we learn our MAC (persist load / hello).
   pcall(function() C4:AddVariable(HWID_VAR, "", "STRING", true, true) end)
   -- FIRST, before anything can touch a binding id: dynamic bindings do not survive a
   -- Director restart, so re-create the ones we own or every link past button 6 in the
@@ -353,9 +337,6 @@ function OnDriverLateInit(initType)
   TryConnect()
   StartSddp()
 
-  -- Anonymous usage ping: the driver is free + freely downloadable; this lets
-  -- us see it's in use (adoption/support), grants nothing, gates nothing.
-  ActivateDriver()
 end
 
 -- Called before the driver is reloaded (DIT_UPDATING) or removed/shutdown (DIT_LOADED).
@@ -373,9 +354,6 @@ function OnDriverDestroyed(initType)
   gEventDriven = false
   cancelTimer(gKpTimer);        gKpTimer = nil
   cancelTimer(gReconnectTimer); gReconnectTimer = nil
-  cancelTimer(gLicenseTimer);   gLicenseTimer = nil
-  cancelTimer(gSettingsPush);   gSettingsPush = nil
-  cancelTimer(gSyncDeferred);   gSyncDeferred = nil
   cancelTimer(gPushPending);    gPushPending = nil
   for _, t in ipairs(gPushTimers) do cancelTimer(t) end
   gPushTimers = {}
@@ -385,10 +363,6 @@ end
 
 function OnPropertyChanged(prop)
   dbg("Property changed:", prop, "=", tostring(Properties[prop]))
-  -- A dealer edit in Composer is a WRITE to portal-owned state, so mirror it up. Skipped
-  -- while we're applying a portal pull (gApplying) — C4:UpdateProperty doesn't fire this
-  -- callback anyway, but a pull must never be able to echo back as a push.
-  if not gApplying and SETTING_PROPS[prop] then QueueSettingsPush() end
   if prop == "Device MAC Override" then
     local m = normMac(Properties[prop])
     if m ~= "" then SetTargetMac(m, "manual override") end
@@ -415,9 +389,9 @@ function ExecuteCommand(cmd, params)
     cmd = tostring(params.ACTION); params.ACTION = nil
     dbg("  action ->", cmd)
   end
-  -- The NuVoxel agent hands us our own keypad's MAC right after AddDevice, so we
-  -- can SDDP-find and bind it without a dealer. (Also received in ReceivedFromProxy
-  -- as a belt — SendToDevice delivery to a proxy device isn't documented precisely.)
+  -- A caller can hand us our keypad's MAC (e.g. right after AddDevice) so we can
+  -- SDDP-find and bind it. (Also received in ReceivedFromProxy as a belt —
+  -- SendToDevice delivery to a proxy device isn't documented precisely.)
   if cmd == "NV_SET_TARGET_MAC" and params and params.mac then
     SetTargetMac(params.mac, "agent handoff"); return
   end
@@ -433,8 +407,8 @@ function ExecuteCommand(cmd, params)
   elseif cmd == "MMK_WHOIS" then
     RelaySetIntercom(params and params.from); RelayHello(); return
   elseif cmd == "BindIntercom" then
-    -- The NuVoxel Agent installs the intercom driver, then hands us its device id to
-    -- bind the relay (C4:Bind must be called by one of the two parties). Idempotent.
+    -- Bind the relay to the companion intercom driver by its device id (C4:Bind
+    -- must be called by one of the two parties). Idempotent.
     local id = params and tonumber(params.deviceId)
     if id then
       pcall(function() C4:Bind(myDeviceId(), RELAY_BINDING, id, RELAY_BINDING, "MMKEYPAD_INTERCOM") end)
@@ -449,13 +423,9 @@ function ExecuteCommand(cmd, params)
     StartSddp()   -- if unbound, (re)discover our keypad on the LAN and bind it
   elseif cmd == "ForgetDevice" then
     ForgetDevice()
-  elseif cmd == "UpdateFirmware" then
-    StartFirmwareUpdate()
   elseif cmd == "ReRegister" then
     -- SIP now lives in the companion intercom driver; re-hello so it re-provisions.
     RelayHello()
-  elseif cmd == "SyncSettings" then
-    SyncSettingsNow(false)   -- pull the portal's settings immediately (portal wins)
   elseif cmd == "PlayAnnouncement" then
     local text  = params and tostring(params.Text or "")
     local chime = not (params and tostring(params.Chime or "Yes") == "No")
@@ -553,8 +523,7 @@ function HandleSddp(data, from)
   -- payload is attacker-controlled text: taking the IP from it let any host on the
   -- LAN redirect this driver's device connection to an address it does not even
   -- own, and then speak the keypad protocol to us (fire button programming, hand
-  -- us an identity, hand us a cloud URL). The sender can still lie about WHO it is,
-  -- but it can no longer point us at a third party.
+  -- us an identity). The sender can still lie about WHO it is, but that is all.
   local ip = tostring(from or ""):match("^(%d+%.%d+%.%d+%.%d+)")
   if not ip then ip = data:match('From:%s*"?([%d%.]+)') end
   if not host or not ip then return end
@@ -624,14 +593,12 @@ function ForgetDevice()
   gConnected = false
   gTargetMac, gHwidFromDevice = nil, false
   gDevHwid, gDevSecret, gDevSku = nil, nil, nil
-  cancelTimer(gLicenseTimer); gLicenseTimer = nil
   for _, k in ipairs({ HWID_KEY, MAC_KEY, IP_KEY }) do
     pcall(function() C4:PersistSetValue(k, "") end)
   end
   pcall(function() C4:SetVariable(HWID_VAR, "") end)
   pcall(function() C4:SetBindingAddress(BINDING_NET, "") end)
   pcall(function() C4:UpdateProperty("MAC Address", "") end)
-  pcall(function() C4:UpdateProperty("License Status", "Unpaired") end)
   setStatus("Unpaired — waiting for a keypad")
   StartSddp()   -- open to whichever keypad announces itself next
 end
@@ -725,13 +692,6 @@ function OnConnectionStatusChanged(idBinding, nPort, strStatus)
     if not was then
       pcall(function() C4:FireEvent("Device Connected") end)
       -- Auto firmware check on the first connect this session: tell the device to run
-      -- its cloud OTA check so a panel converges to the latest published build as soon
-      -- as it comes online — without waiting on its own slow (6h) poll or a manual tap.
-      -- Version-gated device-side, so it's a no-op when already current. Once per session.
-      if not gOtaAutoChecked then
-        gOtaAutoChecked = true
-        C4:SetTimer(5000, function() if gConnected then StartFirmwareUpdate() end end)
-      end
     end
   else
     local was = gConnected
@@ -854,49 +814,6 @@ function SendAnnounce(text, chime)
   pcall(function() C4:FireEvent("Announcement Played") end)
 end
 
--- "Check & Update Firmware" action: tell the device to pull + flash the configured
--- URL. The device does the version check (only re-flashes if the image differs) and
--- streams progress back as `ota` messages -> Firmware Update Status.
-function StartFirmwareUpdate()
-  if not gConnected then
-    pcall(function() C4:UpdateProperty("Firmware Update Status", "Device offline") end)
-    dbg("OTA: device offline; cannot update")
-    return
-  end
-  -- The device is authoritative for where it updates from: ask it to check its own
-  -- cloud (Firmware Update URL) and flash if a newer image is available. No dealer-
-  -- typed URL — send `ota` with no url and the device runs a forced cloud check.
-  pcall(function() C4:UpdateProperty("Firmware Update Status", "Checking…") end)
-  dbg("OTA: asking device to check its cloud for updates")
-  Send({ t = "ota" })
-end
-
--- The cloud base URL is REPORTED BY THE DEVICE (manifest cloudUrl -> the read-only
--- "Cloud URL" property), and this driver POSTs the keypad's X-Device-Id /
--- X-Device-Secret to it -- then trusts the reply enough to rename Control4 devices
--- and rewrite Composer properties. A device is therefore not allowed to choose that
--- destination freely: anything it reports must be HTTPS (an http:// value would put
--- the secret on the wire in clear) and must live under a host we already trust.
--- Anything else is ignored and the built-in default is used instead.
-local CLOUD_DEFAULT     = "https://nuvoxel.com"
-local CLOUD_HOST_SUFFIX = "nuvoxel.com"        -- exact host, or any subdomain of it
-function CloudUrlOk(u)
-  local host = tostring(u or ""):match("^https://([^/]+)")   -- https ONLY
-  if not host then return nil end
-  host = host:gsub(":%d+$", ""):lower()
-  if host == CLOUD_HOST_SUFFIX or
-     host:sub(-(#CLOUD_HOST_SUFFIX + 1)) == "." .. CLOUD_HOST_SUFFIX then
-    return (tostring(u):gsub("/+$", ""))
-  end
-  return nil
-end
-
-function CloudUrl()
-  -- Re-validated on every use, not just when the property is written: defence in
-  -- depth if the value is ever set by some other path.
-  return CloudUrlOk(Properties and Properties["Cloud URL"]) or CLOUD_DEFAULT
-end
-
 -- This driver's Control4 device id (0 if unavailable). Inlined because the
 -- myDeviceId() helper is a local defined further down.
 local function drvControllerId()
@@ -919,234 +836,10 @@ function DriverInstanceId()
   return id
 end
 
--- Anonymous activation/heartbeat for the freely-downloadable driver. Tells us a
--- driver is in use (adoption + support), independent of any keypad being claimed.
-function ActivateDriver()
-  local url = CloudUrl() .. "/api/v1/driver/activate"
-  local body = json.encode({
-    instanceId = DriverInstanceId(),
-    driverVersion = DRIVER_VERSION,
-    controllerId = tostring(drvControllerId()),
-  })
-  local ok = pcall(function()
-    C4:url()
-      :OnDone(function(_, _, errCode) dbg("driver activate:", errCode == 0 and "ok" or "failed") end)
-      :Post(url, body, { ["Content-Type"] = "application/json" })
-  end)
-  if not ok then dbg("driver activate: C4:url() not available") end
-end
 
--- Offline license relay: fetch this keypad's license token from nuvoxel using the
--- device's own identity (from its `hello`) and push it down the :6700 link. The
--- keypad verifies it offline against its baked-in key. No-op if the device isn't
--- claimed yet (entitlement endpoint returns 401) — claim it in the app first.
--- Display name of a project device ("" on failure). Global so the name helpers
--- (also global) can use it — the local myDeviceId()/DeviceName() are defined
--- further down and aren't visible to functions declared above them.
-function DisplayName(deviceId)
-  local id = tonumber(deviceId)
-  if not id or id == 0 then return "" end
-  local ok, n = pcall(function() return C4:GetDeviceDisplayName(id) end)
-  return (ok and type(n) == "string") and n or ""
-end
 
--- Rename a project device only when it isn't already named `desired` — the
--- change-detect keeps us from churning the project / looping the C4↔cloud sync.
-function RenameIfDifferent(deviceId, desired)
-  local id = tonumber(deviceId)
-  if not id or id == 0 or type(desired) ~= "string" or desired == "" then return end
-  if DisplayName(id) == desired then return end
-  dbg("rename device", id, "->", desired)
-  pcall(function() C4:RenameDevice(id, desired) end)  -- never call in OnDriverInit (we don't)
-end
 
--- Apply the cloud's authoritative name to Control4. One device to rename now: the
--- intercom is a sub-proxy of THIS driver, so Composer names it from the parent — there
--- is no second driver instance to rename (that's what the old relay walk was for).
--- Cloud wins; called from the license fetch's async callback (post-init).
-function ApplyCloudName(name)
-  if type(name) ~= "string" or name == "" then return end
-  local me = 0
-  local okm, id = pcall(function() return C4:GetDeviceID() end)
-  if okm and tonumber(id) then me = tonumber(id) end
-  RenameIfDifferent(me, name)
-end
 
--- The one device-authed exchange this driver has with nuvoxel. It carries three
--- things at once — the license token, the authoritative name, and (see "Portal
--- settings mirror") the portal-owned settings — because this driver only ever holds
--- DEVICE credentials (X-Device-Id/X-Device-Secret from the keypad's `hello`), never
--- an org API key. The org-authed /api/v1/org/device/<hwid>/settings endpoints exist
--- for the org-wide management driver; a per-device driver cannot call them, so
--- settings ride here rather than on a second, unauthenticated code path.
---
--- `pushLocal` = also send the current Composer property values up (a dealer edited
--- one). Otherwise this is a pure pull.
-function FetchAndPushLicense(hwid, secret, sku, pushLocal)
-  local url = CloudUrl() .. "/api/v1/fw/entitlement"
-  local headers = { ["X-Device-Id"] = hwid, ["X-Device-Secret"] = secret, ["Content-Type"] = "application/json" }
-  dbg("license: fetching for", hwid, sku, pushLocal and "(+settings push)" or "")
-  -- Report our current Control4 device name so an installer's Composer rename
-  -- can flow up to the cloud (C4→cloud; the cloud ignores it once the customer
-  -- has set a name in the portal).
-  local reqBody = "{}"
-  pcall(function()
-    local myId = C4:GetDeviceID()
-    local req = { c4Name = DisplayName(myId) }
-    if pushLocal then
-      -- Optimistic concurrency, same rule as the org settings PATCH: send the rev we
-      -- last applied so the server can reject a write that would clobber a portal edit
-      -- made in between. A nil rev means "never pulled" -> last-write-wins.
-      req.settings = PropsToSettings()
-      req.settingsRev = gSettingsRev
-    end
-    reqBody = json.encode(req)
-  end)
-  local ok = pcall(function()
-    C4:url()
-      :OnDone(function(transfer, responses, errCode, errMsg)
-        local resp = responses and responses[#responses]
-        -- 409 = our settingsRev was stale. The body carries the WINNING state, so
-        -- re-apply from it (portal wins) instead of re-fetching and racing again.
-        if resp and resp.code == 409 then
-          local sok, sbody = pcall(json.decode, resp.body or "")
-          if sok and type(sbody) == "table" then
-            dbg("settings: 409 stale rev", tostring(gSettingsRev), "-> portal rev",
-                tostring(sbody.settingsRev), "; portal wins")
-            ApplyPortalSettings(sbody.settings, sbody.settingsRev, "conflict")
-          end
-          return
-        end
-        if errCode ~= 0 or not resp or resp.code ~= 200 then
-          dbg("license: fetch failed", errCode, tostring(errMsg), resp and resp.code)
-          return
-        end
-        local pok, body = pcall(json.decode, resp.body or "")
-        -- Settings ride the same response. Absent = this server build doesn't serve
-        -- them yet, which must stay a silent no-op: Composer keeps deciding, exactly
-        -- as it does today.
-        if pok and type(body) == "table" and body.settingsRev ~= nil then
-          ApplyPortalSettings(body.settings, body.settingsRev, pushLocal and "pushed" or "pulled")
-        end
-        if pok and type(body) == "table" and body.token then
-          dbg("license: pushing token to device (tier", tostring(body.tier), ")")
-          Send({ t = "license", token = tostring(body.token) })
-          -- Cloud→C4: apply the authoritative name to the C4 devices (cloud wins).
-          if body.name then ApplyCloudName(tostring(body.name)) end
-          -- Show the current license state (incl. trial) to the dealer.
-          local label = "Base"
-          if body.tier == "pro" then
-            if type(body.trial) == "table" and body.trial.active then
-              label = "Pro trial \xC2\xB7 " .. tostring(body.trial.daysLeft or "?") .. " days left"
-            else
-              label = "Pro"
-            end
-          end
-          pcall(function() C4:UpdateProperty("License Status", label) end)
-        else
-          dbg("license: no token in response")
-        end
-      end)
-      :Post(url, reqBody, headers)
-  end)
-  if not ok then dbg("license: C4:url() not available") end
-end
-
--- ============================================================================
--- Offline relay: the Director's internet, lent to a panel that has none
--- ============================================================================
--- A keypad on an isolated VLAN can still be licensed, because the driver fetches
--- the entitlement for it. Everything the panel has to fetch ITSELF -- its check-in
--- (presence, telemetry, and the OTA offer) and the firmware image -- used to fail.
--- These two handlers lend it the Director's WAN for exactly those.
---
--- Album art is deliberately NOT relayed: it is per-track, from third-party CDNs,
--- and streaming it through the Director's single Lua thread would trade a cosmetic
--- gap for a performance problem.
-
--- The panel asks us to POST one of ITS cloud endpoints. We hold its device
--- credentials already (from `hello`), so we authenticate as the panel. The path is
--- constrained to the device API: this driver must not become a general-purpose
--- proxy for whatever is on the other end of the socket.
-function RelayCloudPost(msg)
-  local id   = tonumber(msg.id) or 0
-  local path = tostring(msg.path or "")
-  if not path:match("^/api/v1/fw/[%w_/-]+$") then
-    dbg("relay: refusing path", path)
-    Send({ t = "cloudresp", id = id, code = 0, err = "path not allowed" })
-    return
-  end
-  if not (gDevHwid and gDevSecret) then
-    Send({ t = "cloudresp", id = id, code = 0, err = "no device identity" })
-    return
-  end
-  local url  = CloudUrl() .. path
-  local body = tostring(msg.body or "{}")
-  local hdrs = { ["X-Device-Id"] = gDevHwid, ["X-Device-Secret"] = gDevSecret,
-                 ["Content-Type"] = "application/json" }
-  dbg("relay: POST", path, "(" .. #body .. " bytes)")
-  local ok = pcall(function()
-    C4:url():OnDone(function(transfer, responses, errCode, errMsg)
-      local resp = responses and responses[#responses]
-      if errCode ~= 0 or not resp then
-        Send({ t = "cloudresp", id = id, code = 0, err = tostring(errMsg) })
-        return
-      end
-      Send({ t = "cloudresp", id = id, code = resp.code, body = tostring(resp.body or "") })
-    end):Post(url, body, hdrs)
-  end)
-  if not ok then Send({ t = "cloudresp", id = id, code = 0, err = "url api unavailable" }) end
-end
-
--- One RANGE of the firmware image, base64'd. The panel pulls chunk by chunk (it
--- asks, we answer) so the transfer is naturally flow-controlled and neither side
--- buffers an image: the device writes each chunk straight into its OTA partition.
--- Chunks stay small because the device's line buffer is 8 KB.
-FW_RELAY_MAX = 4096
-function RelayFwChunk(msg)
-  local id  = tonumber(msg.id) or 0
-  local url = tostring(msg.url or "")
-  local off = tonumber(msg.off) or 0
-  local len = tonumber(msg.len) or FW_RELAY_MAX
-  if len > FW_RELAY_MAX then len = FW_RELAY_MAX end
-  -- Same host rule as the licence exchange: the panel does not get to aim the
-  -- Director at an arbitrary server.
-  if not CloudUrlOk(url) and not url:match("^https://[%w%.%-]+%.blob%.core%.windows%.net/") then
-    dbg("relay: refusing fw url", url)
-    Send({ t = "fwdata", id = id, off = off, err = "url not allowed" })
-    return
-  end
-  local hdrs = { ["Range"] = string.format("bytes=%d-%d", off, off + len - 1) }
-  local ok = pcall(function()
-    C4:url():OnDone(function(transfer, responses, errCode, errMsg)
-      local resp = responses and responses[#responses]
-      if errCode ~= 0 or not resp or not resp.body then
-        Send({ t = "fwdata", id = id, off = off, err = tostring(errMsg) })
-        return
-      end
-      local data = resp.body
-      -- 206 = the range we asked for; 200 = server ignored Range and sent the whole
-      -- file, so take our slice out of it rather than blasting megabytes at an 8 KB
-      -- line buffer.
-      if resp.code == 200 and #data > len then data = data:sub(off + 1, off + len) end
-      Send({ t = "fwdata", id = id, off = off, len = #data,
-             b64 = b64chunk(data), eof = (#data < len) })
-    end):Get(url, hdrs)
-  end)
-  if not ok then Send({ t = "fwdata", id = id, off = off, err = "url api unavailable" }) end
-end
-
--- Keep license + name fresh without waiting for a device reconnect: re-fetch on
--- a slow timer using the identity the device advertised in `hello`.
-function StartLicenseRefresh()
-  cancelTimer(gLicenseTimer); gLicenseTimer = nil
-  if not (gDevHwid and gDevSecret and gDevSku) then return end
-  gLicenseTimer = C4:SetTimer(LICENSE_REFRESH_MS, function()
-    if gDevHwid and gDevSecret and gDevSku then
-      FetchAndPushLicense(gDevHwid, gDevSecret, gDevSku)
-    end
-  end, true)  -- repeating
-end
 
 -- This driver's own Control4 device id (0 if unavailable).
 local function myDeviceId()
@@ -1201,23 +894,11 @@ function HandleMessage(line)
       setp("Network Link", mf.net and mf.net.link)   -- was "Connection"; see setStatus()
       setp("Power Source", mf.power and mf.power.source)
       if mf.fw then setp("Firmware Version", mf.fw) end
-      -- Endpoints are device-reported + read-only (the device is authoritative).
-      -- Validated, not just stored (see CloudUrlOk): the property is the input to
-      -- a credentialed POST, so a device-supplied host that is not ours never
-      -- reaches it.
-      if mf.cloudUrl ~= nil and tostring(mf.cloudUrl) ~= "" then
-        local safe = CloudUrlOk(mf.cloudUrl)
-        if safe then setp("Cloud URL", safe)
-        else dbg("ignoring device cloudUrl (not https under " .. CLOUD_HOST_SUFFIX .. "):",
-                 tostring(mf.cloudUrl)) end
-      end
-      setp("Firmware Update URL", mf.fwUrl)
       -- Show only the settings this hardware actually has (caps-driven).
       ApplyManifestPropVisibility(mf)
     end
-    -- Offline-relay: the keypad advertises its identity so the driver (which has
-    -- WAN via the Director) can fetch its license from nuvoxel and push it back —
-    -- letting a keypad with no internet still get licensed.
+    -- The keypad advertises its identity (hwid/secret/sku) on hello; we pin it on
+    -- first use so a spoofed announce can't swap the device we're bound to.
     if msg.hwid and msg.secret and msg.sku then
       -- Pin the identity on FIRST use. SDDP cannot authenticate the peer, so a
       -- spoofed announce can get us to dial an impostor; what it must not also do
@@ -1239,8 +920,6 @@ function HandleMessage(line)
         return
       end
       gDevHwid, gDevSecret, gDevSku = tostring(msg.hwid), tostring(msg.secret), tostring(msg.sku)
-      FetchAndPushLicense(gDevHwid, gDevSecret, gDevSku)
-      StartLicenseRefresh()  -- keep license + name + portal settings fresh between reconnects
     end
     -- `hello` is the real "device is ready" edge: it arrives after the device's app
     -- is up, whereas the TCP ONLINE edge only means the socket connected. So push the
@@ -1250,26 +929,6 @@ function HandleMessage(line)
     PushState(true)
     PushHalo()
     RelayHello()           -- tell the bound intercom driver the device is up (it re-provisions SIP)
-  elseif t == "ota" then
-    -- Device OTA progress/result: surface it in the Firmware Update Status property.
-    local s   = tostring(msg.status or "")
-    local pct = tonumber(msg.pct)
-    local txt = ({ checking = "Checking…", updating = "Updating", uptodate = "Already up to date",
-                   ok = "Updated — rebooting", error = "Failed" })[s] or s
-    if s == "updating" and pct and pct >= 0 then txt = "Updating " .. pct .. "%" end
-    if msg.msg and tostring(msg.msg) ~= "" then txt = txt .. " (" .. tostring(msg.msg) .. ")" end
-    dbg("ota status:", s, tostring(msg.msg), tostring(msg.pct))
-    pcall(function() C4:UpdateProperty("Firmware Update Status", txt) end)
-    if s == "ok" then pcall(function() C4:FireEvent("Firmware Update Succeeded") end)
-    elseif s == "error" then pcall(function() C4:FireEvent("Firmware Update Failed") end) end
-  elseif t == "license" then
-    -- Result of a driver-relayed license push. On success, leave the richer
-    -- label FetchAndPushLicense set (e.g. "Pro trial · 28 days left") — only
-    -- surface a rejection here.
-    dbg("license apply result:", tostring(msg.status))
-    if msg.status ~= "ok" then
-      pcall(function() C4:UpdateProperty("License Status", "License rejected") end)
-    end
   elseif t == "cmd" then DoTransport(msg.cmd)
   elseif t == "vol" then
     if msg.level ~= nil then DoVolumeSet(tonumber(msg.level))
@@ -1293,8 +952,6 @@ function HandleMessage(line)
     -- of from a photograph.
     dbg("art tile", msg.slot, msg.ok and "PUBLISHED" or "ABANDONED/failed",
         tostring(msg.bytes) .. " bytes", tostring(msg.w) .. "x" .. tostring(msg.h))
-  elseif t == "cloudreq" then RelayCloudPost(msg)
-  elseif t == "fwget" then RelayFwChunk(msg)
   elseif t == "ping" then Send({ t = "pong" })
   elseif t == "button" then FireButton(msg.id)
   elseif t == "sipstate" or t == "callstate" or t == "callctl" then
@@ -1446,18 +1103,11 @@ end
 -- Button state
 -- ---------------------------------------------------------------------------
 -- gButtons IS the button configuration — there is no Composer property mirror of it
--- any more. Two editors write here and both are peers: Composer's NATIVE keypad panel
--- (KEYPAD_BUTTON_INFO / KEYPAD_BUTTON_COLOR into HandleKeypadProxy) and the NuVoxel
--- portal (ApplyPortalSettings). Whichever wrote last wins; a write from either is
--- pushed to the device AND reflected to the other editor. We deliberately do not
--- arbitrate: two humans editing the same keypad from two places within seconds of each
--- other is not a case worth a merge algorithm, and any tie-break we invented would be
--- wrong half the time.
+-- any more. It is edited from Composer's NATIVE keypad panel (KEYPAD_BUTTON_INFO /
+-- KEYPAD_BUTTON_COLOR into HandleKeypadProxy) and pushed straight to the device.
 --
--- PERSISTENCE: the removed properties were free persistence across a driver reload;
--- now the portal is the store (pulled on device connect and on the LICENSE_REFRESH_MS
--- poll). Between a reload and that first pull, buttons read as unconfigured and the
--- firmware falls back to "Button N". Deliberately NOT mirrored into
+-- PERSISTENCE: button config lives in the driver's own persisted state; it is not
+-- mirrored into
 -- C4:PersistSetValue: a local copy is a third source of truth that can only be stale,
 -- and it would resurrect old labels over the portal's during the pull window — the
 -- exact bug class this change removes. Revisit only if a real install shows the pull
@@ -1759,11 +1409,9 @@ function HandleKeypadProxy(strCommand, tParams)
       if lbl ~= "" and lbl ~= auto then b.label = lbl end
     end
     PushState(true)
-    -- Only the LED on/off changed -> that is live load state, not configuration; it is
-    -- not portal-owned and must not burn a settings revision.
+    -- Only the LED on/off changed -> that is live load state, not saved configuration.
     if b.color ~= wasColor or b.label ~= wasLabel then
       gKpPrintInvalidate()
-      QueueSettingsPush()
     elseif b.on ~= wasOn then
       dbg("button", tostring(tParams.BUTTON_ID), "LED ->", tostring(b.on))
     end
@@ -1772,7 +1420,6 @@ function HandleKeypadProxy(strCommand, tParams)
       for _, b in ipairs(gButtons) do b.color = NormalizeHex(tParams.CURRENT_COLOR) end
       PushState(true)
       gKpPrintInvalidate()
-      QueueSettingsPush()
     end
   else
     dbg("ignoring proxy cmd:", tostring(strCommand))
@@ -1870,89 +1517,18 @@ function ShowProp(name)
 end
 
 -- ============================================================================
--- Portal settings mirror
+-- Settings
 -- ----------------------------------------------------------------------------
--- The nuvoxel portal — not Composer — is authoritative for the configuration
--- below. Composer stays fully editable (a dealer standing at the rack must not
--- have to open a browser), but the two are mirrored: we PULL on device connect
--- and on the existing 10-minute entitlement poll, and PUSH back when a dealer
--- edits a property here. When both changed, the PORTAL WINS — a push carrying a
--- stale settingsRev comes back 409 with the winning state, which we re-apply.
+-- The driver's Composer properties are the single source of truth for the
+-- configuration below (orientation, layout, brightness, idle behaviour, halo).
+-- They are applied to the device over the :6700 protocol on connect and whenever
+-- a property changes (OnPropertyChanged -> PushState / PushHalo).
 --
--- Why it rides the entitlement exchange: this is a per-device driver and holds
--- only DEVICE credentials (X-Device-Id/X-Device-Secret out of the keypad's
--- `hello`). The portal's settings endpoints are ORG-API-key authed, for the
--- org-wide management driver — unreachable from here. So settings are one more
--- field on the device-authed call we already make, not a second auth path.
---
--- null means "no opinion", NOT a default: the portal declines to decide and the
--- device keeps whatever is in its own NVS. That is exactly what the existing -1
--- sentinel already means on the wire (the firmware's range guards skip it), and
--- what "Auto (device setting)" already means in Composer. So the three
--- representations line up and the device protocol does not change at all —
--- PROTOCOL.md is untouched. Only who decides the value changes.
---
--- These reuse the *_MAP tables above, which is why this section sits here: they
--- are file-locals and are not visible to functions defined earlier in the file.
+-- "Auto (device setting)" maps to the -1 sentinel the firmware's range guards
+-- skip, leaving the device's own NVS value in place. The device protocol is
+-- unchanged (see PROTOCOL.md).
 
--- JSON null. Lua can't hold nil in a table (the key just vanishes), and "key
--- absent" means "leave this field alone" to the portal's patch semantics — a
--- different thing from "clear it". So an explicit sentinel + a small encoder.
-SETTING_NULL = setmetatable({}, { __tostring = function() return "null" end })
 
-local function jsonVal(v)
-  if v == SETTING_NULL or v == nil then return "null" end
-  return json.encode(v)
-end
-
--- One button entry. Encoded field-by-field rather than handed to json.encode,
--- because the sentinel is a table and the encoder would render it as `[]`
--- (an empty Lua table is an empty array) instead of null.
-local BUTTON_FIELDS = { "label", "icon", "color", "ledMode" }
--- `color` is {r,g,b} and MUST NOT go through json.encode: that encoder walks a table
--- with pairs(), whose key order is unspecified, so the same colour could serialise
--- as {"r":..,"g":..,"b":..} or any permutation. This whole encoder exists to be
--- byte-stable -- SettingsJson() is compared against the last synced string to decide
--- whether anything actually changed -- and an unstable field defeats that guard,
--- turning every trigger into a cloud round-trip.
-local function encodeColor(c)
-  if c == SETTING_NULL or c == nil then return "null" end
-  if type(c) ~= "table" then return jsonVal(c) end
-  return string.format('{"r":%s,"g":%s,"b":%s}',
-                       jsonVal(c.r), jsonVal(c.g), jsonVal(c.b))
-end
-local function encodeButton(b)
-  if type(b) ~= "table" or b == SETTING_NULL then return "null" end
-  local parts = {}
-  for _, k in ipairs(BUTTON_FIELDS) do
-    parts[#parts + 1] = '"' .. k .. '":' ..
-      ((k == "color") and encodeColor(b[k]) or jsonVal(b[k]))
-  end
-  return "{" .. table.concat(parts, ",") .. "}"
-end
-
--- Encode the settings object, honouring SETTING_NULL (json.encode alone would
--- silently drop those keys, and would choke on a sparse `buttons` array).
-local function encodeSettings(s)
-  local parts = {}
-  for _, k in ipairs(SETTING_ORDER) do
-    local v = s[k]
-    if k == "buttons" then
-      if v == SETTING_NULL or v == nil then
-        parts[#parts + 1] = '"buttons":null'
-      else
-        -- As many entries as this device HAS (PropsToSettings builds exactly that many),
-        -- not a fixed six — the array length is the keypad's size now.
-        local items = {}
-        for i = 1, ButtonCount() do items[i] = encodeButton(v[i]) end
-        parts[#parts + 1] = '"buttons":[' .. table.concat(items, ",") .. "]"
-      end
-    else
-      parts[#parts + 1] = '"' .. k .. '":' .. jsonVal(v)
-    end
-  end
-  return "{" .. table.concat(parts, ",") .. "}"
-end
 
 -- Stable key order so an unchanged push is byte-identical (cheap change detect).
 SETTING_ORDER = {
@@ -1963,282 +1539,17 @@ SETTING_ORDER = {
   "buttonCount", "buttons",
 }
 
--- Which Composer properties are portal-owned (an edit to one triggers a push).
--- Built from the same list the mapping functions use, so the two cannot drift.
-SETTING_PROPS = {
-  ["Display Orientation"] = true, ["Layout"] = true,
-  ["Background"] = true,
-  ["Active Brightness"] = true, ["Idle Timeout"] = true, ["Idle Brightness"] = true,
-  ["Show Title"] = true, ["Show Artist/Album"] = true, ["Show Info Button"] = true,
-  ["Show Progress Bar"] = true, ["Halo Color"] = true, ["Halo Ring Color"] = true,
-  ["Halo Brightness"] = true,
-}
--- Button config is portal-owned too, but it is no longer backed by properties — an edit
--- arrives from the keypad proxy instead, so HandleKeypadProxy calls QueueSettingsPush()
--- directly rather than going through this table.
-
 local AUTO = "Auto (device setting)"
 
--- value -> LIST item, from the name->value maps used for the wire encoding.
-local function invert(map)
-  local r = {}
-  for k, v in pairs(map) do r[v] = k end
-  return r
-end
-local ORIENT_ITEM  = invert(ORIENT_MAP)
-local LAYOUT_ITEM  = invert(LAYOUT_MAP)
-local BG_ITEM      = invert(BG_MAP)
-local BRIGHT_ITEM  = invert(BRIGHT_MAP)
-local DIMSEC_ITEM  = invert(DIMSEC_MAP)
-local DIMLVL_ITEM  = invert(DIMLVL_MAP)
-
--- The portal stores brightness/timeouts as free integers (a slider); Composer can
--- only offer a fixed LIST. So snap an arbitrary number to the nearest offered item
--- rather than dropping a value we can't represent exactly — the dealer sees the
--- closest truthful choice instead of the property reverting to Auto.
-local function nearestItem(itemMap, n)
-  n = tonumber(n); if not n then return nil end
-  local best, bestd
-  for v, item in pairs(itemMap) do
-    local d = math.abs(v - n)
-    if not bestd or d < bestd then best, bestd = item, d end
-  end
-  return best
-end
-
--- Halo colors are RGB in the portal but a named palette in Composer. Exact match
--- when possible, else nearest in RGB space (same reasoning as nearestItem).
-local function nearestColorName(rgb)
-  if type(rgb) ~= "table" then return nil end
-  local r, g, b = tonumber(rgb.r), tonumber(rgb.g), tonumber(rgb.b)
-  if not (r and g and b) then return nil end
-  local best, bestd
-  for name, c in pairs(HALO_COLORS) do
-    local d = (c[1] - r) ^ 2 + (c[2] - g) ^ 2 + (c[3] - b) ^ 2
-    if not bestd or d < bestd then best, bestd = name, d end
-  end
-  return best
-end
-
-local function rgbOf(name)
-  local c = HALO_COLORS[tostring(name or "")] or HALO_COLORS["Off"]
-  return { r = c[1], g = c[2], b = c[3] }
-end
 
 
--- ---------------------------------------------------------------------------
--- Composer properties -> portal settings (the push direction)
--- ---------------------------------------------------------------------------
-function PropsToSettings()
-  local P = Properties or {}
-  local function orNull(v) if v == nil then return SETTING_NULL end return v end
-  local s = {
-    -- "Auto (device setting)" is the property-level way of saying "no opinion",
-    -- so it maps to an explicit null, not to a value.
-    orientation = orNull(ORIENT_MAP[P["Display Orientation"]]),
-    layout      = orNull(LAYOUT_MAP[P["Layout"]]),
-    bg          = orNull(BG_MAP[P["Background"]]),
-    brightness  = orNull(BRIGHT_MAP[P["Active Brightness"]]),
-    dimSec      = orNull(P["Idle Timeout"] ~= AUTO and DIMSEC_MAP[P["Idle Timeout"]] or nil),
-    dimLevel    = orNull(P["Idle Brightness"] ~= AUTO and DIMLVL_MAP[P["Idle Brightness"]] or nil),
-    -- Show/Hide has no Auto item: the property always has an opinion.
-    showTitle    = ShowProp("Show Title"),
-    showArtist   = ShowProp("Show Artist/Album"),
-    showInfo     = ShowProp("Show Info Button"),
-    showProgress = ShowProp("Show Progress Bar"),
-    haloColor     = rgbOf(P["Halo Color"]),
-    haloRingColor = rgbOf(P["Halo Ring Color"]),
-    haloBrightness = orNull(tonumber(P["Halo Brightness"])),
-    -- Reported, not requested: the count is the hardware's (caps.buttons). It still goes
-    -- up so the portal UI can size its editor, but the pull direction ignores it.
-    buttonCount   = ButtonCount(),
-  }
-  local btns = {}
-  for i = 1, ButtonCount() do
-    local label = tostring(btnField(i, "label") or "")
-    local icon  = ButtonIcon(i)
-    local hex   = ButtonColor(i)
-    btns[i] = {
-      -- Blank label = "fall back to the linked device's name", which is the same
-      -- "no opinion" idea, so it goes up as null rather than as an empty string.
-      label = (label ~= "") and label or SETTING_NULL,
-      icon  = (icon ~= "") and icon or SETTING_NULL,
-      color = { r = tonumber(hex:sub(1, 2), 16) or 255,
-                g = tonumber(hex:sub(3, 4), 16) or 255,
-                b = tonumber(hex:sub(5, 6), 16) or 255 },
-      ledMode = ButtonTracks(i) and "track" or "manual",
-    }
-  end
-  s.buttons = btns
-  return s
-end
 
--- Serialized form, used both to send and to detect "nothing actually changed".
-function SettingsJson() return encodeSettings(PropsToSettings()) end
 
--- ---------------------------------------------------------------------------
--- Portal settings -> Composer properties (the pull direction)
--- ---------------------------------------------------------------------------
--- A null/absent field means the portal has no opinion, so we set the property to
--- its Auto item where one exists and otherwise LEAVE IT ALONE. Never invent a
--- default: that would silently overwrite a dealer's deliberate choice with a
--- value nobody picked.
-local function applyOne(prop, item, autoItem)
-  if item == nil then
-    if autoItem == nil then return false end   -- no Auto representation: leave as-is
-    item = autoItem
-  end
-  local cur = Properties and Properties[prop]
-  if tostring(cur) == tostring(item) then return false end
-  pcall(function() C4:UpdateProperty(prop, item) end)
-  return true
-end
 
-function ApplyPortalSettings(s, rev, why)
-  if type(s) ~= "table" then
-    -- A rev with no settings blob is still a valid state to track (an empty
-    -- "portal has no opinion at all" record); just nothing to write.
-    gSettingsRev = tonumber(rev) or gSettingsRev
-    return
-  end
-  local wasApplying = gApplying
-  gApplying = true   -- belt-and-braces: UpdateProperty doesn't fire OnPropertyChanged
 
-  local function num(v) return (type(v) == "number") and v or nil end
-  local changed, halo, buttons = false, false, false
-  local function set(prop, item, autoItem)
-    if applyOne(prop, item, autoItem) then changed = true end
-  end
 
-  set("Display Orientation", ORIENT_ITEM[num(s.orientation)], AUTO)
-  set("Layout", LAYOUT_ITEM[num(s.layout)], AUTO)
-  set("Background", BG_ITEM[num(s.bg)], AUTO)
-  set("Active Brightness", nearestItem(BRIGHT_ITEM, s.brightness), AUTO)
-  set("Idle Timeout", nearestItem(DIMSEC_ITEM, s.dimSec), AUTO)
-  set("Idle Brightness", nearestItem(DIMLVL_ITEM, s.dimLevel), AUTO)
-  local function showItem(v) if v == nil then return nil end return v and "Show" or "Hide" end
-  set("Show Title", showItem(s.showTitle), nil)
-  set("Show Artist/Album", showItem(s.showArtist), nil)
-  set("Show Info Button", showItem(s.showInfo), nil)
-  set("Show Progress Bar", showItem(s.showProgress), nil)
 
-  local before = changed
-  set("Halo Color", nearestColorName(s.haloColor), nil)
-  set("Halo Ring Color", nearestColorName(s.haloRingColor), nil)
-  set("Halo Brightness", nearestItem({ [10] = "10", [25] = "25", [50] = "50",
-                                       [75] = "75", [100] = "100" }, s.haloBrightness), nil)
-  halo = (changed ~= before)
 
-  -- Buttons: the portal is the second editor of gButtons, so write straight into the
-  -- driver's own state. s.buttonCount is deliberately IGNORED — the device's caps.buttons
-  -- decides how many buttons exist, and a stale portal count used to shrink the keypad.
-  before = changed
-  if type(s.buttons) == "table" then
-    EnsureButtons()
-    local function setBtn(i, key, val)
-      if val == nil then return end                       -- null = no opinion; keep ours
-      local b = gButtons[i]; if not b then return end      -- past this device's capacity
-      if b[key] == val then return end
-      b[key] = val
-      changed = true
-    end
-    for i = 1, ButtonCount() do
-      local b = s.buttons[i]
-      if type(b) == "table" then
-        if type(b.label) == "string" then setBtn(i, "label", b.label) end
-        if type(b.icon) == "string" then setBtn(i, "icon", (b.icon ~= "None") and b.icon or "") end
-        if type(b.color) == "table" then
-          local r, g, bb = tonumber(b.color.r), tonumber(b.color.g), tonumber(b.color.b)
-          if r and g and bb then
-            setBtn(i, "color", string.format("%02x%02x%02x", r % 256, g % 256, bb % 256))
-          end
-        end
-        if b.ledMode == "track" or b.ledMode == "manual" then
-          setBtn(i, "tracks", b.ledMode == "track")
-        end
-      end
-    end
-  end
-  buttons = (changed ~= before)
-
-  gSettingsRev = tonumber(rev) or gSettingsRev
-  gApplying = wasApplying
-  pcall(function()
-    C4:UpdateProperty("Portal Settings", string.format("rev %s (%s)%s",
-      tostring(gSettingsRev or "?"), tostring(why or "pulled"),
-      changed and " \xC2\xB7 applied" or ""))
-  end)
-  dbg("settings:", why or "pulled", "rev", tostring(gSettingsRev), changed and "-> applied" or "-> no change")
-
-  -- We are now, by definition, in sync with the portal: record it so the echo a
-  -- re-register may provoke does not come back at us as a fresh push.
-  pcall(function() gLastSettingsJson = SettingsJson() end)
-
-  -- Re-push only what actually moved. Buttons need a proxy re-register (it is what makes
-  -- a portal edit show up in Composer's native panel), which itself pushes device state.
-  if buttons then ScheduleInitKeypad()
-  elseif changed and gConnected then pcall(PushState, true) end
-  if halo and gConnected then pcall(PushHalo) end
-end
-
--- ---------------------------------------------------------------------------
--- Sync triggers
--- ---------------------------------------------------------------------------
--- One code path for both directions, because a push always returns the portal's
--- resulting state (or a 409 carrying it), so every push is also a pull.
--- Minimum gap between cloud round-trips, whatever asks for one. Observed on a live
--- Director: ~75 license/settings exchanges an HOUR from a single keypad instance
--- (every ~48s, irregular), each an HTTPS call plus a device push. The periodic
--- refresh is 10 minutes and reconnects were 10 minutes apart, so something in the
--- settings write-back path is re-triggering QueueSettingsPush faster than the
--- identical-state guard can absorb. This is the backstop rather than the diagnosis:
--- a trigger storm now COALESCES into one exchange per gap instead of hammering the
--- Director and the cloud. A real edit still syncs, just on the boundary.
-function SyncSettingsNow(pushLocal)
-  if not (gDevHwid and gDevSecret and gDevSku) then
-    dbg("settings: no device identity yet (waiting for hello)")
-    return
-  end
-  local now  = os.time()
-  local wait = SYNC_MIN_GAP_S - (now - gLastSyncAt)
-  if gLastSyncAt > 0 and wait > 0 then
-    -- Too soon: fold this request into a single deferred one.
-    gSyncDeferPush = gSyncDeferPush or (pushLocal == true)
-    if not gSyncDeferred then
-      dbg("settings: sync deferred", wait, "s (min gap)")
-      gSyncDeferred = C4:SetTimer(wait * 1000, function()
-        gSyncDeferred = nil
-        local push = gSyncDeferPush; gSyncDeferPush = false
-        gLastSyncAt = os.time()
-        FetchAndPushLicense(gDevHwid, gDevSecret, gDevSku, push)
-      end, false)
-    end
-    return
-  end
-  gLastSyncAt = now
-  FetchAndPushLicense(gDevHwid, gDevSecret, gDevSku, pushLocal == true)
-end
-
--- A dealer edited a portal-owned property. Debounced, because editing several
--- properties in Composer fires several callbacks in a row and each one would
--- otherwise be its own round trip (and its own chance to lose a rev race).
-function QueueSettingsPush()
-  cancelTimer(gSettingsPush)
-  gSettingsPush = C4:SetTimer(1500, function()
-    gSettingsPush = nil
-    -- Loop breaker. A portal pull writes gButtons, which re-registers the buttons on the
-    -- keypad proxy, which can echo back as KEYPAD_BUTTON_INFO — and that now queues a
-    -- push. Identical state must therefore be a no-op, or the two editors would trade
-    -- revisions forever. SettingsJson() is byte-stable for a reason.
-    local now = SettingsJson()
-    if now == gLastSettingsJson then
-      dbg("settings: push skipped (identical to last synced state)")
-      return
-    end
-    gLastSettingsJson = now
-    SyncSettingsNow(true)
-  end, false)
-end
 
 
 -- Read the real transport state for a room from the media service's QUEUE_STATUS_V2

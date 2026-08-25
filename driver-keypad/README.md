@@ -30,7 +30,7 @@ this as a parent/child tree: the primary is the device, the rest are sub-proxies
 | File | Purpose |
 |------|---------|
 | `driver.xml` | Manifest: properties, proxies, connections, actions, events. |
-| `driver.lua` | Lifecycle, room read/poll, command dispatch, protocol, portal settings mirror. |
+| `driver.lua` | Lifecycle, room read/poll, command dispatch, protocol, settings. |
 | `intercom.lua` | The intercom endpoint (proxy 5003) — SIP provisioning, call state, levels. |
 | `intercom_proxy/` | Vendored Control4 intercom proxy contract (constants/notify/command/protocol/debug). |
 | `json.lua` | Bundled JSON encode/decode (avoids `C4:JsonEncode` quirks). |
@@ -54,20 +54,12 @@ and property changes only; anything touching the proxy set needs a new filename.
 
 ## Settings ownership
 
-Settings are **portal-authoritative**. The nuvoxel portal owns the configuration
-and the driver mirrors it both ways: it pulls on device connect and on the
-existing 10-minute entitlement poll, and pushes back when a dealer edits a
-property in Composer. On conflict the portal wins (a push carrying a stale
-`settingsRev` returns 409 with the winning state, which the driver re-applies).
-
-`null` in the portal means "no opinion", which the driver renders as the existing
-`-1` sentinel the firmware already skips — the same thing "Auto (device setting)"
-means in Composer. The device protocol is unchanged by any of this.
-
-Because this is a *per-device* driver it holds only device credentials
-(`X-Device-Id` / `X-Device-Secret` from the keypad's `hello`), never an org API
-key, so settings ride the device-authed entitlement exchange rather than the
-org-authed `/api/v1/org/device/<hwid>/settings` endpoints.
+Settings are **Composer-owned** and local — there is no online service. The
+driver's Composer properties (orientation, layout, brightness, idle timeout,
+button style, etc.) are the single source of truth; the driver applies them to
+the keypad over the `:6700` protocol on connect and whenever a dealer edits one.
+A property left at "Auto (device setting)" sends the `-1` sentinel the firmware
+skips, leaving the device's own value in place. The device protocol is unchanged.
 
 ## Needs a live Director to confirm
 
@@ -77,5 +69,3 @@ org-authed `/api/v1/org/device/<hwid>/settings` endpoints.
   proxies (`ProxyDeviceId()` in `intercom.lua` handles both shapes defensively).
 - The `<capabilities>` block applying to the intercom sub-proxy of a multi-proxy driver
   driver.
-- The portal settings mirror end-to-end — the server must serve `settings` /
-  `settingsRev` on the entitlement response first; it does not today.

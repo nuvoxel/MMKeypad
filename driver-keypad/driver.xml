@@ -135,32 +135,14 @@
         <default>Not bound</default>
         <readonly>true</readonly>
       <tooltip>State of the driver's TCP link to the keypad (Not bound / Connecting / Connected / Offline).</tooltip></property>
-      <!-- Portal-owned settings. The nuvoxel portal is authoritative for the
-           configuration below; the driver mirrors it both ways (pull on connect +
-           on the license/entitlement poll, push back when a dealer edits a property
-           here). This row is the diagnostic for that mirror. -->
-      <property>
-        <name>Portal Settings</name>
-        <type>STRING</type>
-        <default>—</default>
-        <readonly>true</readonly>
-      <tooltip>State of the portal settings mirror: the revision last applied, and whether the last push back was accepted. The portal wins on conflict.</tooltip></property>
-
-      <!-- Firmware: everything here is device-reported (read-only). The endpoints
-           (Firmware Update URL, Cloud URL) come from the device's manifest — the
-           device is authoritative, so the dealer never hand-configures them. The
-           "Check & Update Firmware" action tells the device to check its own cloud
-           and update (it only re-flashes if the image version differs). -->
+      <!-- Firmware: device-reported, read-only. Updates are done ON THE KEYPAD
+           (Settings -> Check for update, from GitHub Releases) or over USB. -->
       <property><name>Firmware</name><type>LABEL</type><default>Firmware</default></property>
       <property><name>Firmware Version</name><type>STRING</type><default>Unknown</default><readonly>true</readonly><tooltip>Firmware version currently running on the device (reported on connect).</tooltip></property>
       <property><name>Device Model</name><type>STRING</type><default>Unknown</default><readonly>true</readonly><tooltip>Keypad hardware model, self-reported in its manifest (e.g. Control4 T3-7).</tooltip></property>
       <property><name>MAC Address</name><type>STRING</type><default></default><readonly>true</readonly><tooltip>Keypad primary NIC MAC address (from its manifest).</tooltip></property>
       <property><name>Network Link</name><type>STRING</type><default></default><readonly>true</readonly><tooltip>Keypad network link type: ethernet or wifi.</tooltip></property>
       <property><name>Power Source</name><type>STRING</type><default></default><readonly>true</readonly><tooltip>Keypad power source: wall, poe, or battery.</tooltip></property>
-      <property><name>Firmware Update Status</name><type>STRING</type><default>Idle</default><readonly>true</readonly><tooltip>Result/progress of the most recent "Check &amp; Update Firmware".</tooltip></property>
-      <property><name>Firmware Update URL</name><type>STRING</type><default></default><readonly>true</readonly><tooltip>Where the device gets firmware — reported by the device (read-only). "Check &amp; Update Firmware" asks the device to check this and update if a newer image is available.</tooltip></property>
-      <property><name>Cloud URL</name><type>STRING</type><default></default><readonly>true</readonly><tooltip>The nuvoxel platform base URL the device uses — reported by the device (read-only). The driver relays this keypad's license from here on its behalf (for keypads with no internet of their own).</tooltip></property>
-      <property><name>License Status</name><type>STRING</type><default>Unknown</default><readonly>true</readonly><tooltip>Result of the most recent driver-relayed license push.</tooltip></property>
 
       <!-- Intercom (proxy 5003). The SIP account is FULLY AUTO — no dealer entry:
            the driver uses the Director as the SIP server, generates a username +
@@ -171,7 +153,7 @@
            forwards them), so there are no duplicate properties for them here —
            only read-only status. Hidden on hardware with no intercom (caps.intercom). -->
       <property><name>Intercom</name><type>LABEL</type><default>Intercom</default></property>
-      <property><name>Intercom Relay</name><type>STRING</type><default>—</default><readonly>true</readonly><tooltip>Status of the control relay to the companion NuVoxel Keypad Intercom driver (SIP registration/call state live on THAT driver). The NuVoxel Agent installs and binds it for licensed devices.</tooltip></property>
+      <property><name>Intercom Relay</name><type>STRING</type><default>—</default><readonly>true</readonly><tooltip>Status of the control relay to the companion NuVoxel Keypad Intercom driver (SIP registration/call state live on THAT driver).</tooltip></property>
 
       <!-- Configurable by the installer in Composer Pro. LABEL section headers require
            OS >= 2.10.0 (see <minimum_os_version>). -->
@@ -297,9 +279,8 @@
       <property><name>Show Info Button</name><type>LIST</type><items><item>Show</item><item>Hide</item></items><default>Show</default><readonly>false</readonly><tooltip>Show or hide the info/overflow (vertical ellipsis) button.</tooltip></property>
       <property><name>Show Progress Bar</name><type>LIST</type><items><item>Show</item><item>Hide</item></items><default>Show</default><readonly>false</readonly><tooltip>Show or hide the progress bar + time (only when the source reports a duration).</tooltip></property>
       <!-- Programmable keypad buttons. Button count/label/icon/color/LED live in the
-           driver's own button state, edited from Composer's NATIVE keypad editor or the
-           NuVoxel portal (last write wins) — NOT here, so there is no third editor to
-           disagree with them. Count comes from the device manifest (caps.buttons). -->
+           driver's own button state, edited from Composer's NATIVE keypad editor —
+           NOT here. Count comes from the device manifest (caps.buttons). -->
       <property><name>Keypad Buttons</name><type>LABEL</type><default>Keypad Buttons</default></property>
       <property>
         <name>Room Poll Interval (ms)</name>
@@ -326,7 +307,7 @@
         <type>STRING</type>
         <default></default>
         <readonly>false</readonly>
-        <tooltip>Normally blank. The driver learns which physical keypad is its own from the NuVoxel agent (and remembers it after the first connection), then finds it on the network via SDDP and binds automatically — no Connections-page binding needed, and it re-binds itself if the keypad's IP changes. Set this to a keypad's MAC (12 hex, colons optional) only to force-bind a specific unit manually.</tooltip>
+        <tooltip>Normally blank. The driver learns which physical keypad is its own on first connection (and remembers it), then finds it on the network via SDDP and binds automatically — no Connections-page binding needed, and it re-binds itself if the keypad's IP changes. Set this to a keypad's MAC (12 hex, colons optional) only to force-bind a specific unit manually.</tooltip>
       </property>
     </properties>
     <commands>
@@ -403,21 +384,11 @@
         <description>Unpair this driver from its keypad: clears the remembered hardware id, MAC, IP and network binding, then reopens discovery. Needed when swapping in DIFFERENT hardware (RMA, spare, moving the driver to another panel) — the driver refuses a keypad whose hardware id does not match the one it paired with.</description>
       </action>
 
-      <action>
-        <name>Check &amp; Update Firmware</name>
-        <command>UpdateFirmware</command>
-      </action>
       <!-- Re-provision the auto-generated SIP account to both the proxy and the
            device (absorbed from the retired companion intercom driver). -->
       <action>
         <name>Re-register SIP</name>
         <command>ReRegister</command>
-      </action>
-      <!-- Force an immediate portal settings pull, instead of waiting out the
-           10-minute entitlement/settings poll. -->
-      <action>
-        <name>Sync Settings from Portal</name>
-        <command>SyncSettings</command>
       </action>
     </actions>
   </config>
@@ -443,8 +414,6 @@
     <event><id>13</id><name>Button 5 Released</name><description>On-screen keypad button 5 was released.</description></event>
     <event><id>14</id><name>Button 6 Released</name><description>On-screen keypad button 6 was released.</description></event>
     <event><id>15</id><name>Announcement Played</name><description>An announcement was played on the keypad.</description></event>
-    <event><id>16</id><name>Firmware Update Succeeded</name><description>A firmware update completed successfully.</description></event>
-    <event><id>17</id><name>Firmware Update Failed</name><description>A firmware update failed.</description></event>
     <!-- Buttons 7-12 exist only on the larger panels (the count is hardware-driven —
          caps.buttons in the device manifest — and their BUTTON_LINK bindings are created
          at runtime, see driver.lua). Their events are declared statically because ADDING
@@ -525,8 +494,7 @@
     <!-- Intercom relay PROVIDER (control binding 700). The companion
          NuVoxelKeypadIntercom driver (intercomproxy-primary, so the Communication
          agent enrolls it) consumes this; we forward its SIP/call JSON onto the device
-         :6700 link and relay device lines back. The NuVoxel Agent installs + binds it
-         (BindIntercom) for licensed devices — no dealer step. -->
+         :6700 link and relay device lines back. -->
     <connection>
       <id>700</id>
       <facing>6</facing>
