@@ -114,11 +114,12 @@ SDK files — see [`driver-intercom/README.md`](driver-intercom/README.md)).
 
 ### Updating firmware
 
-The open build does not auto-update from a cloud. Updates come from **local
-flashing** (`./board.sh <board> flash` over USB, or the T3 flash tooling) and,
-on-screen, from the project's **GitHub Releases** — the panel can list published
-versions and apply one it downloads. (The on-screen release picker is in
-progress; local + USB flashing work today.)
+The open build does not auto-update from a cloud. Instead, on the panel go to
+**Settings → Check for update**: it lists the firmware images published on this
+project's [GitHub Releases](https://github.com/nuvoxel/MMKeypad/releases) for the
+board's SKU, and applies the one you pick (the panel downloads it and restarts).
+Local **USB flashing** (`./board.sh <board> flash`, or the T3 flash tooling) also
+works and is the fallback if a panel has no network route.
 
 ## What is not in this repository
 

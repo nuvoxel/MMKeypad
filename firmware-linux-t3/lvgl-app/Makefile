@@ -56,7 +56,7 @@ APP_SRCS := shared/ui.c shared/net.c shared/config.c shared/art.c shared/sddp.c 
             $(IDF_MAIN)/mmk_icons_24.c $(IDF_MAIN)/mmk_icons_34.c \
             $(IDF_MAIN)/mmk_roboto.c $(IDF_MAIN)/mmk_lucide.c \
             $(IDF_MAIN)/mmk_c4icons.c $(IDF_MAIN)/mmk_ha_icons.c \
-            $(IDF_MAIN)/nv_open.c
+            $(IDF_MAIN)/nv_open.c $(IDF_MAIN)/fwupdate.c
 
 # Platform layer (incl. real album-art HTTPS client + tinyalsa audio backend).
 PLAT_SRCS := $(PLAT)/bsp_linux.c $(PLAT)/stubs.c $(PLAT)/nvs_file.c \

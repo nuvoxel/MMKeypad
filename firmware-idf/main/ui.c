@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "device.h"
+#include "fwupdate.h"
 #include "art.h"
 #include "config.h"
 #include "bsp.h"
@@ -898,23 +899,142 @@ static void onSettingsClose(lv_event_t *e) {
     s_fwCheckLbl = NULL;
     if (s_settings) { lv_obj_del(s_settings); s_settings = NULL; }
 }
-// "Check for update" — forced cloud OTA check (device_ota_check_now, board-independent:
-// ESP + T3). Version-gated in the device client, so a no-op when already current.
-static void onFwCheckDone(lv_timer_t *t) {
-    (void)t; s_fwCheckTimer = NULL;
-    if (s_fwCheckLbl) lv_label_set_text(s_fwCheckLbl, "Check for update");
+// Defined later in this file; the firmware overlay below reuses them.
+static lv_obj_t *settings_card(lv_obj_t *parent, const char *title);
+static void settings_info_row(lv_obj_t *card, const char *label, const char *value, uint32_t valColor);
+
+// ── Firmware update overlay: list this SKU's images from GitHub Releases and
+// let the user pick one on-screen (fwupdate.c does the fetch + apply; no cloud).
+static lv_obj_t  *s_fwu;        // the overlay, NULL when closed
+static lv_obj_t  *s_fwuCard;    // dynamic status/list card
+static lv_timer_t *s_fwuTimer;  // polls fwupdate_state()
+static int        s_fwuShown;   // last state we rendered (-1 = none)
+static int        s_fwuArmed;   // version index armed for a confirm tap (-1 = none)
+
+static void onFwuClose(lv_event_t *e) {
+    (void)e;
+    if (s_fwuTimer) { lv_timer_delete(s_fwuTimer); s_fwuTimer = NULL; }
+    if (s_fwu) { lv_obj_del(s_fwu); s_fwu = NULL; }
+    s_fwuCard = NULL;
 }
-static void onCheckFirmware(lv_event_t *e) {
+
+// A plain full-width label inside the status card.
+static lv_obj_t *fwu_note(const char *text, uint32_t color) {
+    lv_obj_t *l = lv_label_create(s_fwuCard);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(l, LV_PCT(100));
+    lv_label_set_text(l, text);
+    lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
+    lv_obj_set_style_text_font(l, F16, 0);
+    return l;
+}
+
+static void onFwuPick(lv_event_t *e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    const fwupdate_rel_t *r = fwupdate_get(idx);
+    if (!r || r->current) return;               // installed version isn't installable
     lv_obj_t *btn = lv_event_get_target(e);
     lv_obj_t *lbl = btn ? lv_obj_get_child(btn, 0) : NULL;
-    if (s_fwCheckTimer) return;   // a check is already in flight
-    if (lbl) lv_label_set_text(lbl, "Checking\xE2\x80\xA6");   // "Checking…"
-    s_fwCheckLbl = lbl;
-    device_ota_check_now();
-    // Revert the label after a few seconds: if an update was found the device
-    // reboots and this never fires; if we're current it un-sticks "Checking…".
-    s_fwCheckTimer = lv_timer_create(onFwCheckDone, 4000, NULL);
-    lv_timer_set_repeat_count(s_fwCheckTimer, 1);
+    if (s_fwuArmed == idx) {                     // second tap: go
+        if (lbl) lv_label_set_text(lbl, "Installing\xE2\x80\xA6");
+        fwupdate_apply(idx);                     // -> FWU_APPLYING (poll renders it)
+        return;
+    }
+    s_fwuArmed = idx;                            // first tap: arm + confirm
+    if (lbl) lv_label_set_text(lbl, "Tap again to install");
+    lv_obj_set_style_bg_color(btn, lv_color_hex(0xC85050), 0);
+}
+
+static void fwu_render(fwupdate_state_t st) {
+    if (!s_fwuCard) return;
+    lv_obj_clean(s_fwuCard);
+    s_fwuArmed = -1;
+    if (st == FWU_FETCHING) {
+        fwu_note("Checking GitHub for updates\xE2\x80\xA6", C_SUBTLE);
+    } else if (st == FWU_ERROR) {
+        fwu_note(fwupdate_error()[0] ? fwupdate_error() : "Update check failed", 0xC85050);
+    } else if (st == FWU_APPLYING) {
+        fwu_note("Downloading and installing\xE2\x80\xA6\nThe panel will restart when done.", C_TEXT);
+    } else if (st == FWU_READY) {
+        int n = fwupdate_count();
+        for (int i = 0; i < n; i++) {
+            const fwupdate_rel_t *r = fwupdate_get(i);
+            if (!r) continue;
+            lv_obj_t *b = lv_button_create(s_fwuCard);
+            lv_obj_set_width(b, LV_PCT(100));
+            lv_obj_set_style_bg_color(b, lv_color_hex(r->current ? 0x203040 : C_BTN), 0);
+            lv_obj_set_style_pad_ver(b, 10, 0);
+            lv_obj_add_event_cb(b, onFwuPick, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+            lv_obj_t *l = lv_label_create(b);
+            char txt[80];
+            if (r->current)
+                snprintf(txt, sizeof(txt), "%s  \xC2\xB7 installed", r->version);
+            else if (r->size > 0)
+                snprintf(txt, sizeof(txt), "%s  \xC2\xB7 %.1f MB", r->version, r->size / 1048576.0);
+            else
+                snprintf(txt, sizeof(txt), "%s", r->version);
+            lv_label_set_text(l, txt);
+            lv_obj_center(l);
+            lv_obj_set_style_text_font(l, F16, 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(r->current ? C_GREEN : C_TEXT), 0);
+        }
+    }
+}
+
+static void onFwuPoll(lv_timer_t *t) {
+    (void)t;
+    fwupdate_state_t st = fwupdate_state();
+    if ((int)st == s_fwuShown) return;   // only redraw on a state change
+    s_fwuShown = (int)st;
+    fwu_render(st);
+}
+
+// "Check for update" — opens the on-screen firmware picker (GitHub Releases).
+static void onCheckFirmware(lv_event_t *e) {
+    (void)e;
+    if (s_fwu) return;
+    lv_obj_t *ov = lv_obj_create(lv_layer_top());
+    s_fwu = ov;
+    lv_obj_set_size(ov, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(ov, lv_color_hex(HOME_BG_TOP), 0);
+    lv_obj_set_style_bg_grad_color(ov, lv_color_hex(HOME_BG_BOT), 0);
+    lv_obj_set_style_bg_grad_dir(ov, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(ov, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(ov, 0, 0);
+    int pad = (int)(18 * s_uiscale);
+    lv_obj_set_style_pad_all(ov, pad, 0);
+    lv_obj_set_style_pad_row(ov, (int)(14 * s_uiscale), 0);
+    lv_obj_set_flex_flow(ov, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(ov, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_scroll_dir(ov, LV_DIR_VER);
+
+    // Header: back + title (same pattern as Settings).
+    lv_obj_t *hdr = lv_obj_create(ov);
+    lv_obj_remove_style_all(hdr);
+    lv_obj_set_width(hdr, LV_PCT(100));
+    lv_obj_set_height(hdr, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(hdr, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(hdr, (int)(10 * s_uiscale), 0);
+    {
+        int bsz = (s_uiscale < 0.99f) ? 30 : (int)(30 * s_uiscale);
+        lv_obj_t *back = iconBtnImg(hdr, ICON_BACK, bsz, C_BTN, LV_OPA_COVER, 0xFFFFFF,
+                                    onFwuClose, NULL);
+        if (back) lv_obj_set_ext_click_area(back, (int)(12 * s_uiscale));
+    }
+    lv_obj_t *ttl = lv_label_create(hdr);
+    lv_label_set_text(ttl, "Firmware update");
+    lv_obj_set_style_text_color(ttl, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_font(ttl, F24, 0);
+
+    lv_obj_t *card = settings_card(ov, "Installed");
+    settings_info_row(card, "Version", fw_version(), C_TEXT);
+
+    s_fwuCard = settings_card(ov, "Available");
+    s_fwuShown = -1;
+    s_fwuArmed = -1;
+    fwupdate_start_fetch();
+    s_fwuTimer = lv_timer_create(onFwuPoll, 500, NULL);
 }
 
 // "Play test tone" — instant one-tap speaker check (audio_play_chime() is a

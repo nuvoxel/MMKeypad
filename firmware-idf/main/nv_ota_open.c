@@ -15,6 +15,7 @@
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "esp_system.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -38,6 +39,7 @@ nv_err_t nv_ota_apply(const char *url, const char *sha256) {
     ESP_LOGE(TAG, "OTA failed: %s", esp_err_to_name(err));
     return NV_ERR_HTTP;
   }
-  ESP_LOGI(TAG, "OTA image written; caller will restart");
+  ESP_LOGI(TAG, "OTA image written; restarting into it");
+  esp_restart(); /* does not return */
   return NV_OK;
 }
