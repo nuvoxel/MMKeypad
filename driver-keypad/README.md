@@ -6,6 +6,10 @@ server; this driver connects out to it over a network binding (6001 → :6700),
 reads the room's now-playing state, relays transport/volume/source, and hosts the
 keypad's SIP intercom endpoint. Wire format: [`../PROTOCOL.md`](../PROTOCOL.md).
 
+> **Tested with Control4 OS 4.1.** The driver declares a lower
+> `<minimum_os_version>` for compatibility, but 4.1 is what has actually been
+> validated so far.
+
 ## Why `NuVoxelKeypad.c4z` and not `MediaKeypad.c4z`
 
 Control4 instantiates a driver's proxies **only when the driver is first added to

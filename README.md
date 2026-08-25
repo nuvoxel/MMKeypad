@@ -35,9 +35,8 @@ driven entirely by Control4.
 - **[PROTOCOL.md](PROTOCOL.md)** — the wire contract. One JSON object per line
   over TCP; the device listens on `:6700` and the driver connects out.
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — design rationale and phasing.
-- **[OTA.md](OTA.md)** — the firmware update control plane (check-in → manifest →
-  verify → apply → rollback), for both ESP native A/B and the Linux split-init
-  overlay path.
+- **[OTA.md](OTA.md)** — how firmware updates reach a device: the on-screen
+  GitHub-Releases updater, USB flashing, and the T3 overlay swap.
 - **[PHASE3-INTERCOM-SIP.md](PHASE3-INTERCOM-SIP.md)** — how the SIP intercom
   endpoint works.
 - **[HA-INTEGRATION.md](HA-INTEGRATION.md)** — a scoped Home Assistant
@@ -95,6 +94,8 @@ On boot the device runs the protocol server on `:6700` and announces itself over
 
 ### 2. Add the driver in Composer Pro
 
+_Tested with **Control4 OS 4.1**._
+
 ```sh
 cd driver-keypad && ./build.sh   # -> NuVoxelKeypad.c4z, copied to ~/Documents/Control4/Drivers
 ```
@@ -105,7 +106,6 @@ keypad's room, and bind its **Media Keypad Network** connection to the device.
 That is the whole connection: the driver dials the device's `:6700`, reads the
 room's now-playing state, and relays transport / volume / source. See
 [`driver-keypad/README.md`](driver-keypad/README.md).
-
 
 For the SIP intercom endpoint, also build `driver-intercom` (it needs Control4
 SDK files — see [`driver-intercom/README.md`](driver-intercom/README.md)).
