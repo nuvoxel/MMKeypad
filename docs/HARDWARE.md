@@ -23,12 +23,14 @@ the unit.
 
 Notes:
 
-- **`s3`** is the reference board and the smallest full keypad — a self-contained
-  2.8" touch unit with speaker, amp, and mic. Best starting point.
-- **`ws43`** and **`nano`** are the large-panel targets. Both P4 boards have the
-  ES7210 capture path with hardware AEC, so they make the best intercom endpoints.
-  `ws43` gets Wi-Fi through the onboard ESP32-C6 over `esp_hosted`; `nano` is
-  wired (PoE) with Wi-Fi also available.
+- **`ws43`** is the **reference panel** — a 4.3" portrait touch unit on the
+  ESP32-P4, with Wi-Fi 6 through the onboard ESP32-C6 (`esp_hosted`) and the
+  ES8311 + ES7210 dual-mic + hardware-AEC audio path. Best starting point, and
+  the most complete intercom keypad.
+- **`nano`** is the large 10.1" panel — the same P4 dual-mic + AEC audio, wired
+  (PoE) with Wi-Fi also available.
+- **`s3`** is the smallest, most self-contained unit — a 2.8" touch board with a
+  single ES8311 codec, amp, and mic. Good where a compact keypad is all you need.
 - **`poe`** is a headless wired node — no display, just the protocol server, SDDP
   discovery, the settings/OTA web server, and the ES8311 + SIP audio path. Use it
   where you want a room's intercom/announcement endpoint without a screen.

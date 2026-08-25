@@ -1,6 +1,7 @@
 # MMKeypad — Architecture
 
-A two-part system that turns an **lcdwiki 2.8" ESP32-S3 display board** into a
+A two-part system that turns an ESP32 touch panel (the **Waveshare ESP32-P4
+4.3"** is the reference; other ESP32-S3/P4 boards are supported too) into a
 now-playing display + transport controller (and, later, an intercom/announcement
 endpoint) for a **Control4** room, driven by a custom **Control4 `.c4z` Lua
 driver**.

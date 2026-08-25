@@ -7,9 +7,10 @@ volume / source controls and programmable buttons, and joins Control4's native
 intercom as a standards-based SIP endpoint — all through a custom **Control4
 DriverWorks `.c4z` driver**.
 
-This repository is the open part of the project: the device firmware, the
-Control4 drivers, the protocol specification, and the hardware documentation
-(supported ESP32 boards and a full Control4 T3 panel teardown).
+This repository is the whole MMKeypad project: the device firmware, the Control4
+drivers, the protocol specification, and the hardware documentation (supported
+ESP32 boards and a full Control4 T3 panel teardown). It is fully open source and
+talks to no online service.
 Licensed under the **Apache License 2.0** — see [Licensing](#licensing).
 
 UX inspired by [`esphome-media-player`](https://github.com/jtenniswood/esphome-media-player)
@@ -51,8 +52,8 @@ driven entirely by Control4.
 
 ```sh
 cd firmware-idf
-./board.sh s3 build          # or: poe | nano | ws43 | matrix
-./board.sh s3 flash monitor
+./board.sh ws43 build        # or: s3 | poe | nano | matrix
+./board.sh ws43 flash monitor
 ```
 
 See [`firmware-idf/README.md`](firmware-idf/README.md) for the board table and
@@ -81,7 +82,7 @@ which):
 
 ```sh
 cd firmware-idf
-./board.sh s3 flash monitor      # or: poe | nano | ws43 | matrix
+./board.sh ws43 flash monitor    # or: s3 | poe | nano | matrix
 ```
 
 **Control4 T3 panel** — build and flash the Linux image onto a panel you own; you
@@ -105,9 +106,9 @@ That is the whole connection: the driver dials the device's `:6700`, reads the
 room's now-playing state, and relays transport / volume / source. See
 [`driver-keypad/README.md`](driver-keypad/README.md).
 
-> The [`driver-agent/`](driver-agent/) driver (account roster / auto-install) is
-> part of the hosted service and is **not** needed for a standalone install —
-> add the keypad driver directly as above.
+> The [`driver-agent/`](driver-agent/) driver (bulk auto-install from an account
+> roster) is optional and **not** needed for a standalone install — add the
+> keypad driver directly as above.
 
 For the SIP intercom endpoint, also build `driver-intercom` (it needs Control4
 SDK files — see [`driver-intercom/README.md`](driver-intercom/README.md)).
@@ -123,8 +124,9 @@ works and is the fallback if a panel has no network route.
 
 ## What is not in this repository
 
-This is the open part of a product that also has a closed part. Deliberately
-absent:
+The project is fully open and self-contained — it depends on no online service.
+The only things it can't ship are third-party materials that aren't ours to
+redistribute:
 
 - **Control4's own SDK material.** The DriverWorks intercom proxy templates that
   `driver-intercom` builds against are Copyright Control4 Corporation and are not
@@ -133,11 +135,6 @@ absent:
   (see [`reference/t3-control4/`](reference/t3-control4/)), but the extracted
   Control4 firmware images, APKs, and `/system` contents are not redistributed —
   supply those from a unit you own.
-- **The nuvoxel hosted service** — the account portal, device licensing, and the
-  roster the agent driver reads. The open firmware does not use or need it (it is
-  not license-gated and never phones home); it is simply the closed half of the
-  commercial product. [OTA.md](OTA.md) documents the hosted OTA design for
-  reference; the open build updates locally and from GitHub Releases instead.
 
 ## Licensing
 

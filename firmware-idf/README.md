@@ -13,8 +13,9 @@ protocol client + SDDP discovery, cover-art decode, and (where the board has
 audio) the SIP/RTP intercom stack (`esp_media_protocols`), the ES8311 codec
 driver (`esp_codec_dev`), and on-device AEC (`esp-sr`).
 
-ESP-IDF **v5.4** (`~/esp/esp-idf`). Board: lcdwiki 2.8" ESP32-S3 (ESP32-S3-WROOM-1
-N16R8) is the reference board; see the boards table below for the full set.
+ESP-IDF **v5.4** (`~/esp/esp-idf`). Reference panel: Waveshare
+ESP32-P4-WIFI6-Touch-LCD-4.3 (`ws43`). The lcdwiki 2.8" ESP32-S3 (`s3`) and the
+other boards are also supported — see the boards table below for the full set.
 Pinmap in [`main/board.h`](main/board.h) — the single source of truth for pins,
 per-board sections.
 
@@ -61,14 +62,14 @@ otherwise clobber each other's build); a bare `idf.py build` fails.
 . ~/esp/esp-idf/export.sh                 # once per shell (resets cwd)
 cd firmware-idf
 
-./board.sh s3 build                       # lcdwiki 2.8" display keypad
-./board.sh s3 -p /dev/cu.usbmodemXXXX flash monitor
+./board.sh ws43 build                     # Waveshare 4.3" P4 panel (reference)
+./board.sh ws43 -p /dev/cu.usbmodemXXXX flash monitor
 
 ./board.sh poe build                      # P4 PoE headless node
 ./board.sh poe -p /dev/cu.usbmodemYYYY flash monitor
 
 ./board.sh nano build                     # P4-NANO 10.1" DSI kit
-./board.sh ws43 build                     # P4 WiFi6 4.3" DSI panel
+./board.sh s3 build                       # lcdwiki 2.8" ESP32-S3 keypad
 ./board.sh matrix build                   # S3 + HUB75 LED matrix (art-only)
 ```
 
