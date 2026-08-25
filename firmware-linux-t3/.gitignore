@@ -1,0 +1,21 @@
+# Vendored third-party source trees (busybox, dropbear) -- fetched by the
+# build, not ours to commit.
+thirdparty/
+
+# Build artifacts (init binary, ramdisk, boot.img, LVGL demo).
+build/
+lvgl-app/build/
+
+# Serial/console capture logs.
+log/
+
+# rootfs staging: everything here except the hand-written config is
+# generated (busybox `make install` symlinks + binary, cross-built dropbear,
+# the LVGL app) or proprietary (extracted Control4 kernel modules).
+rootfs/init
+rootfs/linuxrc
+rootfs/bin/
+rootfs/sbin/
+rootfs/usr/bin/
+rootfs/usr/sbin/
+rootfs/lib/modules/

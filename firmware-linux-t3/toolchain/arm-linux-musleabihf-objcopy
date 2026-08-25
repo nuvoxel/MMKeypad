@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/homebrew/opt/llvm@21/bin/llvm-objcopy "$@"

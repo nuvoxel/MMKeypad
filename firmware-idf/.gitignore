@@ -1,0 +1,12 @@
+# ESP-IDF build artifacts + manager-fetched components (regenerated on build)
+build/
+build.*/
+managed_components/
+dependencies.lock
+sdkconfig
+sdkconfig.old
+# Per-board working configs (regenerated from sdkconfig.defaults.<target>).
+# sdkconfig.defaults* stay tracked; only the live generated ones are ignored.
+sdkconfig.p4
+sdkconfig.s3
+.cache/

@@ -1,0 +1,6 @@
+#!/bin/sh
+# zig's own `objcopy --strip-all` fails ("error: unimplemented") on fully
+# linked static ELF binaries like busybox -- llvm-strip (installed as zig's
+# own LLVM dependency via Homebrew) is GNU-strip-compatible and handles them
+# fine, so use that instead of routing through zig.
+exec /opt/homebrew/opt/llvm@21/bin/llvm-strip "$@"

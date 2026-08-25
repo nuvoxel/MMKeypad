@@ -1,0 +1,54 @@
+# ── Release hardening (OTA / published builds) ───────────────────────────────
+# Applied on top of the per-board defaults when MMK_RELEASE=1 (board.sh appends
+# this fragment + uses a *.rel build dir); publish-fw.sh sets it for every image
+# it ships. Dev builds (plain ./board.sh <board> build) keep full logging.
+#
+# The flashed .bin is already symbol-table-free (elf2image drops it); what leaks
+# and helps a reverser is the *strings* — log format strings + TAG names, assert
+# file/line/expr text, and esp_err_to_name() error names. Those are a roadmap of
+# the firmware's internals, so strip them. This does NOT replace on-device
+# anti-tamper (flash encryption / secure boot); it just
+# raises the bar and shrinks the image.
+
+# Compile OUT all runtime logs → removes every ESP_LOGx format string + TAG
+# (the single biggest RE roadmap). default<=maximum, so pin both to NONE.
+CONFIG_LOG_DEFAULT_LEVEL_NONE=y
+CONFIG_LOG_MAXIMUM_LEVEL_NONE=y
+# Quiet, string-free 2nd-stage bootloader too.
+CONFIG_BOOTLOADER_LOG_LEVEL_NONE=y
+
+# NOTE: CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT would also strip the
+# assert __FILE__/line/expr strings, but the prebuilt esp_media_protocols (SIP/RTP)
+# lib hard-references `_esp_error_check_failed`, which silent-assert mode removes →
+# link failure on the audio boards. Left at default; assert strings are a minor leak
+# next to the (now-stripped) logs.
+
+# Drop the esp_err_to_name() lookup table (human-readable error-name strings).
+CONFIG_ESP_ERR_TO_NAME_LOOKUP=n
+
+# Replace __FILE__ in log/assert macros with a component-relative path, so absolute
+# build paths (usernames, tree layout) never land in the image.
+CONFIG_COMPILER_HIDE_PATHS_MACROS=y
+
+# On a crash: reboot (resilience) but SILENTLY — no register dump / backtrace over
+# the serial line. (Addresses aren't symbols, but there's no reason to emit them.)
+CONFIG_ESP_SYSTEM_PANIC_SILENT_REBOOT=y
+
+# ── OTA image signature verification (NOT ENABLED — see below) ───────────────
+# publish-fw.sh already signs every ESP image with the Secure Boot v2 key
+# (espsecure.py sign_data --version 2), but the device does not check that
+# signature: there is no SECURE_SIGNED/SECURE_BOOT setting in any sdkconfig. That
+# is what made the old network-supplied OTA URL a remote-code-execution path.
+# The URL override is gone, so the only route now is the authenticated cloud
+# check-in, which verifies the sha256 the server reported.
+#
+# Verifying the signature as well is the belt to that braces. Enabling it needs
+# the PUBLIC key baked into the build and one supervised OTA on a single panel
+# first: if it is misconfigured the fleet silently stops accepting updates
+# (recoverable only by USB reflash). Left off deliberately rather than shipped
+# untested to four in-service panels.
+#
+#   CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y
+#   CONFIG_SECURE_BOOT_V2_ENABLED=n
+#   CONFIG_SECURE_SIGNED_APPS_ECDSA_V2_SCHEME=y
+#   CONFIG_SECURE_BOOT_VERIFICATION_KEY="keys/prod_fw_sign_pub.pem"

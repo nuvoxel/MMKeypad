@@ -1,0 +1,53 @@
+# --- ESP-IDF ---
+firmware-idf/build/
+firmware-idf/build.*/
+firmware-idf/sdkconfig
+firmware-idf/sdkconfig.old
+**/managed_components/
+firmware-idf/main/log/
+
+# --- Linux firmware ---
+firmware-linux-t3/build/
+firmware-linux-t3/thirdparty/
+firmware-linux-t3/sim/build/
+firmware-linux-t3/sim/shots/
+firmware-linux-t3/log/
+# Vendor firmware extracted from your own device — never distributed.
+# See firmware-linux-t3/README.md.
+/reference/
+
+# --- Developer SSH keys (MMK_DEV=1 builds only) ---
+firmware-linux-t3/dev-keys/authorized_keys
+
+# --- Drivers ---
+# build.sh regenerates the .c4z; it is a build artifact, not source.
+driver-*/**/*.c4z
+# Control4 SDK material — not redistributable. See driver-intercom/README.md.
+driver-intercom/intercom_proxy/
+
+# --- Build output, generic ---
+build/
+dist/
+*.bin
+*.elf
+*.map
+*.o
+
+# --- Secrets / local config ---
+**/secrets.h
+**/wifi_credentials.h
+*.local
+.env
+
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+**/.history/
+
+# --- Python ---
+__pycache__/
+*.pyc

@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  NuVoxel Agent — Control4 DriverWorks AGENT
+  Installed ONCE per home. Holds the customer's NuVoxel organization API key,
+  polls the NuVoxel portal for that org's device roster, and (on explicit dealer
+  action) installs the per-device Control4 driver for every device that isn't in
+  the project yet. Replaces per-keypad manual dealer installs.
+
+  Roster contract: GET {Cloud URL}/api/v1/org/roster with header x-api-key.
+
+  *** ADD FRESH — NEVER UPDATE AN EXISTING INSTANCE ***
+  This was a room-placed DEVICE driver and is now an AGENT: the project item
+  changes type (DEVICE under a room -> AGENT under the system root) and the proxy
+  changes with it. Composer's Update/Sync-Local path rewrites a driver in place
+  and cannot re-parent or re-type the item it is attached to, so pointing it at
+  an installed instance corrupts the project. Any existing instance must be
+  DELETED in Composer and this one added from the Agents list.
+-->
+<devicedata>
+  <copyright>Copyright 2026 NuVoxel</copyright>
+  <creator>NuVoxel</creator>
+  <manufacturer>NuVoxel</manufacturer>
+  <name>NuVoxel Agent</name>
+  <model>NuVoxel Agent</model>
+  <created>07/19/2026 12:00</created>
+  <modified>—</modified>
+  <version>0</version>
+
+  <control>lua_gen</control>
+  <controlmethod>other</controlmethod>
+  <driver>DriverWorks</driver>
+  <!-- Lands the driver under Composer's Agents list rather than the device
+       search, which is the only place a dealer would think to look for it. -->
+  <composer_categories>
+    <category>Agents</category>
+  </composer_categories>
+  <!-- C4:AddDevice / C4:AddLocation are OS 3.2.0+ APIs; this driver is useless
+       without them, so refuse to install on anything older rather than fail at
+       runtime with an unexplained no-op. -->
+  <minimum_os_version>3.2.0</minimum_os_version>
+
+  <config>
+    <script file="driver.lua" jit="1"/>
+    <properties>
+      <property>
+        <name>Driver Version</name>
+        <type>STRING</type>
+        <default>0.1.0</default>
+        <readonly>true</readonly>
+      </property>
+
+      <property><name>Account</name><type>LABEL</type><default>Account</default></property>
+      <!-- PRIMARY path is device-flow linking (no key to copy): on load with no
+           key the driver shows a Link Code below and a URL to approve it at. This
+           pasted key is the deliberate FALLBACK (headless installs, debugging) and
+           WINS when set — an org key here short-circuits linking entirely. -->
+      <property>
+        <name>Organization Key</name>
+        <type>STRING</type>
+        <default></default>
+        <readonly>false</readonly>
+        <tooltip>Optional. Leave blank to link by approving in a browser (recommended — see the Link Code below). Or paste a NuVoxel organization API key (starts with nv_org_) from the portal under Settings &gt; API Keys; a pasted key is used instead of linking.</tooltip>
+      </property>
+      <!-- Populated by "Link to NuVoxel Account": the short code the customer
+           types at the Link URL, and the URL itself. Both clear once linked. -->
+      <property>
+        <name>Link Code</name>
+        <type>STRING</type>
+        <default></default>
+        <readonly>true</readonly>
+        <tooltip>Enter this code at the Link URL below while signed in to NuVoxel to link this system. Blank once linked (or when a key is pasted above).</tooltip>
+      </property>
+      <property>
+        <name>Link At</name>
+        <type>STRING</type>
+        <default>https://nuvoxel.com/link</default>
+        <readonly>true</readonly>
+        <tooltip>Open this URL in a browser signed in to NuVoxel and enter the Link Code to approve this system.</tooltip>
+      </property>
+      <property>
+        <name>Cloud URL</name>
+        <type>STRING</type>
+        <default>https://nuvoxel.com</default>
+        <readonly>true</readonly>
+        <tooltip>NuVoxel platform base URL (fixed). Not installer-editable — a wrong value would silently break sync and OTA.</tooltip>
+      </property>
+      <property>
+        <name>Status</name>
+        <type>STRING</type>
+        <default>Never synced</default>
+        <readonly>true</readonly>
+        <tooltip>Result and time of the most recent roster fetch or device sync.</tooltip>
+      </property>
+
+      <property><name>Devices</name><type>LABEL</type><default>Devices</default></property>
+      <property>
+        <name>Installed Devices</name>
+        <type>STRING</type>
+        <default>0</default>
+        <readonly>true</readonly>
+        <tooltip>How many account devices this driver has installed into the project.</tooltip>
+      </property>
+      <!-- Refresh only LOOKS; it never installs (see the AddDevice note in
+           driver.lua). It exists so the dealer sees "N new devices available"
+           without having to poll the portal by hand. -->
+      <property>
+        <name>Refresh Interval</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item>
+          <item>15 minutes</item>
+          <item>1 hour</item>
+          <item>6 hours</item>
+          <item>24 hours</item>
+        </items>
+        <default>1 hour</default>
+        <readonly>false</readonly>
+        <tooltip>How often to re-read the account roster and report new devices in Status. Refreshing never installs anything — installing is always the "Sync Devices From Account" action.</tooltip>
+      </property>
+      <!-- No "install into room" property, and no room of its own to fall back
+           on: an agent lives at the project root. Only the customer knows which
+           room a keypad is physically in, so the room is chosen per device in
+           the NuVoxel portal and arrives on the roster as c4RoomId. This driver
+           pushes the project's room list up so that picker has something to
+           offer. A device with no room chosen is not installed. -->
+
+      <property>
+        <name>Debug Logging</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item>
+          <item>Print</item>
+          <item>Log</item>
+          <item>Print and Log</item>
+        </items>
+        <default>Print</default>
+        <readonly>false</readonly>
+      </property>
+      <!-- Driver self-update (this agent keeps the NuVoxel drivers current, like
+           the Chowmain Project Agent). Default Off: turn On only after validating
+           "Install Driver Updates Now" on one Director. -->
+      <property>
+        <name>Automatic Updates</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item>
+          <item>On</item>
+        </items>
+        <default>Off</default>
+        <readonly>false</readonly>
+        <tooltip>When On, auto-installs newer NuVoxel driver builds from the update channel (daily check). Off = manual, via the Actions tab.</tooltip>
+      </property>
+      <property>
+        <name>Update Channel</name>
+        <type>LIST</type>
+        <items>
+          <item>stable</item>
+          <item>beta</item>
+        </items>
+        <default>stable</default>
+        <readonly>false</readonly>
+      </property>
+      <property>
+        <name>Update Status</name>
+        <type>STRING</type>
+        <default></default>
+        <readonly>true</readonly>
+      </property>
+    </properties>
+
+    <!-- Installer-facing buttons. MUST live INSIDE <config> or Composer won't
+         render the Actions tab (same finding as the keypad driver). -->
+    <actions>
+      <!-- Device-flow linking. Auto-starts on load when no key is stored; this
+           button re-triggers it (e.g. after the code expired). -->
+      <action>
+        <name>Link to NuVoxel Account</name>
+        <command>LinkAccount</command>
+      </action>
+      <!-- Forget the browser-approved key and start a fresh link. Does not touch
+           a pasted Organization Key. -->
+      <action>
+        <name>Unlink NuVoxel Account</name>
+        <command>Unlink</command>
+      </action>
+      <action>
+        <name>Sync Devices From Account</name>
+        <command>SyncDevices</command>
+      </action>
+      <action>
+        <name>Refresh Roster (no install)</name>
+        <command>RefreshRoster</command>
+      </action>
+      <!-- The room list rides along with every roster poll; this is for a dealer
+           who has just added rooms and doesn't want to wait for the next one. -->
+      <action>
+        <name>Send Room List To Portal</name>
+        <command>PushRooms</command>
+      </action>
+      <action>
+        <name>Forget Installed Device Map</name>
+        <command>ForgetMap</command>
+      </action>
+      <!-- Report-only: query the catalog and populate Update Status. -->
+      <action>
+        <name>Check for Driver Updates</name>
+        <command>CheckDriverUpdates</command>
+      </action>
+      <!-- Download + install any newer NuVoxel driver builds now (manual test
+           path; works regardless of the Automatic Updates setting). -->
+      <action>
+        <name>Install Driver Updates Now</name>
+        <command>InstallDriverUpdates</command>
+      </action>
+    </actions>
+  </config>
+
+  <!-- UNVERIFIED for agents: no agent on the live Director declares <event>, so
+       whether these show up as Programming triggers is untested. They are
+       additive — nothing else depends on them firing — so a Director that
+       ignores them costs the dealer programming hooks, not a working sync. -->
+  <events>
+    <event><id>1</id><name>Devices Installed</name><description>A sync installed one or more new devices from the account.</description></event>
+    <event><id>2</id><name>New Devices Available</name><description>A roster refresh found devices in the account that are not in this project.</description></event>
+    <event><id>3</id><name>Sync Failed</name><description>A roster fetch or sync failed (bad key, no network, or server error).</description></event>
+    <event><id>4</id><name>Link Pending</name><description>Device-flow linking started; a Link Code is waiting to be approved in the browser.</description></event>
+    <event><id>5</id><name>Linked</name><description>A browser approval completed and this system now holds an organization key.</description></event>
+  </events>
+
+  <!-- An AGENT, not a device. This manages the whole house's NuVoxel devices, so
+       it belongs at the project root (parent item 1) like Routines or Quick
+       Actions — not inside whichever room a dealer happened to drop it in.
+       Being room-placed is what let it default to "install everything into my
+       own room", the bug this shape makes structurally impossible.
+
+       <agent>true</agent> + a <proxy> naming itself is the shape every agent on
+       a live Director uses (verified against agent_chowmain, agent-routines,
+       control4-halo-remote-hub). Unlike a device driver — where Director
+       resolves the proxy name to a stock <name>.c4i and silently skips the
+       driver if there isn't one — agent proxies are SELF-DECLARED: none of the
+       third-party agents above has a matching .c4i on the Director. So this
+       name is ours to pick and needs nothing installed alongside it.
+
+       No <connections>: this driver only ever speaks HTTPS to the portal via
+       C4:url(), which needs no binding. -->
+  <combo>true</combo>
+  <agent>true</agent>
+  <proxies>
+    <proxy>nuvoxel_system</proxy>
+  </proxies>
+
+</devicedata>

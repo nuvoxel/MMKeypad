@@ -1,0 +1,61 @@
+# MMKeypad icon set -> main/mmk_c4icons.c (regen: png2lvgl.py mmk_c4icons.c icons.manifest)
+# id            source PNG (in src/)          notes
+#
+# Two sources, by design:
+#  - Transport/chrome media controls: MATERIAL SYMBOLS (Apache-2.0). X4 renders
+#    these with Apple SF Symbols, which we can't ship on a non-Apple product;
+#    Material matches the look, is open, and is what Control4's own Android app
+#    uses. (google/material-design-icons, materialicons 24px, rasterized.)
+#  - Device/room glyphs: real CONTROL4 X4 catalog vectors (licensed via the
+#    partner agreement) -- X4 draws these from its own catalog, not SF Symbols.
+#
+# --- transport / media chrome (Material Symbols) ---
+play            src/play.png
+pause           src/pause.png
+skip_next       src/skip_next.png
+skip_prev       src/skip_prev.png
+shuffle         src/shuffle.png
+repeat          src/repeat.png
+thumb_up        src/thumb_up.png
+thumb_down      src/thumb_down.png
+vol_up          src/vol_up.png
+vol_mute        src/vol_mute.png
+queue           src/queue.png
+dots            src/dots.png
+power           src/power.png
+chevron_down    src/chevron_down.png
+# --- intercom / info chrome (Control4 catalog) ---
+info            src/field-info-small-fill.png
+close           src/X-Close.png
+intercom        src/intercom-filled.png
+call            src/phone-call.png
+group           src/group_idle.png
+door            src/door-open.png
+mic             src/mic.png
+settings        src/glyFlySettings.png
+# --- device / room (Control4 X4 catalog) ---
+light           src/daylightOn.png
+fan             src/fan-ceiling.png
+shade           src/glyFlyShadesOn.png
+scene           src/icon_scene_active.png
+cool            src/circle-cool.png
+heat            src/circle-heat.png
+security        src/glyFlySecurityOn.png
+camera          src/dome_camera.png
+speaker         src/speakerOn.png
+tv              src/tv-watch.png
+home            src/house-home-insight.png
+garage          src/garage.png
+stop            src/icon_macro_stopped.png
+bell            src/bell.png
+wifi            src/wifi.png
+heart           src/favorite.png
+audio           src/audio_idle.png
+video           src/btnNavVideo.png
+unlock          src/icon_lock_unlocked.png
+lock            src/Lock_(Small_Active).png
+moon            src/glyNavDndMoon.png
+media           src/listen.png
+keypad          src/keypad.png
+room_add        src/room_add.png
+back            src/back.png

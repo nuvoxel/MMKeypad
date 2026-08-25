@@ -1,0 +1,94 @@
+# ── Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 (480x800 portrait ST7701 DSI) ─────
+# Apply explicitly (P4 boards share esp32p4): ./board.sh ws43 build
+CONFIG_IDF_TARGET="esp32p4"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
+
+# Console over the onboard USB-UART bridge (UART0).
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+
+# In-package PSRAM (HEX @ 200 MHz) — DSI framebuffer + LVGL draw buffer.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_HEX=y
+CONFIG_SPIRAM_SPEED_200M=y
+# Execute instructions + rodata from PSRAM (Waveshare's own example does this):
+# frees the internal RAM otherwise used for flash cache. Needed so esp_hosted's
+# early SDIO/RPC tasks + audio's I2S DMA + the main task all fit in internal RAM
+# (without it the main task can't be created — esp_startup_start_app assert).
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+
+# Optimized code — at 480x800 LVGL software rendering wants real optimization
+# (IDF defaults to -Og). Same rationale as the other display boards.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# LVGL (9.3) — 16-bit to match the RGB565 DSI panel config in bsp_ws43.c, plus
+# libc malloc (heap_caps-backed, PSRAM-capable) instead of LVGL's builtin pool.
+CONFIG_LV_COLOR_DEPTH_24=y
+CONFIG_LV_USE_CLIB_MALLOC=y
+CONFIG_LV_USE_CLIB_STRING=y
+CONFIG_LV_USE_CLIB_SPRINTF=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_32=y
+CONFIG_LV_USE_QRCODE=y
+CONFIG_LV_USE_CANVAS=y
+
+# IDF 5.5 raised the default P4 min chip revision to v3.1, but our boards use
+# early P4 silicon (this unit = v1.3). Lower the floor to v1.0 — a min is a
+# floor, so this still runs on newer chips too (max compatibility).
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
+
+# ── WiFi via the onboard ESP32-C6 over esp_hosted 2.12.x ─────────────────────
+# NOT the 1.4.x from Waveshare's (stale) 04_wifistation example — the actually-
+# shipped board's C6 runs an esp_hosted 2.x SLAVE (the FactoryOnly image carries
+# the RPC_ID__Req_GetCoprocessorFwVersion RPC + coprocessor-OTA, both 2.x-only).
+# A 1.4.x host can't handshake it (transport_up(0) → heap-corrupt boot-loop);
+# 2.12.x is the matching major (idf_component.yml gates it to ws43).
+#
+# ENABLE softAP (Waveshare's example disables it): wifi.c falls back to an AP+STA
+# captive portal (http://192.168.4.1) to collect SSID/password when NVS has none.
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+
+# C6 slave reset is GPIO54 (schematic C6_CHIP_PU, active-high) — the ONE
+# board-specific pin. NOT CrowPanel's GPIO32 (different board). The SDIO
+# data/clk/cmd pins use esp_hosted's built-in P4 defaults (CLK=18,CMD=19,
+# D0-3=14-17), which the 1.4.x probe confirmed already match this board; bus
+# width is auto-negotiated (the factory image probes 1-bit then widens).
+CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
+
+# Push WiFi/LWIP buffers to PSRAM + trim the static RX pool. Without this the
+# WiFi (esp_hosted) + audio (I2S DMA) internal-RAM demand overflows before the
+# main task can be created (assert esp_startup_start_app res==pdTRUE). Same knobs
+# CrowPanel-7 uses to fit esp_hosted+WiFi; ws43 needs them harder (it also has
+# ES8311+ES7210 audio, which crowpanel7 lacks).
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=8
+
+# Put esp_hosted's SDIO buffer mempool in PSRAM, not internal DMA RAM (the P4's
+# DMA can reach PSRAM). Without this, sdio_mempool_create asserts (buf_mp_g) —
+# esp_hosted's DMA pool + audio's I2S DMA + the LVGL draw buffer all compete for
+# the ~384KB internal DMA RAM. This is what lets WiFi coexist with audio here.
+CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y
+
+# ── BLE via the C6 over esp_hosted VHCI (NimBLE host on the P4) ───────────────
+# Needs the matching 2.12.x C6 slave (with BT controller) — flashed via the
+# MMK_C6_OTA path. NimBLE host allocs go to PSRAM (coexist with WiFi+audio+display).
+CONFIG_BT_ENABLED=y
+CONFIG_BT_CONTROLLER_DISABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=n
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_TRANSPORT_UART=n
+CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
+CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+
+# Dev screenshot tool (esp_shot.py): LVGL framebuffer snapshot over serial.
+CONFIG_LV_USE_SNAPSHOT=y

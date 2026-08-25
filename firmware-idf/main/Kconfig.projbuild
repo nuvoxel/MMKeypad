@@ -1,0 +1,15 @@
+menu "MMKeypad"
+
+config MMKEYPAD_BENCH_WIFI_SSID
+    string "Bench WiFi SSID (temporary, for net testing before provisioning)"
+    default ""
+    help
+        Throwaway STA credentials so the device can join WiFi and the net layer
+        can be tested against the Control4 driver before the SoftAP captive-portal
+        provisioning is built. Lives in the local (gitignored) sdkconfig.
+
+config MMKEYPAD_BENCH_WIFI_PASS
+    string "Bench WiFi password"
+    default ""
+
+endmenu

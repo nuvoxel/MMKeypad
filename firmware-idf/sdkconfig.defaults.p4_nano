@@ -1,0 +1,47 @@
+# ── Waveshare ESP32-P4-NANO KIT-D (10.1" 800x1280 DSI + PoE + ES8311) ────────
+# Apply explicitly (P4 boards share esp32p4): ./board.sh nano build
+CONFIG_IDF_TARGET="esp32p4"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
+
+# Console over the onboard CH343 USB-UART bridge (UART0).
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+
+# 32MB in-package PSRAM (HEX @ 200 MHz).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_HEX=y
+CONFIG_SPIRAM_SPEED_200M=y
+
+# Optimized code (same rationale as the other display boards).
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# Waveshare shared P4 BSP: select the attached panel. KIT-D = 10.1" 800x1280
+# (JD9365). This is the ONLY per-SKU line in this file — swap it for a different
+# panel (e.g. CONFIG_BSP_LCD_TYPE_480_800_4_3_INCH_A) and everything else is
+# identical across every Waveshare P4 board.
+CONFIG_BSP_LCD_TYPE_800_1280_10_1_INCH=y
+
+# Drive the DSI panel at 24-bit RGB888 (the P4 has the RAM + DSI bandwidth) so
+# gradients are smooth — RGB565 visibly bands on the large 10" panel.
+CONFIG_BSP_LCD_COLOR_FORMAT_RGB888=y
+
+# LVGL (9.3) — 24-bit to match the RGB888 panel (smooth gradients).
+CONFIG_LV_COLOR_DEPTH_24=y
+CONFIG_LV_USE_CLIB_MALLOC=y
+CONFIG_LV_USE_CLIB_STRING=y
+CONFIG_LV_USE_CLIB_SPRINTF=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_32=y
+CONFIG_LV_USE_QRCODE=y
+CONFIG_LV_USE_CANVAS=y
+
+# IDF 5.5 raised the default P4 min chip revision to v3.1, but our boards
+# use early P4 silicon (e.g. NANO = v1.3). Lower the floor to v1.0 — a min is a
+# floor, so this still runs on newer chips too (max compatibility).
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y

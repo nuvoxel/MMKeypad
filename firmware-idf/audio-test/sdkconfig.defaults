@@ -1,0 +1,18 @@
+# ── Target / flash ──────────────────────────────────────────────────────────
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# ── Console: single USB port wired to the S3 USB-Serial-JTAG (same as main fw).
+#    First IDF flash may need BOOT-download mode if the unit still runs Arduino.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# ── CPU / RTOS ──────────────────────────────────────────────────────────────
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_FREERTOS_HZ=1000
+
+# ── LVGL (managed component, configured via Kconfig) ────────────────────────
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_USE_OS=0
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_48=y

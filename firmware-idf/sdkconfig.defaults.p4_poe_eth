@@ -1,0 +1,24 @@
+# ── Waveshare ESP32-P4-POE-ETH-NH (headless, wired) ──────────────────────────
+CONFIG_IDF_TARGET="esp32p4"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
+
+# This board exposes an onboard USB-UART bridge (esptool resets via RTS @ 460800);
+# ROM + app console both ride UART0. The P4's native USB-Serial-JTAG isn't the
+# flashing port here, so keep the console on UART.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+
+# Internal EMAC + external RMII PHY (IP101). eth.c uses ETH_ESP32_EMAC_DEFAULT_CONFIG(),
+# whose P4 defaults already match this board's RMII pinout.
+CONFIG_ETH_USE_ESP32_EMAC=y
+CONFIG_ETH_PHY_INTERFACE_RMII=y
+
+# No SPIRAM enabled yet: this headless network/intercom-control build fits in the
+# P4's internal SRAM. Enable CONFIG_SPIRAM (+ the right PSRAM type) when audio/SIP
+# is brought up, so esp_rtc/media_lib's big buffers land in PSRAM.
+
+# IDF 5.5 raised the default P4 min chip revision to v3.1, but our boards
+# use early P4 silicon (e.g. NANO = v1.3). Lower the floor to v1.0 — a min is a
+# floor, so this still runs on newer chips too (max compatibility).
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y

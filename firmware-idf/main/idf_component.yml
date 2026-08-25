@@ -1,0 +1,128 @@
+## Managed dependencies, pulled by the IDF Component Manager on first build
+## (idf.py reconfigure / build). Registry: https://components.espressif.com
+##
+## The display/audio components are gated to the targets that use them (via `rules`),
+## so the headless ESP32-P4 build doesn't drag in LVGL / panel / codec / RTC stacks.
+dependencies:
+  idf: ">=5.1"
+
+  # ── UI / display (S3 lcdwiki + P4 display boards) ───────────────────────────
+  # esp_lvgl_port 2.4+ uses LV_COLOR_FORMAT_RGB565_SWAPPED (LVGL 9.3+), so keep
+  # LVGL >= 9.3 to stay compatible with the port's swap_bytes path. Needed by both
+  # display boards (the headless P4-POE build ignores it).
+  lvgl/lvgl:
+    version: "~9.3.0"
+    rules:
+      - if: "target in [esp32s3, esp32p4]"
+  espressif/esp_lvgl_port:
+    # PINNED to the 2.8 line, not ^2.8.0. 2.9.0 assumes a post-5.5 esp_lcd API:
+    # it gates on ESP_IDF_VERSION >= 5.5.0 and assigns
+    # cbs.on_frame_buf_complete, but IDF 5.5.4's
+    # esp_lcd_dpi_panel_event_callbacks_t has only on_color_trans_done /
+    # on_refresh_done (the field landed after 5.5). With a caret range the
+    # component manager silently resolved 2.9.0 on the next build and broke both
+    # DSI boards (ws43, nano) -- release builds only, because the debug build
+    # dirs still had a stale object for that file.
+    version: "~2.8.0"
+    rules:
+      - if: "target in [esp32s3, esp32p4]"
+  # SPI panel for the lcdwiki 2.8" S3 (ILI9341V). Touch on S3 is a direct FT6336
+  # driver in bsp.c (the generic ft5x06 init stops the FT6336 scanning).
+  espressif/esp_lcd_ili9341:
+    version: "^2.0.0"
+    rules:
+      - if: "target == esp32s3"
+  # GT911 cap touch (ws43).
+  espressif/esp_lcd_touch_gt911:
+    version: "^1.1.0"
+    rules:
+      - if: "target == esp32p4"
+  # ST7701 MIPI-DSI panel controller (Waveshare P4-WIFI6-Touch-LCD-4.3). Gated on
+  # the MMK_BOARD env var — board.sh exports it; a bare idf.py build must
+  # `export MMK_BOARD=ws43` first or manifest solving fails/misresolves.
+  espressif/esp_lcd_st7701:
+    version: "*"
+    rules:
+      - if: "$MMK_BOARD == ws43"
+  # Waveshare P4 BSP. Drives ANY Waveshare DSI panel (3.4"–10.1", chosen by
+  # CONFIG_BSP_LCD_TYPE_*) + GT911 + esp_lvgl_port + I2C backlight, so it's
+  # effectively the shared P4-series BSP: every Waveshare P4 board (NANO, ETH,
+  # larger, integrated-PoE) is electrically the same and the only per-SKU
+  # variable is which panel is attached (a sdkconfig line).
+  # NOTE: the board-agnostic `esp32_p4_platform` component (IDF >=5.5) is the
+  # same BSP by name, BUT its bsp_display_start() does NOT call lvgl_port_init()
+  # (the app must, via bsp_display_start_with_config) — swapping it in makes our
+  # UI's lvgl_port_lock() assert + reboot. esp32_p4_nano's bsp_display_start()
+  # DOES init lvgl_port, matching our main.c, and supports the same panel
+  # Kconfig — so we use it. Revisit esp32_p4_platform only with a shim that
+  # calls its lvgl init explicitly.
+  waveshare/esp32_p4_nano:
+    version: "*"
+    rules:
+      - if: "$MMK_BOARD == p4_nano"
+  # Album-art JPEG decode (tjpgd-based)
+  espressif/esp_jpeg:
+    version: "^1.1.0"
+    rules:
+      - if: "target in [esp32s3, esp32p4]"
+  # "Halo" onboard WS2812B RGB LED (RMT-driven). S3 lcdwiki = GPIO42 (see halo.c).
+  espressif/led_strip:
+    version: "^2.5.0"
+    rules:
+      - if: "target == esp32s3"
+  # HUB75 RGB LED-matrix DMA driver (esphome/esp-hub75, MIT; native ESP-IDF, uses
+  # GDMA on the S3). Only the s3_matrix board pulls it (gated on the MMK_BOARD env
+  # var — board.sh exports it; a bare idf.py build must `export MMK_BOARD=s3_matrix`).
+  esphome/esp-hub75:
+    version: "^0.3.6"   # latest published; its README on `main` shows a future ^1.0.0
+    rules:
+      - if: "$MMK_BOARD == s3_matrix"
+
+  # ── WiFi via ESP32-C6 co-processor (Waveshare ws43) ───────────────────────────
+  # esp_hosted is force-linked (--whole-archive) and auto-inits when present, so
+  # it must be gated per-BOARD, not per-target (the P4-POE has no C6 at all).
+  # ws43's onboard C6 runs an esp_hosted 2.x slave (NOT the stale 1.4.x from
+  # Waveshare's example repo — the actually-shipped board's C6 FactoryOnly image
+  # carries RPC_ID__Req_GetCoprocessorFwVersion + coprocessor-OTA, both 2.x-only;
+  # a 1.4.x host can't handshake it). 2.12.x brings the SDIO transport up; if the
+  # exact slave version differs, OTA the C6 to 2.12.3 over the (now-working) link.
+  espressif/esp_hosted:
+    version: "^2.12.0"
+    rules:
+      - if: "$MMK_BOARD == ws43"
+  espressif/esp_wifi_remote:
+    version: "*"
+    rules:
+      - if: "$MMK_BOARD == ws43"
+
+  # ── BLE Wi-Fi provisioning (ws43 + s3_lcdwiki) ───────────────────────────────
+  # The IN-IDF `wifi_provisioning` component compiles its manager ONLY when native
+  # WiFi is enabled (CONFIG_ESP_WIFI_ENABLED); on the P4 WiFi lives on the C6 via
+  # esp_wifi_remote, so that component is headers-only and won't link. Espressif's
+  # `network_provisioning` managed component is the drop-in replacement that builds
+  # against esp_wifi_remote (same BLE scheme + PoP + QR payload, `network_prov_*`
+  # API) AND against native esp_wifi — so ONE prov.c serves both boards. On the S3
+  # the BLE controller is on-chip (native NimBLE, brought up by nimble_port_init);
+  # on ws43 it's the C6 over the esp_hosted VHCI (see MMK_BLE_HOSTED in prov.c).
+  espressif/network_provisioning:
+    version: "^1.2.0"
+    rules:
+      - if: "$MMK_BOARD == ws43"
+
+  # ── Phase 3 audio / intercom (ES8311 + SIP) ─────────────────────────────────
+  # S3 (lcdwiki ES8311 + FM8002E), P4-POE/NANO (ES8311 + NS4150B), and ws43
+  # (ES8311 speaker + ES7210 dual-mic). The ES7210 ADC driver ships INSIDE
+  # esp_codec_dev (device/es7210) — no separate component needed. Gated by target
+  # (esp32p4 covers ws43/nano/poe; esp32s3 covers the lcdwiki), so audio boards
+  # get it and the headless-vs-audio split is handled in CMakeLists, not here.
+  espressif/esp_codec_dev:
+    version: "^1.3.0"
+    rules:
+      - if: "target in [esp32s3, esp32p4]"
+  # SIP/RTP stack (ESPRESSIF MIT license, redistributable on Espressif silicon):
+  espressif/esp_media_protocols:
+    version: "*"
+    rules:
+      - if: "target in [esp32s3, esp32p4]"
+  # On-device AEC / noise-suppression:
+  # espressif/esp-sr: "*"

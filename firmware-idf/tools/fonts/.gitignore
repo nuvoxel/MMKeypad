@@ -1,0 +1,6 @@
+# Full Roboto TTFs — fetch once from the Control4 X4.app C4UIKit bundle (or
+# Google Fonts); embed-roboto.sh copies them in. Not committed (162KB each);
+# the generated main/mmk_roboto.c holds the bytes the build actually needs.
+Roboto-*.ttf
+# The Lucide subset (lucide-mmk.ttf, ~19KB) IS committed — expensive to
+# regenerate (needs npm + pyftsubset) and small.

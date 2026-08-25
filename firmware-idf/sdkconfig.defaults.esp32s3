@@ -1,0 +1,46 @@
+# ── lcdwiki 2.8" ESP32-S3-WROOM-1 N16R8 (display keypad) ─────────────────────
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# Single USB port wired to the S3's USB-Serial-JTAG (idf.py flash/monitor over it).
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Octal PSRAM (WROOM-1 N16R8)
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+# Let esp_lvgl_port / drivers pull big buffers from PSRAM via heap_caps.
+CONFIG_SPIRAM_USE_MALLOC=y
+
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# Optimized code — IDF defaults to -Og (debug); -O2 speeds up LVGL rendering,
+# JPEG decode, TLS handshakes (album art/OTA) and the SIP/audio path.
+# (Backported from the crowpanel7 bring-up, 2026-07-02.)
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# ── LVGL (managed component uses Kconfig) ───────────────────────────────────
+CONFIG_LV_COLOR_DEPTH_16=y
+# libc malloc (heap_caps-backed) instead of LVGL's fixed builtin pool — same
+# allocator choice as the P4 boards / Elecrow's demo.
+CONFIG_LV_USE_CLIB_MALLOC=y
+CONFIG_LV_USE_CLIB_STRING=y
+CONFIG_LV_USE_CLIB_SPRINTF=y
+# Fonts used by the UI + QR for the setup screen
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_32=y
+CONFIG_LV_USE_QRCODE=y
+CONFIG_LV_USE_CANVAS=y
+
+# NO Bluetooth on the S3: native NimBLE + WiFi + LVGL don't fit the ~512KB internal
+# RAM (BLE crash/OOM), so the S3 uses the softAP captive portal for Wi-Fi setup, not
+# BLE. BLE provisioning is a C6-board feature (ws43). See board.h (MMK_HAS_BLE_PROV
+# undefined for the S3).
+
+# Dev screenshot tool (esp_shot.py): LVGL framebuffer snapshot over serial.
+CONFIG_LV_USE_SNAPSHOT=y

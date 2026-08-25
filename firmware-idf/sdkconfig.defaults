@@ -1,0 +1,29 @@
+# ── Target-neutral defaults (shared by every board) ─────────────────────────
+# Per-target overrides live in sdkconfig.defaults.<target> (esp32s3 / esp32p4),
+# which idf.py auto-applies on top of this file. NOTE: the active target lives in
+# the (gitignored) sdkconfig and is chosen with `idf.py set-target <target>`.
+
+# Partition table
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Console routing is board-specific (USB-Serial-JTAG vs UART bridge) — see the
+# per-target sdkconfig.defaults.<target> files.
+
+# RTOS
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+
+# HTTPS cert bundle for OTA (net.c esp_crt_bundle_attach) + album art on display boards
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# Bigger TCP window/buffers so OTA uploads aren't ~13 KB/s (default window 5760)
+CONFIG_LWIP_TCP_WND_DEFAULT=32768
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=16
+
+# mbedtls allocates TLS buffers from PSRAM instead of internal RAM, so the album-art HTTPS
+# handshake doesn't compete with the LVGL draw buffers (moved to internal DMA RAM for the
+# display-flush freeze fix). Internal-RAM starvation was causing SSL_ALLOC_FAILED / no art.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y

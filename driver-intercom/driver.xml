@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MMKeypad Intercom — Control4 DriverWorks driver (companion to MMKeypad Media Keypad)
+
+  A SIP intercom endpoint for the MMKeypad. The intercom CANNOT live in the keypad
+  driver: that driver is a <combo> (its generic_http + keypad proxies are combo-only),
+  and an intercomproxy cannot be in a combo driver (verified on a live Director —
+  generic_http.c4i/keypad.c4i don't exist standalone, and combo overrides the proxy
+  class so the intercom never enrolls). So this is a separate, NON-combo driver that
+  hosts the Control4 intercomproxy.
+
+  It does NOT bind to the device's network connection (the keypad driver already owns
+  it, and the device only accepts one connection). Instead it binds to the keypad
+  driver over a CONTROL relay (class MMKEYPAD_INTERCOM); the keypad owns the device's
+  :6700 link and relays SIP/call traffic to/from us via C4:SendToDevice. One control
+  bind, no second network device bind. Protocol: ../../PROTOCOL.md
+-->
+<devicedata>
+  <copyright>Copyright 2026 NuVoxel</copyright>
+  <creator>NuVoxel</creator>
+  <manufacturer>NuVoxel</manufacturer>
+  <name>NuVoxel Keypad Intercom</name>
+  <model>NuVoxel Keypad Intercom</model>
+  <created>06/26/2026 19:00</created>
+  <modified>—</modified>
+  <version>0</version>
+
+  <small image_source="c4z">icons/device_sm.png</small>
+  <large image_source="c4z">icons/device_lg.png</large>
+
+  <control>lua_gen</control>
+  <controlmethod>ip</controlmethod>
+  <driver>DriverWorks</driver>
+  <minimum_os_version>2.10.0</minimum_os_version>
+
+  <!-- Comms/UI categories so it lands in the right Add-Driver section (mirrors the
+       T4 touchscreen / generic SIP phone). -->
+  <composer_categories>
+    <category>Communications</category>
+    <category>User Interface</category>
+  </composer_categories>
+
+  <!-- Intercom capabilities (proxy-dependent; apply to the intercomproxy primary).
+       Third-party intercoms MUST set driver_arch_type=5, and has_intercom=true is
+       required for the Communications agent to enroll the endpoint. Audio-only
+       auto-answer station — speaker + mic + ringer, monitor-mode, door-chime (plays a
+       chime when a door-station call rings), no camera/display/video. NO <combo>. -->
+  <capabilities>
+    <driver_arch_type>5</driver_arch_type>
+    <has_intercom>true</has_intercom>
+    <has_video_intercom>false</has_video_intercom>
+    <is_doorstation>false</is_doorstation>
+    <has_camera>false</has_camera>
+    <has_display>false</has_display>
+    <has_buttons>false</has_buttons>
+    <has_dial_pad_ui>false</has_dial_pad_ui>
+    <has_play_door_chime>true</has_play_door_chime>
+    <has_auto_answer>true</has_auto_answer>
+    <has_do_not_disturb>true</has_do_not_disturb>
+    <has_early_media>false</has_early_media>
+    <has_monitor_mode>true</has_monitor_mode>
+    <has_mcast_emedia>false</has_mcast_emedia>
+    <can_change_transport>false</can_change_transport>
+    <can_change_multicast_ip>false</can_change_multicast_ip>
+    <use_microphone>true</use_microphone>
+    <use_speaker>true</use_speaker>
+    <use_ringer>true</use_ringer>
+    <has_high_definition>false</has_high_definition>
+    <has_echo_calibration>false</has_echo_calibration>
+  </capabilities>
+
+  <config>
+    <documentation file="www/documentation.html"/>
+    <script file="driver.lua" jit="1"/>
+    <properties>
+      <property><name>Driver Version</name><type>STRING</type><default>3</default><readonly>true</readonly></property>
+      <property><name>Relay</name><type>STRING</type><default>Not linked</default><readonly>true</readonly><tooltip>Status of the control link to the NuVoxel Keypad driver (bind it in Connections).</tooltip></property>
+
+      <!-- How Control4 actually conveys these (verified live on a Director):
+           • The native Audio Control SLIDERS (Ringer/Speaker/Microphone) are NOT sent as
+             SET_* commands — they're stored as VARIABLES on the intercom proxy device
+             (RINGER_VOLUME/SPEAKER_VOLUME/MICROPHONE_GAIN). The driver READS + WATCHES
+             those (driver.lua BindProxyLevelVars / OnWatchedVariableChanged) and forwards
+             changes to the device. So the native sliders work directly — no properties.
+           • Auto Answer + Monitor Mode have NO proxy variable and the native checkboxes
+             don't reliably command a 3rd-party endpoint. Instead the driver POLLS its own
+             GET_DEVICE props for Auto Answer / Monitor Mode / Play Door Chime and pushes
+             them to the device (driver.lua PollDeviceState → callcfg), so the NATIVE
+             intercom proxy config panel is the single source of truth — no driver
+             properties for these. -->
+
+      <!-- Audio levels are NOT driver properties: Control4 stores the native Audio Control
+           sliders (Ringer/Speaker/Microphone) as VARIABLES on the intercom proxy device
+           (RINGER_VOLUME/SPEAKER_VOLUME/MICROPHONE_GAIN). The driver reads + watches those
+           variables and forwards changes to the device (driver.lua BindProxyLevelVars /
+           OnWatchedVariableChanged), so the native sliders work directly. use_ringer/
+           use_speaker/use_microphone stay True to keep those sliders enabled. -->
+
+      <!-- SIP account is FULLY AUTO (no dealer entry, nothing settable): the driver
+           uses the Director as the SIP server, generates a username + persisted
+           password, reports them to the proxy (→ Director's internal Communication
+           Server), and pushes the same to the device. DND stays on the native proxy
+           checkbox (the Director enforces it by not routing calls — no driver action
+           needed). Only the read-only registration status is shown. -->
+      <property><name>SIP</name><type>LABEL</type><default>SIP</default></property>
+      <property><name>SIP Registration</name><type>STRING</type><default>Unregistered</default><readonly>true</readonly><tooltip>Live SIP registration status reported by the device.</tooltip></property>
+
+      <!-- Door action buttons shown on a panel's call screen for DOOR STATION calls.
+           Control4's intercom proxy has no door/relay command and its device_props
+           carry no relay info, so there is nothing to auto-discover: label the
+           buttons here (blank = not shown) and wire the matching event in
+           programming. Most door stations have two relays, e.g. door + gate. -->
+      <property><name>Door Actions</name><type>LABEL</type><default>Door Actions</default></property>
+      <property><name>Door Action 1 Label</name><type>STRING</type><default></default><readonly>false</readonly><tooltip>Button shown on door-station calls (e.g. "Unlock"). Blank = no button. Fires the "Door Action 1" event; LAST_DOOR_PEER holds which door it was.</tooltip></property>
+      <property><name>Door Action 2 Label</name><type>STRING</type><default></default><readonly>false</readonly><tooltip>Second button (e.g. "Open Gate"). Blank = no button. Fires the "Door Action 2" event.</tooltip></property>
+
+      <property><name>Debug Logging</name><type>LIST</type><items><item>Off</item><item>Print</item><item>Log</item><item>Print and Log</item></items><default>Print</default><readonly>false</readonly></property>
+    </properties>
+  </config>
+
+  <!-- Installer-facing buttons -->
+  <actions>
+    <action><name>Re-register SIP</name><command>ReRegister</command></action>
+  </actions>
+
+  <!-- Programming events for the call screen's door buttons. The dealer binds these
+       to whatever the door actually uses (relay, lock, macro): vendor-neutral,
+       with no assumptions about a door station's command vocabulary. -->
+  <events>
+    <event><id>1</id><name>Door Action 1</name><description>A panel's call screen fired door action 1 (see LAST_DOOR_PEER).</description></event>
+    <event><id>2</id><name>Door Action 2</name><description>A panel's call screen fired door action 2 (see LAST_DOOR_PEER).</description></event>
+  </events>
+
+  <variables>
+    <variable><name>LAST_DOOR_PEER</name><id>1</id><type>STRING</type><default></default><readonly>true</readonly></variable>
+  </variables>
+
+  <!-- intercomproxy MUST be primary="True". Verified live: a lone inline intercomproxy
+       with NO primary attribute registers SIP and lists in the Communication agent, but
+       the proxy NEVER calls ReceivedFromProxy (no GET_DEVICE/GET_STATE/SET_* arrive),
+       the endpoint can't be added to an intercom group, and it shows "Unidentified".
+       intercomproxy is normally a SECONDARY/add-on proxy, so a lone one isn't treated as
+       the device's primary command target unless explicitly flagged. The working
+       third-party reference (Chowmain UniFi Access Intercom) sets primary="True" on its
+       intercomproxy. -->
+  <proxies>
+    <proxy proxybindingid="5001" name="Media Keypad Intercom" primary="True">intercomproxy</proxy>
+  </proxies>
+
+  <connections>
+    <!-- The Control4 intercom proxy connection. -->
+    <connection>
+      <id>5001</id>
+      <facing>6</facing>
+      <type>2</type>
+      <connectionname>INTERCOM</connectionname>
+      <consumer>False</consumer>
+      <audiosource>False</audiosource>
+      <videosource>False</videosource>
+      <linelevel>False</linelevel>
+      <classes><class><classname>INTERCOM</classname></class></classes>
+    </connection>
+    <!-- CONTROL relay (consumer). Bind this to the MMKeypad Media Keypad's
+         "MMKeypad Intercom Relay" provider in Connections. We reach the device only
+         through the keypad driver — no network binding here. -->
+    <connection>
+      <id>700</id>
+      <facing>6</facing>
+      <connectionname>Media Keypad Link</connectionname>
+      <type>1</type>
+      <consumer>True</consumer>
+      <classes><class><classname>MMKEYPAD_INTERCOM</classname></class></classes>
+    </connection>
+  </connections>
+</devicedata>

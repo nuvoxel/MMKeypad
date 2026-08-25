@@ -1,0 +1,564 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  NuVoxel Keypad — Control4 DriverWorks driver (per-device)
+  One instance per keypad, placed in the keypad's room. Connects OUT to the
+  device (which is the TCP server) and reads the room's now-playing state,
+  relays transport/volume/source, and hosts the SIP intercom endpoint.
+  Protocol: see ../PROTOCOL.md
+
+  WHY A NEW FILENAME (NuVoxelKeypad.c4z, not MediaKeypad.c4z):
+  Control4 instantiates a driver's proxies ONLY when the driver is first ADDED to
+  a project. Changing the <proxy> set of an already-installed driver corrupts the
+  project (it has crashed a Director in this repo). This driver restructures the
+  proxy set — it absorbs the former companion "Media Keypad Intercom" driver as a
+  third proxy (5003) — so it MUST ship under a filename that has never been
+  installed anywhere. Never reuse MediaKeypad.c4z for this.
+-->
+<devicedata>
+  <copyright>Copyright 2026 NuVoxel</copyright>
+  <creator>NuVoxel</creator>
+  <manufacturer>NuVoxel</manufacturer>
+  <name>Media Keypad</name>
+  <model>M Keypad</model>
+  <created>06/22/2026 12:00</created>
+  <modified>—</modified>
+  <version>0</version>
+
+  <small image_source="c4z">icons/device_sm.png</small>
+  <large image_source="c4z">icons/device_lg.png</large>
+
+  <control>lua_gen</control>
+  <controlmethod>ip</controlmethod>
+  <driver>DriverWorks</driver>
+  <minimum_os_version>2.10.0</minimum_os_version>
+
+  <!-- Comms/UI categories so the driver lands in the right Add-Driver sections now
+       that it hosts the intercom endpoint itself (mirrors the T4 touchscreen). -->
+  <composer_categories>
+    <category>Communications</category>
+    <category>User Interface</category>
+  </composer_categories>
+
+  <!-- Intercom capabilities, for the intercomproxy sub-proxy (5003). Audio-only
+       auto-answer station — speaker + mic + ringer, monitor mode, door chime; no
+       camera/display/video.
+
+       driver_arch_type = 5 (third-party endpoint). Verified on the live Director:
+       arch_type=4 is the NATIVE archetype (control4_doorstation_ds2), while every
+       third-party intercom uses 5 — INCLUDING our own old split drivers
+       (MMKeypadIntercom / MediaKeypadIntercom), which worked. So arch_type is NOT
+       what stops the merged sub-proxy endpoint from being enrolled by the
+       Communications agent (both the working split and the broken merge use 5);
+       the regression is elsewhere (prime suspect: intercomproxy went from PRIMARY
+       in the standalone driver to a SUB-proxy here). Carried over from the retired
+       companion intercom driver. -->
+  <!-- ONE flat capabilities block serves ALL proxies — keys are claimed by whichever
+       proxy understands them, not nested per-proxy. Verified against two shipping
+       multi-proxy drivers on a live Director: control4_doorstation_ds2 (3 proxies) and
+       chowmain_unifi_access_intercom_v2 (2 proxies) each declare exactly one block.
+
+       KEYPAD half (below) — modelled on lutron_leap_keypad, the one third-party
+       keypad_proxy driver on that Director. Without these the proxy has no reason to
+       believe the keypad is editable and Composer greys out its native Button Settings
+       panel, which is exactly what happened: we were sending NEW_KEYPAD_BUTTON for six
+       buttons and the proxy ignored every one. The keypad keys do not collide with the
+       intercom keys below (`has_buttons` belongs to the intercom/doorstation vocabulary
+       and means custom call buttons — NOT keypad buttons — so it stays false). -->
+  <capabilities>
+    <has_button_events>True</has_button_events>
+    <button_behavior>True</button_behavior>
+    <click_support>True</click_support>
+    <multi_click_support>True</multi_click_support>
+    <fully_customizable>True</fully_customizable>
+    <flow_top_down>True</flow_top_down>
+    <has_leds>True</has_leds>
+    <led_behavior>True</led_behavior>
+    <leds_have_color>True</leds_have_color>
+    <!-- On-screen labels, not physical engraving, and no faceplate finishes. -->
+    <engravable>False</engravable>
+    <custom_finishes>False</custom_finishes>
+    <fallback_support>False</fallback_support>
+    <hide_proxy_properties>False</hide_proxy_properties>
+    <hide_proxy_commands>False</hide_proxy_commands>
+    <hide_proxy_conditionals>False</hide_proxy_conditionals>
+    <hide_proxy_events>False</hide_proxy_events>
+
+    <driver_arch_type>5</driver_arch_type>
+    <has_intercom>true</has_intercom>
+    <has_video_intercom>false</has_video_intercom>
+    <is_doorstation>false</is_doorstation>
+    <has_camera>false</has_camera>
+    <has_display>false</has_display>
+    <has_buttons>false</has_buttons>
+    <has_dial_pad_ui>false</has_dial_pad_ui>
+    <has_play_door_chime>true</has_play_door_chime>
+    <has_auto_answer>true</has_auto_answer>
+    <has_do_not_disturb>true</has_do_not_disturb>
+    <has_early_media>false</has_early_media>
+    <has_monitor_mode>true</has_monitor_mode>
+    <has_mcast_emedia>false</has_mcast_emedia>
+    <can_change_transport>false</can_change_transport>
+    <can_change_multicast_ip>false</can_change_multicast_ip>
+    <use_microphone>true</use_microphone>
+    <use_speaker>true</use_speaker>
+    <use_ringer>true</use_ringer>
+    <has_high_definition>false</has_high_definition>
+    <has_echo_calibration>false</has_echo_calibration>
+  </capabilities>
+
+  <!-- SDDP discovery match: Composer correlates the device's advertised SDDP
+       "Type:" header against this. Must match sddp.cpp's Type exactly.
+       Format mirrors real drivers: Manufacturer:proxyclass:Model. -->
+  <search_types>
+    <type>NuVoxel:keypad:M Keypad</type>
+  </search_types>
+
+  <config>
+    <documentation file="www/documentation.html"/>
+    <script file="driver.lua" jit="1"/>
+    <properties>
+      <!-- Driver/version info (read-only) -->
+      <property>
+        <name>Driver Version</name>
+        <type>STRING</type>
+        <default>0.1.0</default>
+        <readonly>true</readonly>
+      </property>
+      <!-- Live status of the TCP link to the device. Named "Link Status" (NOT
+           "Connection") because a second, unrelated "Connection" property used to
+           exist under Firmware for the device's ethernet/wifi link type — one name,
+           two meanings, and setStatus() and the manifest handler silently overwrote
+           each other. The two are now "Link Status" and "Network Link". -->
+      <property>
+        <name>Link Status</name>
+        <type>STRING</type>
+        <default>Not bound</default>
+        <readonly>true</readonly>
+      <tooltip>State of the driver's TCP link to the keypad (Not bound / Connecting / Connected / Offline).</tooltip></property>
+      <!-- Portal-owned settings. The nuvoxel portal is authoritative for the
+           configuration below; the driver mirrors it both ways (pull on connect +
+           on the license/entitlement poll, push back when a dealer edits a property
+           here). This row is the diagnostic for that mirror. -->
+      <property>
+        <name>Portal Settings</name>
+        <type>STRING</type>
+        <default>—</default>
+        <readonly>true</readonly>
+      <tooltip>State of the portal settings mirror: the revision last applied, and whether the last push back was accepted. The portal wins on conflict.</tooltip></property>
+
+      <!-- Firmware: everything here is device-reported (read-only). The endpoints
+           (Firmware Update URL, Cloud URL) come from the device's manifest — the
+           device is authoritative, so the dealer never hand-configures them. The
+           "Check & Update Firmware" action tells the device to check its own cloud
+           and update (it only re-flashes if the image version differs). -->
+      <property><name>Firmware</name><type>LABEL</type><default>Firmware</default></property>
+      <property><name>Firmware Version</name><type>STRING</type><default>Unknown</default><readonly>true</readonly><tooltip>Firmware version currently running on the device (reported on connect).</tooltip></property>
+      <property><name>Device Model</name><type>STRING</type><default>Unknown</default><readonly>true</readonly><tooltip>Keypad hardware model, self-reported in its manifest (e.g. Control4 T3-7).</tooltip></property>
+      <property><name>MAC Address</name><type>STRING</type><default></default><readonly>true</readonly><tooltip>Keypad primary NIC MAC address (from its manifest).</tooltip></property>
+      <property><name>Network Link</name><type>STRING</type><default></default><readonly>true</readonly><tooltip>Keypad network link type: ethernet or wifi.</tooltip></property>
+      <property><name>Power Source</name><type>STRING</type><default></default><readonly>true</readonly><tooltip>Keypad power source: wall, poe, or battery.</tooltip></property>
+      <property><name>Firmware Update Status</name><type>STRING</type><default>Idle</default><readonly>true</readonly><tooltip>Result/progress of the most recent "Check &amp; Update Firmware".</tooltip></property>
+      <property><name>Firmware Update URL</name><type>STRING</type><default></default><readonly>true</readonly><tooltip>Where the device gets firmware — reported by the device (read-only). "Check &amp; Update Firmware" asks the device to check this and update if a newer image is available.</tooltip></property>
+      <property><name>Cloud URL</name><type>STRING</type><default></default><readonly>true</readonly><tooltip>The nuvoxel platform base URL the device uses — reported by the device (read-only). The driver relays this keypad's license from here on its behalf (for keypads with no internet of their own).</tooltip></property>
+      <property><name>License Status</name><type>STRING</type><default>Unknown</default><readonly>true</readonly><tooltip>Result of the most recent driver-relayed license push.</tooltip></property>
+
+      <!-- Intercom (proxy 5003). The SIP account is FULLY AUTO — no dealer entry:
+           the driver uses the Director as the SIP server, generates a username +
+           persisted password, reports them to the intercomproxy (→ the Director's
+           internal Communication Server) and pushes the same to the device. Auto
+           Answer / Monitor Mode / DND / Play Door Chime and the Ringer/Speaker/Mic
+           sliders all live on the NATIVE intercom proxy panel (the driver polls +
+           forwards them), so there are no duplicate properties for them here —
+           only read-only status. Hidden on hardware with no intercom (caps.intercom). -->
+      <property><name>Intercom</name><type>LABEL</type><default>Intercom</default></property>
+      <property><name>Intercom Relay</name><type>STRING</type><default>—</default><readonly>true</readonly><tooltip>Status of the control relay to the companion NuVoxel Keypad Intercom driver (SIP registration/call state live on THAT driver). The NuVoxel Agent installs and binds it for licensed devices.</tooltip></property>
+
+      <!-- Configurable by the installer in Composer Pro. LABEL section headers require
+           OS >= 2.10.0 (see <minimum_os_version>). -->
+      <property><name>Media</name><type>LABEL</type><default>Media</default></property>
+      <property><name>Display</name><type>LABEL</type><default>Display</default></property>
+      <property>
+        <name>Display Orientation</name>
+        <type>LIST</type>
+        <items>
+          <item>Auto (device setting)</item>
+          <item>Landscape</item>
+          <item>Portrait</item>
+          <item>Landscape (flipped)</item>
+          <item>Portrait (flipped)</item>
+        </items>
+        <default>Auto (device setting)</default>
+        <readonly>false</readonly>
+      <tooltip>Screen rotation. Auto leaves the device/web setting; applied live.</tooltip></property>
+      <property>
+        <name>Layout</name>
+        <type>LIST</type>
+        <items>
+          <item>Auto (device setting)</item>
+          <item>Cover (fill screen)</item>
+          <item>Fit (whole art)</item>
+          <item>Compact (no overlap)</item>
+        </items>
+        <default>Auto (device setting)</default>
+        <readonly>false</readonly>
+      <tooltip>Cover (art fills screen), Fit (whole art), or Compact. Auto = device/web setting.</tooltip></property>
+      <property>
+        <name>Background</name>
+        <type>LIST</type>
+        <items>
+          <item>Auto (device setting)</item>
+          <item>Navigator</item>
+          <item>Ocean</item>
+          <item>Dusk</item>
+          <item>Graphite</item>
+        </items>
+        <default>Auto (device setting)</default>
+        <readonly>false</readonly>
+      <tooltip>Background gradient preset (the room Navigator wallpaper is not exposed to drivers).</tooltip></property>
+      <property>
+        <name>Active Brightness</name>
+        <type>LIST</type>
+        <items>
+          <item>Auto (device setting)</item>
+          <item>10%</item>
+          <item>25%</item>
+          <item>50%</item>
+          <item>75%</item>
+          <item>100%</item>
+        </items>
+        <default>Auto (device setting)</default>
+        <readonly>false</readonly>
+      <tooltip>Screen backlight while active. Auto = leave the device/web setting.</tooltip></property>
+      <property>
+        <name>Idle Timeout</name>
+        <type>LIST</type>
+        <items>
+          <item>Auto (device setting)</item>
+          <item>Never</item>
+          <item>15 seconds</item>
+          <item>30 seconds</item>
+          <item>1 minute</item>
+          <item>2 minutes</item>
+          <item>5 minutes</item>
+          <item>10 minutes</item>
+        </items>
+        <default>Auto (device setting)</default>
+        <readonly>false</readonly>
+      <tooltip>How long after the last touch the screen dims (or turns off). Never = always on. Auto = device/web setting. Never dims while media is playing.</tooltip></property>
+      <property>
+        <name>Idle Brightness</name>
+        <type>LIST</type>
+        <items>
+          <item>Auto (device setting)</item>
+          <item>Screen off</item>
+          <item>5%</item>
+          <item>10%</item>
+          <item>25%</item>
+          <item>50%</item>
+        </items>
+        <default>Auto (device setting)</default>
+        <readonly>false</readonly>
+      <tooltip>Backlight after the Idle Timeout. Screen off = fully dark; a touch wakes it. Auto = device/web setting.</tooltip></property>
+      <!-- "Halo": the onboard RGB LED, used as a nightlight/accent + ring indicator. -->
+      <property><name>Halo</name><type>LABEL</type><default>Halo</default></property>
+      <property>
+        <name>Halo Color</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item><item>White</item><item>Warm White</item><item>Blue</item>
+          <item>Cyan</item><item>Teal</item><item>Green</item><item>Amber</item>
+          <item>Red</item><item>Purple</item><item>Pink</item><item>Magenta</item>
+        </items>
+        <default>Blue</default>
+        <readonly>false</readonly>
+      <tooltip>Idle color of the onboard RGB "halo" LED (nightlight / design accent).</tooltip></property>
+      <property>
+        <name>Halo Ring Color</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item><item>White</item><item>Warm White</item><item>Blue</item>
+          <item>Cyan</item><item>Teal</item><item>Green</item><item>Amber</item>
+          <item>Red</item><item>Purple</item><item>Pink</item><item>Magenta</item>
+        </items>
+        <default>Blue</default>
+        <readonly>false</readonly>
+      <tooltip>Color the halo LED breathes/pulses while an intercom call is ringing.</tooltip></property>
+      <property>
+        <name>Halo Brightness</name>
+        <type>LIST</type>
+        <items><item>10</item><item>25</item><item>50</item><item>75</item><item>100</item></items>
+        <default>25</default>
+        <readonly>false</readonly>
+      <tooltip>Overall halo LED brightness (percent).</tooltip></property>
+      <!-- Now-playing element visibility (dealer-configurable look). -->
+      <property><name>Now-Playing</name><type>LABEL</type><default>Now-Playing</default></property>
+      <property><name>Show Title</name><type>LIST</type><items><item>Show</item><item>Hide</item></items><default>Show</default><readonly>false</readonly><tooltip>Show or hide the track title.</tooltip></property>
+      <property><name>Show Artist/Album</name><type>LIST</type><items><item>Show</item><item>Hide</item></items><default>Show</default><readonly>false</readonly><tooltip>Show or hide the artist/album line.</tooltip></property>
+      <property><name>Show Info Button</name><type>LIST</type><items><item>Show</item><item>Hide</item></items><default>Show</default><readonly>false</readonly><tooltip>Show or hide the info/overflow (vertical ellipsis) button.</tooltip></property>
+      <property><name>Show Progress Bar</name><type>LIST</type><items><item>Show</item><item>Hide</item></items><default>Show</default><readonly>false</readonly><tooltip>Show or hide the progress bar + time (only when the source reports a duration).</tooltip></property>
+      <!-- Programmable keypad buttons. Button count/label/icon/color/LED live in the
+           driver's own button state, edited from Composer's NATIVE keypad editor or the
+           NuVoxel portal (last write wins) — NOT here, so there is no third editor to
+           disagree with them. Count comes from the device manifest (caps.buttons). -->
+      <property><name>Keypad Buttons</name><type>LABEL</type><default>Keypad Buttons</default></property>
+      <property>
+        <name>Room Poll Interval (ms)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>250</minimum>
+        <maximum>10000</maximum>
+        <default>1000</default>
+        <readonly>false</readonly>
+      </property>
+      <property>
+        <name>Debug Logging</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item>
+          <item>Print</item>
+          <item>Log</item>
+          <item>Print and Log</item>
+        </items>
+        <default>Print</default>
+        <readonly>false</readonly>
+      </property>
+      <property>
+        <name>Device MAC Override</name>
+        <type>STRING</type>
+        <default></default>
+        <readonly>false</readonly>
+        <tooltip>Normally blank. The driver learns which physical keypad is its own from the NuVoxel agent (and remembers it after the first connection), then finds it on the network via SDDP and binds automatically — no Connections-page binding needed, and it re-binds itself if the keypad's IP changes. Set this to a keypad's MAC (12 hex, colons optional) only to force-bind a specific unit manually.</tooltip>
+      </property>
+    </properties>
+    <commands>
+      <command>
+        <name>PlayAnnouncement</name>
+        <description>Play an announcement on the keypad: chime + show "PARAM1"</description>
+        <params>
+          <param>
+            <name>Text</name>
+            <type>STRING</type>
+          </param>
+          <param>
+            <name>Chime</name>
+            <type>LIST</type>
+            <items><item>Yes</item><item>No</item></items>
+          </param>
+        </params>
+      </command>
+      <!-- Programming actions to drive the keypad from the project (Device Specific
+           Command). SetButtonLED is the counterpart to a button's "Manual (Programming)"
+           LED mode. Colors reuse the halo palette (named -> RGB in driver.lua). -->
+      <command>
+        <name>SetButtonLED</name>
+        <description>Keypad button PARAM1 LED: PARAM2</description>
+        <params>
+          <param><name>Button</name><type>LIST</type><items><item>1</item><item>2</item><item>3</item><item>4</item><item>5</item><item>6</item></items></param>
+          <param><name>State</name><type>LIST</type><items><item>On</item><item>Off</item></items></param>
+        </params>
+      </command>
+      <command>
+        <name>SetButtonLEDColor</name>
+        <description>Keypad button PARAM1 LED color: PARAM2</description>
+        <params>
+          <param><name>Button</name><type>LIST</type><items><item>1</item><item>2</item><item>3</item><item>4</item><item>5</item><item>6</item></items></param>
+          <param><name>Color</name><type>LIST</type><items><item>White</item><item>Warm White</item><item>Blue</item><item>Cyan</item><item>Teal</item><item>Green</item><item>Amber</item><item>Red</item><item>Purple</item><item>Pink</item><item>Magenta</item></items></param>
+        </params>
+      </command>
+      <command>
+        <name>SetButtonLabel</name>
+        <description>Keypad button PARAM1 label: "PARAM2"</description>
+        <params>
+          <param><name>Button</name><type>LIST</type><items><item>1</item><item>2</item><item>3</item><item>4</item><item>5</item><item>6</item></items></param>
+          <param><name>Text</name><type>STRING</type></param>
+        </params>
+      </command>
+      <command>
+        <name>SetHalo</name>
+        <description>Set the halo LED: PARAM1 at PARAM2%</description>
+        <params>
+          <param><name>Color</name><type>LIST</type><items><item>Off</item><item>White</item><item>Warm White</item><item>Blue</item><item>Cyan</item><item>Teal</item><item>Green</item><item>Amber</item><item>Red</item><item>Purple</item><item>Pink</item><item>Magenta</item></items></param>
+          <param><name>Brightness</name><type>LIST</type><items><item>10</item><item>25</item><item>50</item><item>75</item><item>100</item></items></param>
+        </params>
+      </command>
+      <command>
+        <name>RebootDevice</name>
+        <description>Reboot the keypad</description>
+      </command>
+    </commands>
+
+    <!-- Installer-facing buttons (call ExecuteCommand). MUST live INSIDE <config> or
+         Composer won't render the Actions tab (verified against SDK samples). -->
+    <actions>
+      <action>
+        <name>Identify Device</name>
+        <command>IdentifyDevice</command>
+      </action>
+      <action>
+        <name>Reconnect</name>
+        <command>Reconnect</command>
+      </action>
+      <action>
+        <name>Forget Device</name>
+        <command>ForgetDevice</command>
+        <description>Unpair this driver from its keypad: clears the remembered hardware id, MAC, IP and network binding, then reopens discovery. Needed when swapping in DIFFERENT hardware (RMA, spare, moving the driver to another panel) — the driver refuses a keypad whose hardware id does not match the one it paired with.</description>
+      </action>
+
+      <action>
+        <name>Check &amp; Update Firmware</name>
+        <command>UpdateFirmware</command>
+      </action>
+      <!-- Re-provision the auto-generated SIP account to both the proxy and the
+           device (absorbed from the retired companion intercom driver). -->
+      <action>
+        <name>Re-register SIP</name>
+        <command>ReRegister</command>
+      </action>
+      <!-- Force an immediate portal settings pull, instead of waiting out the
+           10-minute entitlement/settings poll. -->
+      <action>
+        <name>Sync Settings from Portal</name>
+        <command>SyncSettings</command>
+      </action>
+    </actions>
+  </config>
+
+  <!-- Programming events (Composer → Programming → this device → Device Events).
+       Driver-owned, fired via C4:FireEvent(name) in driver.lua — reliably listed
+       regardless of which proxy is primary. <events> is a top-level sibling of
+       <config> (SDK: generic_http sample). Button events are in addition to the
+       keypad proxy's own button actions. -->
+  <events>
+    <event><id>1</id><name>Device Connected</name><description>The keypad came online (TCP link established).</description></event>
+    <event><id>2</id><name>Device Disconnected</name><description>The keypad went offline (TCP link lost).</description></event>
+    <event><id>3</id><name>Button 1 Pressed</name><description>On-screen keypad button 1 was tapped.</description></event>
+    <event><id>4</id><name>Button 2 Pressed</name><description>On-screen keypad button 2 was tapped.</description></event>
+    <event><id>5</id><name>Button 3 Pressed</name><description>On-screen keypad button 3 was tapped.</description></event>
+    <event><id>6</id><name>Button 4 Pressed</name><description>On-screen keypad button 4 was tapped.</description></event>
+    <event><id>7</id><name>Button 5 Pressed</name><description>On-screen keypad button 5 was tapped.</description></event>
+    <event><id>8</id><name>Button 6 Pressed</name><description>On-screen keypad button 6 was tapped.</description></event>
+    <event><id>9</id><name>Button 1 Released</name><description>On-screen keypad button 1 was released.</description></event>
+    <event><id>10</id><name>Button 2 Released</name><description>On-screen keypad button 2 was released.</description></event>
+    <event><id>11</id><name>Button 3 Released</name><description>On-screen keypad button 3 was released.</description></event>
+    <event><id>12</id><name>Button 4 Released</name><description>On-screen keypad button 4 was released.</description></event>
+    <event><id>13</id><name>Button 5 Released</name><description>On-screen keypad button 5 was released.</description></event>
+    <event><id>14</id><name>Button 6 Released</name><description>On-screen keypad button 6 was released.</description></event>
+    <event><id>15</id><name>Announcement Played</name><description>An announcement was played on the keypad.</description></event>
+    <event><id>16</id><name>Firmware Update Succeeded</name><description>A firmware update completed successfully.</description></event>
+    <event><id>17</id><name>Firmware Update Failed</name><description>A firmware update failed.</description></event>
+    <!-- Buttons 7-12 exist only on the larger panels (the count is hardware-driven —
+         caps.buttons in the device manifest — and their BUTTON_LINK bindings are created
+         at runtime, see driver.lua). Their events are declared statically because ADDING
+         events is update-safe while adding them lazily is not possible at all; on a
+         6-button keypad they simply never fire. Ids continue from 17; never renumber. -->
+    <event><id>18</id><name>Button 7 Pressed</name><description>On-screen keypad button 7 was tapped.</description></event>
+    <event><id>19</id><name>Button 8 Pressed</name><description>On-screen keypad button 8 was tapped.</description></event>
+    <event><id>20</id><name>Button 9 Pressed</name><description>On-screen keypad button 9 was tapped.</description></event>
+    <event><id>21</id><name>Button 10 Pressed</name><description>On-screen keypad button 10 was tapped.</description></event>
+    <event><id>22</id><name>Button 11 Pressed</name><description>On-screen keypad button 11 was tapped.</description></event>
+    <event><id>23</id><name>Button 12 Pressed</name><description>On-screen keypad button 12 was tapped.</description></event>
+    <event><id>24</id><name>Button 7 Released</name><description>On-screen keypad button 7 was released.</description></event>
+    <event><id>25</id><name>Button 8 Released</name><description>On-screen keypad button 8 was released.</description></event>
+    <event><id>26</id><name>Button 9 Released</name><description>On-screen keypad button 9 was released.</description></event>
+    <event><id>27</id><name>Button 10 Released</name><description>On-screen keypad button 10 was released.</description></event>
+    <event><id>28</id><name>Button 11 Released</name><description>On-screen keypad button 11 was released.</description></event>
+    <event><id>29</id><name>Button 12 Released</name><description>On-screen keypad button 12 was released.</description></event>
+  </events>
+
+  <!-- Generic "combo" driver: placeable in a room, runs Lua, no Navigator UI
+       (our UI is the ESP32). This is the official SDK pattern from the
+       generic_http / generic_tcp samples — combo + a generic proxy, no
+       <connections>. Our prior `control4_generic` string was invalid. -->
+  <!-- TWO proxies: the keypad proxy (5002) exposing N programmable on-screen buttons
+       with RGB LEDs, and the intercom endpoint (5003). Composer renders this as a real
+       parent/child tree: the PRIMARY proxy is the parent device, the other a sub-proxy.
+
+       A proxy's element text must be the EXACT basename of a manifest in the
+       Director's /opt/control4/var/drivers/c4i/ — Director resolves `foo` to
+       `foo.c4i` and SILENTLY SKIPS a name it can't resolve, instantiating no child
+       and reporting nothing useful. Verified on a live EA3 (2026-07-19): the proxy is
+       `keypad_proxy`, NOT `keypad`, and there is no `generic_http` proxy at all — both
+       of those names were inherited from the old driver, where <combo> meant no proxy
+       was ever instantiated so the mistake stayed invisible. `generic_http` is dropped
+       rather than renamed: it existed only as a "placeable shell", a job the DEVICE
+       parent already does now that <combo> is gone, and driver.lua never used 5001. -->
+  <!-- Check any name before adding one:
+       ssh root@<director> 'ls /opt/control4/var/drivers/c4i/ | grep <name>' -->
+  <!-- NO <combo>true</combo>. Verified empirically on a live EA3 Director
+       (2026-07-19): a driver declaring <combo> is registered as a single
+       PROXY-typed project item and Director instantiates NONE of its declared
+       proxies — no <proxy>.c4i child items, so ReceivedFromProxy never fires and
+       the keypad/intercom proxies are inert. Removing it produced the correct
+       DEVICE parent + proxy children. Every working multi-proxy driver on that
+       Director agrees: control4_doorstation_ds2 and chowmain_unifi_access_
+       intercom_v2 both declare multiple proxies and neither declares <combo>. -->
+  <!-- The device IS a keypad, so the keypad proxy is PRIMARY (it presents as a keypad in
+       Composer). generic_http stays as a secondary comms/placeable shell that owns the
+       network binding. The now-playing display reads room variables directly, independent
+       of which proxy is primary.
+
+       intercomproxy is a NON-primary sub-proxy here. The rule is that a driver must have
+       *a* primary — not that the intercom must be it; Control4's own
+       control4_doorstation_ds2.c4z ships doorstation + camera + intercomproxy the same
+       way. This replaces the old arrangement where a separate companion .c4z hosted the
+       intercom and the two drivers talked over a private control binding: one driver, one
+       device, one :6700 link, and ReceivedFromProxy dispatches on the binding id. -->
+  <proxies>
+    <proxy proxybindingid="5002" name="Media Keypad" primary="True">keypad_proxy</proxy>
+  </proxies>
+
+  <connections>
+    <connection>
+      <id>5002</id>
+      <type>2</type>
+      <connectionname>Keypad</connectionname>
+      <consumer>False</consumer>
+      <classes><class><classname>KEYPAD</classname></class></classes>
+    </connection>
+    <!-- Per-button BUTTON_LINK bindings (CONTROL type 1) so each button is linkable
+         in Composer Connections, like a Control4 keypad. binding id 300+N -> button N. -->
+    <connection proxybindingid="5002"><id>301</id><type>1</type><connectionname>Button 1</connectionname><consumer>True</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
+    <connection proxybindingid="5002"><id>302</id><type>1</type><connectionname>Button 2</connectionname><consumer>True</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
+    <connection proxybindingid="5002"><id>303</id><type>1</type><connectionname>Button 3</connectionname><consumer>True</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
+    <connection proxybindingid="5002"><id>304</id><type>1</type><connectionname>Button 4</connectionname><consumer>True</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
+    <connection proxybindingid="5002"><id>305</id><type>1</type><connectionname>Button 5</connectionname><consumer>True</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
+    <connection proxybindingid="5002"><id>306</id><type>1</type><connectionname>Button 6</connectionname><consumer>True</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
+    <!-- Intercom relay PROVIDER (control binding 700). The companion
+         NuVoxelKeypadIntercom driver (intercomproxy-primary, so the Communication
+         agent enrolls it) consumes this; we forward its SIP/call JSON onto the device
+         :6700 link and relay device lines back. The NuVoxel Agent installs + binds it
+         (BindIntercom) for licensed devices — no dealer step. -->
+    <connection>
+      <id>700</id>
+      <facing>6</facing>
+      <connectionname>NuVoxel Keypad Intercom Relay</connectionname>
+      <type>1</type>
+      <consumer>False</consumer>
+      <classes><class><classname>MMKEYPAD_INTERCOM</classname></class></classes>
+    </connection>
+    <!-- Network binding the installer associates with the SDDP-discovered MMKeypad
+         on the Connections page. The DRIVER connects OUT to the device (which is a
+         TCP server on this port). auto_connect=True so Director dials it on bind. -->
+    <connection>
+      <id>6001</id>
+      <facing>1</facing>
+      <connectionname>Media Keypad Network</connectionname>
+      <type>4</type>
+      <consumer>True</consumer>
+      <classes>
+        <class>
+          <classname>TCP</classname>
+          <ports>
+            <port>
+              <number>6700</number>
+              <auto_connect>True</auto_connect>
+              <monitor_connection>True</monitor_connection>
+              <keep_connection>True</keep_connection>
+              <keep_alive>True</keep_alive>
+            </port>
+          </ports>
+        </class>
+      </classes>
+    </connection>
+  </connections>
+
+</devicedata>

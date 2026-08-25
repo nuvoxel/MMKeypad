@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media Keypad — NuVoxel</title>
+<style>
+  :root { --navy:#12315f; --blue:#3a7bd5; --green:#8dc63f; --ink:#1a2530; --muted:#5b6b7b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+         color:var(--ink); background:#f5f7fa; }
+  .wrap { max-width:760px; margin:0 auto; padding:28px 24px 60px; }
+  header { text-align:center; padding:24px 0 8px; }
+  header img { width:min(360px,80%); height:auto; }
+  h1 { font-size:22px; margin:18px 0 2px; color:var(--navy); }
+  .sub { color:var(--muted); margin:0 0 8px; }
+  h2 { font-size:16px; margin:28px 0 8px; color:var(--navy);
+       border-bottom:2px solid var(--green); padding-bottom:4px; }
+  code { background:#e9eef4; padding:1px 5px; border-radius:4px; font-size:13px; }
+  table { border-collapse:collapse; width:100%; margin:6px 0; }
+  th,td { text-align:left; padding:7px 10px; border-bottom:1px solid #e2e8f0; vertical-align:top; }
+  th { color:var(--muted); font-weight:600; width:34%; }
+  ul { margin:6px 0; padding-left:20px; }
+  .note { background:#eef6ff; border-left:3px solid var(--blue); padding:10px 14px; border-radius:6px; margin:10px 0; }
+  footer { text-align:center; color:var(--muted); font-size:12px; margin-top:40px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="nuvoxel-logo.png" alt="NuVoxel">
+    <h1>Media Keypad</h1>
+    <p class="sub">Control4 media keypad &amp; now-playing display</p>
+  </header>
+
+  <h2>Overview</h2>
+  <p>The <strong>Media Keypad</strong> is a NuVoxel touchscreen media keypad. It shows the
+  room's now-playing media (title, artist, cover art, transport, volume) and provides
+  programmable on-screen keypad buttons with RGB accent LEDs. SIP intercom, announcements
+  and door-station call handling are <strong>built in</strong> &mdash; the driver installs an
+  intercom endpoint of its own (shown beneath it in System Design), so there is no companion
+  driver to add and nothing to bind.</p>
+
+  <h2>Installation</h2>
+  <ul>
+    <li>Power the keypad and connect it to the network (Wi-Fi setup via the on-device portal).</li>
+    <li>The keypad advertises over <strong>SDDP</strong> — add it from Composer's discovered
+        devices, or add the <em>Media Keypad</em> driver and bind its <strong>Media Keypad
+        Network</strong> connection to the device.</li>
+    <li>Place the driver in the room whose media it should display.</li>
+  </ul>
+
+  <h2>Connections</h2>
+  <table>
+    <tr><th>Media Keypad Network</th><td>IP binding to the keypad (the driver dials the device).</td></tr>
+    <tr><th>Button 1–6</th><td>Link each on-screen keypad button to a device/scene, like a physical Control4 keypad.</td></tr>
+    <tr><th>INTERCOM</th><td>The built-in intercom endpoint. Managed by the Communications agent; no manual binding needed.</td></tr>
+  </table>
+
+  <h2>Key properties</h2>
+  <table>
+    <tr><th>Sources</th><td>Which sources the on-screen picker offers: Listen, Watch, or Both.</td></tr>
+    <tr><th>Portal Settings</th><td>Read-only. The keypad's settings are owned by the NuVoxel portal and mirrored here: edits made in Composer are pushed up, and portal edits are pulled down. If both change at once, the portal wins.</td></tr>
+    <tr><th>Display Orientation / Layout</th><td>Screen rotation and now-playing layout (Cover / Fit / Compact).</td></tr>
+    <tr><th>Active / Idle Brightness</th><td>Backlight while active and after the idle timeout (Idle = <em>Screen off</em> turns the display fully dark; a touch wakes it).</td></tr>
+    <tr><th>Idle Timeout</th><td>How long after the last touch the screen dims/sleeps. Never dims while media is playing.</td></tr>
+    <tr><th>Button Style / Background / Halo</th><td>Keypad button appearance, background gradient, and the RGB accent LED.</td></tr>
+  </table>
+
+  <div class="note">Firmware updates are delivered over the air — set the
+  <strong>Firmware Update URL</strong> and run <em>Check &amp; Update Firmware</em>.</div>
+
+  <footer>© 2026 NuVoxel · shop.nuvoxel.com</footer>
+</div>
+</body>
+</html>
