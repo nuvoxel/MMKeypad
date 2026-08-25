@@ -28,6 +28,15 @@ nv_err_t nv_ota_apply(const char *url, const char *sha256) {
       .crt_bundle_attach = esp_crt_bundle_attach,
       .keep_alive_enable = true,
       .timeout_ms = 30000,
+      // GitHub does not serve a release asset from the URL you ask for: it
+      // answers 302 with a SIGNED redirect to release-assets.githubusercontent.com
+      // that runs to ~950 characters (JWT + SAS query). ESP-IDF's HTTP client
+      // defaults both buffers to DEFAULT_HTTP_BUF_SIZE (512), so the Location
+      // header does not fit in the RX buffer and the redirected request line does
+      // not fit in the TX buffer. The download then fails after the UI has already
+      // said "downloading", which is what made this look like a server problem.
+      .buffer_size = 4096,
+      .buffer_size_tx = 4096,
   };
   esp_https_ota_config_t ota = { .http_config = &http };
 

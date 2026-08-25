@@ -64,9 +64,29 @@ nv_err_t nv_ota_apply(const char *url, const char *sha256) {
   mbedtls_sha256_context sh;
   mbedtls_sha256_init(&sh);
 
-  if (esp_http_client_open(c, 0) != ESP_OK) { rc = NV_ERR_HTTP; goto done; }
-  esp_http_client_fetch_headers(c);
-  if (esp_http_client_get_status_code(c) != 200) { rc = NV_ERR_HTTP; goto done; }
+  /* Follow redirects ourselves. GitHub answers a release-asset URL with 302 to
+     a signed release-assets.githubusercontent.com URL (~950 chars); without this
+     the status check below rejects the 302 and the update "fails" right after
+     the UI has said "downloading". Bounded, because a redirect loop must not
+     hang a panel. */
+  int hops = 0;
+  for (;;) {
+    if (esp_http_client_open(c, 0) != ESP_OK) { rc = NV_ERR_HTTP; goto done; }
+    esp_http_client_fetch_headers(c);
+    int st = esp_http_client_get_status_code(c);
+    if (st == 200) break;
+    if ((st == 301 || st == 302 || st == 303 || st == 307 || st == 308) && hops < 5) {
+      const char *loc = esp_http_client_get_location(c);
+      if (!loc || !loc[0]) { rc = NV_ERR_HTTP; goto done; }
+      char next[1536];
+      snprintf(next, sizeof(next), "%s", loc);
+      esp_http_client_close(c);
+      if (esp_http_client_set_url(c, next) != ESP_OK) { rc = NV_ERR_HTTP; goto done; }
+      hops++;
+      continue;
+    }
+    rc = NV_ERR_HTTP; goto done;
+  }
 
   out = fopen(OTA_TMP, "wb");
   if (!out) goto done;

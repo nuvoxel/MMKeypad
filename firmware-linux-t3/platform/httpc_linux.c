@@ -33,7 +33,9 @@ extern const unsigned int nv_ca_bundle_pem_len;
 
 struct esp_http_client {
     char host[256];
-    char path[512];
+    /* GitHub signs release-asset redirects with a JWT + SAS query; those URLs
+       run to ~950 characters, so this is sized for them, not for a tidy path. */
+    char path[1536];
     int https;
     int port;
     int fd;
@@ -41,6 +43,7 @@ struct esp_http_client {
     char hdrs[HDRS_CAP]; /* accumulated custom request headers ("K: V\r\n"...) */
     int hdrs_len;
     int status; /* parsed response status code */
+    char location[1536]; /* Location: from a 3xx, for follow_redirects() */
     /* mbedtls state (https only) */
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config conf;
@@ -213,6 +216,19 @@ int64_t esp_http_client_fetch_headers(esp_http_client_handle_t c) {
     char *cl = strstr(hdr, "Content-Length:");
     if (!cl) cl = strstr(hdr, "content-length:");
     if (cl) bodylen = atoi(cl + 15);
+    /* Location, for a redirect the caller may choose to follow. */
+    c->location[0] = 0;
+    char *loc = strstr(hdr, "Location:");
+    if (!loc) loc = strstr(hdr, "location:");
+    if (loc) {
+        loc += 9;
+        while (*loc == ' ') loc++;
+        char *end = strpbrk(loc, "\r\n");
+        size_t n = end ? (size_t)(end - loc) : strlen(loc);
+        if (n >= sizeof(c->location)) n = sizeof(c->location) - 1;
+        memcpy(c->location, loc, n);
+        c->location[n] = 0;
+    }
     c->stash_len = total - hdr_end;
     c->stash_off = 0;
     if (c->stash_len > STASH_CAP) c->stash_len = STASH_CAP;
@@ -222,6 +238,15 @@ int64_t esp_http_client_fetch_headers(esp_http_client_handle_t c) {
 
 int esp_http_client_get_status_code(esp_http_client_handle_t c) {
     return c ? c->status : 0;
+}
+
+const char *esp_http_client_get_location(esp_http_client_handle_t c) {
+    return c ? c->location : "";
+}
+
+esp_err_t esp_http_client_set_url(esp_http_client_handle_t c, const char *url) {
+    if (!c || !url) return ESP_FAIL;
+    return parse_url(url, c) == 0 ? ESP_OK : ESP_FAIL;
 }
 
 int esp_http_client_read(esp_http_client_handle_t c, char *buf, int len) {
