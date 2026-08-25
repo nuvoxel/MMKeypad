@@ -43,6 +43,28 @@ driven entirely by Control4.
   integration path as an alternative to Control4.
 - **[END-TO-END-TEST.md](END-TO-END-TEST.md)** — bring-up checklist.
 
+### Design notes
+
+- **[docs/DATA-PLANE.md](docs/DATA-PLANE.md)** — how the driver gets media state
+  without hammering the Director. Written after streaming audio made a Director
+  "basically unusable"; read it before adding polling of any kind.
+- **[docs/INTERCOM-ENROLLMENT.md](docs/INTERCOM-ENROLLMENT.md)** — what it takes
+  for a third-party SIP endpoint to actually enrol, end to end.
+- **[docs/INTERCOM-SPIKE-FINDINGS.md](docs/INTERCOM-SPIKE-FINDINGS.md)** — why the
+  intercom is a *separate* driver. The evidence behind "`intercomproxy` must be
+  the primary proxy".
+- **[docs/SDDP-DISCOVERY.md](docs/SDDP-DISCOVERY.md)** — discovery and binding
+  robustness: how a driver finds its own device, and why binding by identity
+  beats binding by address.
+
+### Reverse-engineering notes
+
+**[reference/control4/](reference/control4/)** — what Control4's Director and Halo
+remote actually put on the wire: the verified command vocabulary, the
+now-playing variable schema, how the built-in intercom is wired, and a protocol
+capture from a remote. Observed on hardware we own, for interoperability. Start
+at [its README](reference/control4/README.md).
+
 ## Building
 
 **ESP32 firmware** needs ESP-IDF v5.4. Managed components (LVGL, `esp_codec_dev`,
@@ -129,9 +151,13 @@ redistribute:
   `driver-intercom` builds against are Copyright Control4 Corporation and are not
   redistributable. You supply them from the SDK.
 - **Control4-proprietary binaries.** The teardown and RE notes are published
-  (see [`reference/t3-control4/`](reference/t3-control4/)), but the extracted
-  Control4 firmware images, APKs, and `/system` contents are not redistributed —
-  supply those from a unit you own.
+  (see [`reference/t3-control4/`](reference/t3-control4/) and
+  [`reference/control4/`](reference/control4/)), but the extracted Control4
+  firmware images, APKs, and `/system` contents are not redistributed — supply
+  those from a unit you own.
+- **Our Director access details.** The RE notes reference an internal helper for
+  driving a Director over SOAP and SSH. What was sent and what came back is
+  documented; how we reach that particular box is not.
 
 ## Licensing
 

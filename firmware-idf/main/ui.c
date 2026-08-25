@@ -1552,7 +1552,7 @@ static void miniRotTick(lv_timer_t *t)
 // is a lamp. State is carried the way C4 carries it: the icon takes the accent
 // colour and a small line above the name says what it is.
 //
-// `sub` is the SMALL line ABOVE the name -- the provider on a favourite ("Dad"),
+// `sub` is the SMALL line ABOVE the name -- the provider on a favourite ("Apple Music"),
 // "On" on a lit button. One anatomy for every tile is what lets favourites,
 // actions and keypad buttons share a grid without looking arbitrary.
 static lv_obj_t *tileCard(lv_obj_t *p, const lv_image_dsc_t *icon, const char *glyph,
@@ -1774,7 +1774,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     for (int i = 0; i < nfav; i++) {
         lv_obj_t *ficon = NULL;
         int fx = 0, fsz = 0;
-        // No sub-line: the C4 app puts the PROVIDER there ("Dad"), which we do
+        // No sub-line: the C4 app puts the PROVIDER there ("Apple Music"), which we do
         // not have -- and echoing the raw kind put "stream" under every
         // favourite, which is noise rather than information.
         lv_obj_t *c = tileCard(grid, ICON_MEDIA, NULL, s_favs[i].title, NULL,

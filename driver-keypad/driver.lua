@@ -1661,7 +1661,7 @@ function BuildState(roomId)
   local function valid(d) local s = tostring(d or ""); return (s ~= "" and s ~= "0") and s or nil end
   -- When something is playing, prefer the actual streaming source (medSrcDev /
   -- PLAYING_AUDIO_DEVICE). When idle, PLAYING_AUDIO_DEVICE is stale (a previous
-  -- endpoint, e.g. "Dad"), so prefer the room's SELECTED source so the source tile
+  -- endpoint, e.g. "Apple Music"), so prefer the room's SELECTED source so the source tile
   -- shows what the user picked (e.g. "Apple Mac") rather than the stale device.
   local srcId
   if media.title ~= "" then
@@ -2149,7 +2149,7 @@ function DoSelectSource(deviceId)
 end
 
 -- Select a source into a room via the verified room commands (control4-media-commands.md).
--- The streaming-vs-AV branch is MANDATORY: streaming sources (media_service — Dad /
+-- The streaming-vs-AV branch is MANDATORY: streaming sources (media_service — Apple Music /
 -- SiriusXM / TuneIn / Pandora / AirPlay) IGNORE SELECT_AUDIO_DEVICE. They are selected
 -- by sending DEVICE_SELECTED to the SOURCE with the target room; regular AV sources take
 -- SELECT_AUDIO_DEVICE / SELECT_VIDEO_DEVICE on the ROOM (param key lowercase `deviceid`).
