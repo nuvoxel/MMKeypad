@@ -11,13 +11,11 @@ standards-based SIP endpoint — all through a custom **Control4 DriverWorks
 This repository is the whole MMKeypad project: the device firmware, the Control4
 drivers, the protocol specification, the hardware documentation (supported ESP32
 boards and a full Control4 T3 panel teardown), the design notes behind the
-awkward decisions, and the Control4 reverse-engineering that made any of it
-possible. It is fully open source and talks to no online service.
+decisions, and the Control4 reverse-engineering. All online service calls are removed. 
 Licensed under the **Apache License 2.0** — see [Licensing](#licensing).
 
 UX inspired by [`esphome-media-player`](https://github.com/jtenniswood/esphome-media-player)
-and [`esphome-intercom`](https://github.com/n-IA-hane/esphome-intercom), but
-driven entirely by Control4.
+and [`esphome-intercom`](https://github.com/n-IA-hane/esphome-intercom), as well as Control4 X4.
 
 ## The pieces
 
@@ -27,8 +25,8 @@ driven entirely by Control4.
 | Linux firmware | [`firmware-linux-t3/`](firmware-linux-t3/) | A from-scratch musl/BusyBox Linux + LVGL app for ARM panel hardware, sharing the same UI and protocol code as the ESP build. Includes a **headless simulator** that renders the real UI to PNGs on a desktop. |
 | Keypad driver | [`driver-keypad/`](driver-keypad/) | DriverWorks Lua `.c4z` — multi-proxy: primary `keypad` proxy (now-playing, buttons, LEDs) plus an `intercomproxy` sub-proxy, sharing one device connection. |
 | Intercom driver | [`driver-intercom/`](driver-intercom/) | Standalone intercom endpoint driver. **Requires files from Control4's DriverWorks SDK that are not in this repo** — see [`driver-intercom/README.md`](driver-intercom/README.md). |
-| Removal tool | [`print/T3_RemovalTool/`](print/T3_RemovalTool/) | A printable (or laser-cut) spudger for releasing a T3 panel from its wall bracket — a service aid. OpenSCAD source plus a generator script. |
-| Supported hardware | [`docs/HARDWARE.md`](docs/HARDWARE.md) | The ESP32 boards the firmware targets, with vendor links, plus UI screenshots at each panel size. |
+| Removal tool | [`print/T3_RemovalTool/`](print/T3_RemovalTool/) | A printable (or laser-cut) spudger for releasing a T3 panel from its wall bracket — a service aid. OpenSCAD source plus a generator script. Worked well enough, but probably could use a few tweaks if someone has a real one they can measure.|
+| Supported hardware | [`docs/HARDWARE.md`](docs/HARDWARE.md) | The ESP32 boards the firmware targets, with vendor links, plus some UI screenshots at each panel size. |
 | T3 reference | [`reference/t3-control4/`](reference/t3-control4/) | Full teardown of the Control4 T3 touch panel — SoC, audio, display, camera, the two variants, and how to run our firmware on one you own. |
 
 ## Documentation
