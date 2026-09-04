@@ -2,6 +2,7 @@
 #include "nuvoxel_device.h"
 #include "config.h"   // fw_version()
 #include "board.h"    // MMK_BOARD_NAME
+#include "eth.h"      // eth_is_up() — after board.h, which defines MMK_NET_ETH
 #include "net.h"      // mmk_default_netif()
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -105,11 +106,14 @@ const char *device_model_name(void) {
   return b;
 }
 
-// The ESP identity's hardware_id is the MAC as 12 hex nibbles; present it
-// with the usual colons for the settings page / manifest.
+// hardware_id is "mmk-<12 hex nibbles>" on ESP boards; present the MAC part with
+// the usual colons for the settings page / manifest. The "mmk-" prefix was added
+// to hardware_id later, and formatting straight from it produced "mm:k-:e8:f6:.."
+// on every panel — skip the prefix before formatting.
 const char *device_mac(void) {
   static char mac[18];
   const char *h = s_id.hardware_id;
+  if (!strncmp(h, "mmk-", 4)) h += 4;
   if (strlen(h) >= 12) {
     snprintf(mac, sizeof(mac), "%c%c:%c%c:%c%c:%c%c:%c%c:%c%c", h[0], h[1], h[2],
              h[3], h[4], h[5], h[6], h[7], h[8], h[9], h[10], h[11]);
@@ -119,7 +123,19 @@ const char *device_mac(void) {
   return mac;
 }
 
-const char *device_link_type(void) { return MMK_NET_ETH ? "ethernet" : "wifi"; }
+// Report the transport actually carrying traffic, not a compile-time flag. One
+// image runs with and without a wired carrier, so MMK_NET_ETH only says Ethernet
+// is COMPILED IN; eth_is_up() says whether it came up.
+const char *device_link_type(void) {
+#if MMK_NET_ETH
+  if (eth_is_up()) return "ethernet";
+#endif
+#if MMK_NET_WIFI
+  return "wifi";
+#else
+  return "ethernet";
+#endif
+}
 const char *device_power_source(void) { return MMK_POWER; }
 
 // Runtime hardware inventory (mirrors the T3's device_hw_json). ESP boards are

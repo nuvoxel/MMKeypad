@@ -9,6 +9,19 @@
 #define HALO_COUNT 1
 #endif
 
+// Idle "nightlight" level. This sits on a wall, often in a dark room, and a ring
+// of even dim blue is a lot of emitted light — keep it a suggestion of colour,
+// not illumination. 8/255 is ~3%. Applies to every board, so it must live
+// outside the ring-only block below.
+#define HALO_IDLE_BLUE 8
+
+// Board-level ceiling on halo output, percent. Boards with a ring set this well
+// below 100 (see board.h); single-LED boards leave it at 100 and are unchanged.
+#ifndef HALO_BRIGHT_SCALE
+#define HALO_BRIGHT_SCALE 100
+#endif
+#define HALO_EFFECTIVE(br) (((br) * HALO_BRIGHT_SCALE) / 100)
+
 #ifndef PIN_RGB_LED   // board has no onboard RGB LED -> everything is a no-op
 void halo_init(void) {}
 void halo_set_color(uint8_t r, uint8_t g, uint8_t b) { (void)r; (void)g; (void)b; }
@@ -33,7 +46,7 @@ static volatile bool    s_pulsing;
 static void show(int r, int g, int b)
 {
     if (!s_strip) return;
-    int br = s_bright;
+    int br = HALO_EFFECTIVE(s_bright);
     for (int i = 0; i < HALO_COUNT; i++)
         led_strip_set_pixel(s_strip, i, (r * br) / 100, (g * br) / 100, (b * br) / 100);
     led_strip_refresh(s_strip);
@@ -49,15 +62,11 @@ static void show(int r, int g, int b)
 #define HALO_CHASE_MS     55     // ms per step -> ~1.3 s per lap over 24 px
 #define HALO_CHASE_LEVEL  35     // % of the pulse colour at the head
 
-// Idle "nightlight" level. This sits on a wall, often in a dark room, and 24 px
-// of even dim blue is a lot of emitted light — keep it a suggestion of colour,
-// not illumination. 8/255 is ~3%.
-#define HALO_IDLE_BLUE    8
 
 static void show_chase(int r, int g, int b, int head)
 {
     if (!s_strip) return;
-    int br = (s_bright * HALO_CHASE_LEVEL) / 100;
+    int br = (HALO_EFFECTIVE(s_bright) * HALO_CHASE_LEVEL) / 100;
     for (int i = 0; i < HALO_COUNT; i++) {
         int d = (head - i + HALO_COUNT) % HALO_COUNT;        // px behind the head
         int w = (d < HALO_CHASE_TAIL) ? (255 * (HALO_CHASE_TAIL - d)) / HALO_CHASE_TAIL : 0;

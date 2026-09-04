@@ -1,6 +1,15 @@
 #include "net.h"
 #include "config.h"
 #include "board.h"
+// eth.c exists only on the ESP targets; the T3 shares this file (lvgl-app/shared
+// symlinks into main/) but gets its networking from Linux, so eth_is_up() is not
+// linkable there. Gate every use on this, not on MMK_NET_ETH alone.
+#if MMK_NET_ETH && !defined(MMK_BOARD_T3)
+#  define MMK_ETH_RUNTIME 1
+#  include "eth.h"      // eth_is_up() — must follow board.h (MMK_NET_ETH)
+#else
+#  define MMK_ETH_RUNTIME 0
+#endif
 #if MMK_HAS_AUDIO
 #include "sip.h"      // intercom control rides the :6700 link (audio boards only)
 #include "audio.h"
@@ -721,7 +730,15 @@ esp_netif_t *mmk_default_netif(void)
 
 void mmk_read_mac(uint8_t mac[6])
 {
-#if MMK_NET_ETH
+#if MMK_ETH_RUNTIME
+    // Only prefer the Ethernet MAC when Ethernet is actually up: one image runs
+    // with and without a wired carrier, so the compile-time flag alone would make
+    // a WiFi-only unit report a MAC it never uses.
+    if (eth_is_up()) { esp_read_mac(mac, ESP_MAC_ETH); return; }
+#endif
+#if MMK_NET_ETH && !MMK_ETH_RUNTIME
+    esp_read_mac(mac, ESP_MAC_ETH);   // T3: wired, no eth.c to ask
+#elif MMK_NET_ETH && !MMK_NET_WIFI
     esp_read_mac(mac, ESP_MAC_ETH);
 #elif MMK_NET_WIFI && CONFIG_IDF_TARGET_ESP32P4
     // WiFi MAC lives on the C6 co-processor (esp_wifi_remote); the local efuse

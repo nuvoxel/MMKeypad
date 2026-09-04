@@ -18,7 +18,7 @@ STOCK       := ../reference/t3-control4/firmware/extracted
 KERNEL      := $(STOCK)/kernel.img
 BOOT_ORIG   := $(STOCK)/boot.orig
 
-.PHONY: all init ramdisk bootimg wifi-tools selftest clean
+.PHONY: all init ramdisk bootimg wifi-tools selftest bundle clean
 
 all: bootimg
 
@@ -73,6 +73,43 @@ bootimg: ramdisk
 		--ramdisk $(BUILD_DIR)/ramdisk.cpio.gz \
 		--header-from $(BOOT_ORIG) \
 		-o $(BUILD_DIR)/mmkeypad_boot.img
+
+# ── OTA bundle ──────────────────────────────────────────────────────────────
+# The T3's Releases artifact is NOT a flashable image: it is a flat tar holding
+# the app and the init overlay, applied by platform/nv_ota_t3.c as an overlay
+# swap. That file extracts with `busybox tar -xf` and then looks for exactly
+# these members at the top level:
+#
+#   meta.json      must contain "t3-bundle" and "version": N, 1 <= N <= T3_BUNDLE_MAX
+#   mmkeypad       the app       -> /data/mmkeypad
+#   init.overlay   the init      -> /data/init.overlay  (triggers a reboot if changed)
+#
+# Both payload members are optional to the updater, but a release should carry
+# both. Version comes from the shared scheme in ../firmware-idf/version.txt so the
+# tag, the asset name and what the panel reports all agree.
+#
+#   make bundle                 -> build/mmk-t3-<version>.tar
+#
+# NOTE: the app must be built first (cd lvgl-app && make); it is a separate tree.
+BUNDLE_VER := $(shell sed 's/FW$$//' ../firmware-idf/version.txt 2>/dev/null)
+BUNDLE_APP := lvgl-app/build/mmk-app
+BUNDLE_OUT := $(BUILD_DIR)/mmk-t3-$(BUNDLE_VER).tar
+
+bundle: init
+	@test -n "$(BUNDLE_VER)" || { echo "no version (../firmware-idf/version.txt)"; exit 1; }
+	@test -f $(BUNDLE_APP) || { echo "missing $(BUNDLE_APP) — run: cd lvgl-app && make"; exit 1; }
+	rm -rf $(BUILD_DIR)/bundle && mkdir -p $(BUILD_DIR)/bundle
+	cp $(BUNDLE_APP)        $(BUILD_DIR)/bundle/mmkeypad
+	cp $(BUILD_DIR)/init    $(BUILD_DIR)/bundle/init.overlay
+	chmod 755 $(BUILD_DIR)/bundle/mmkeypad $(BUILD_DIR)/bundle/init.overlay
+	printf '{\n  "type": "t3-bundle",\n  "version": 1,\n  "fw": "%s",\n  "sku": "mmk-t3"\n}\n' \
+		"$(BUNDLE_VER)" > $(BUILD_DIR)/bundle/meta.json
+	# COPYFILE_DISABLE stops macOS tar adding ._ AppleDouble members, which
+	# busybox tar would extract as junk alongside the real files.
+	cd $(BUILD_DIR)/bundle && COPYFILE_DISABLE=1 tar -cf ../$(notdir $(BUNDLE_OUT)) \
+		meta.json mmkeypad init.overlay
+	@echo "built $(BUNDLE_OUT)"
+	@tar -tf $(BUNDLE_OUT)
 
 clean:
 	rm -rf $(BUILD_DIR)

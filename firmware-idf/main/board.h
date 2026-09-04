@@ -156,6 +156,12 @@
 // the pin cannot reach a valid logic high and the ring stays dark.
 #define PIN_RGB_LED      48
 #define HALO_COUNT       24
+// Scale the requested brightness down on a ring. The Control4 driver's Halo
+// Brightness percentage was chosen when the halo was a SINGLE onboard LED; 24 px
+// emit far more light for the same number, on a wall, often in a dark room. This
+// rescales rather than changing the driver default so it applies to projects
+// that already store a value. 50 => the driver's 100% is half power.
+#define HALO_BRIGHT_SCALE 50
 
 #define MMK_SNAPSHOT     0   // OFF: on the 480x800 panel the framebuffer-over-serial dump starves LVGL -> task WDT reboot loop. Dev-only; flip to 1 on the bench.
 
