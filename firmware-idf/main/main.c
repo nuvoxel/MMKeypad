@@ -275,10 +275,22 @@ void app_main(void)
     // C6 WiFi is wired) leaves lwip's select() over zero netifs corrupting the heap.
     // The transport is brought up first so a netif exists before these bind.
 #if MMK_NET_WIFI || MMK_NET_ETH
-#if MMK_NET_WIFI
-    wifi_start();
-#elif MMK_NET_ETH
+    // WIRED FIRST. On the backbox-poe carrier Ethernet is the link the product is
+    // built around (it is the same cable that powers it), so it takes precedence
+    // and WiFi is the fallback. Both flags are set on ws43 because one image runs
+    // with and without the carrier: eth_start() returns quickly when no PHY
+    // answers, and WiFi then comes up as it always did.
+    //
+    // Deliberately NOT both at once — two interfaces on one LAN means two IPs,
+    // ambiguous ARP and SDDP announcing twice.
+#if MMK_NET_ETH
     eth_start();
+#endif
+#if MMK_NET_WIFI
+#if MMK_NET_ETH
+    if (!eth_is_up())
+#endif
+        wifi_start();
 #endif
 
 #ifdef MMK_C6_OTA

@@ -1,0 +1,4 @@
+dependencies:
+  idf: ">=5.4"
+  # Halo ring: 24x SK6812SIDE-A, WS2812-compatible GRB, RMT-driven.
+  espressif/led_strip: "^2.5.0"

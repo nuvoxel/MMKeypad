@@ -65,11 +65,14 @@ dependencies:
     version: "^1.1.0"
     rules:
       - if: "target in [esp32s3, esp32p4]"
-  # "Halo" onboard WS2812B RGB LED (RMT-driven). S3 lcdwiki = GPIO42 (see halo.c).
+  # "Halo" RGB LED(s), RMT-driven (see halo.c). S3 lcdwiki = one onboard WS2812
+  # on GPIO42; the ws43+backbox-poe carrier = a 24x SK6812SIDE ring on GPIO48.
+  # P4 is included for the carrier build; halo.c is a no-op where PIN_RGB_LED
+  # is undefined, so the other P4 boards just carry an unused component.
   espressif/led_strip:
     version: "^2.5.0"
     rules:
-      - if: "target == esp32s3"
+      - if: "target in [esp32s3, esp32p4]"
   # HUB75 RGB LED-matrix DMA driver (esphome/esp-hub75, MIT; native ESP-IDF, uses
   # GDMA on the S3). Only the s3_matrix board pulls it (gated on the MMK_BOARD env
   # var — board.sh exports it; a bare idf.py build must `export MMK_BOARD=s3_matrix`).

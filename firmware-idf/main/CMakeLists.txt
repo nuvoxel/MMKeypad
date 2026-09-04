@@ -78,9 +78,13 @@ elseif(MMK_BOARD STREQUAL "ws43")
     # and pulls protocomm (its public REQUIRE) for the protocomm BLE + security-
     # session event bases prov.c references. The on-screen QR uses the LVGL QR
     # widget (LV_USE_QRCODE), so no esp_qrcode component is needed.
-    list(APPEND srcs "bsp_ws43.c" "wifi.c" "c6_ota.c" "ble_spike.c" "prov.c" ${ui_srcs} ${audio_srcs})
+    # eth.c + halo.c are for the backbox-poe carrier. One image covers ws43 with
+    # and without it: eth_start() returns quietly when no PHY answers, and the
+    # halo just clocks data into a chain that isn't there.
+    list(APPEND srcs "bsp_ws43.c" "wifi.c" "c6_ota.c" "ble_spike.c" "prov.c" "eth.c" "halo.c" ${ui_srcs} ${audio_srcs})
     list(APPEND embeds ${ui_embeds} ${audio_embeds})
-    list(APPEND reqs esp_lcd esp_lcd_st7701 esp_lcd_touch_gt911 esp_driver_ledc
+    list(APPEND reqs esp_eth esp_netif espressif__led_strip
+                     esp_lcd esp_lcd_st7701 esp_lcd_touch_gt911 esp_driver_ledc
                      esp_wifi esp_wifi_remote esp_hosted bt
                      espressif__network_provisioning protocomm
                      esp_partition esp_app_format ${audio_reqs})

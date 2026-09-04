@@ -122,7 +122,8 @@
                              // factory BSP (esp32_p4_wifi6_touch_lcd_4_3.[ch]).
 #define MMK_NET_WIFI     1   // onboard ESP32-C6 via esp_hosted 1.4.x (Waveshare
                              // factory stack); wifi.c provisions over softAP
-#define MMK_NET_ETH      0
+#define MMK_NET_ETH      1   // backbox-poe carrier: IP101GA over RMII through J1.
+                             // Absent carrier, eth_start() logs and returns.
 #define MMK_WIFI_MAC_OVERRIDE 0
 
 // BLE Wi-Fi provisioning (prov.c): the phone hands over Wi-Fi creds over BLE via
@@ -138,6 +139,24 @@
 #define MMK_HAS_BLE_PROV 1
 #define MMK_BLE_HOSTED   1   // BT controller is on the C6 over esp_hosted VHCI (not on-chip)
 #define MMK_CAN_ROTATE   1   // DSI sw_rotate → show the Orientation setting
+// ── backbox-poe carrier ─────────────────────────────────────────────────────
+// The carrier is purely additive to the ws43 (Ethernet + a 24-LED halo ring),
+// so there is ONE board target for both. On a bare module the PHY simply does
+// not answer and the halo clocks data into nothing.
+//
+// IP101GA over RMII. ESP-IDF's P4 ETH_ESP32_EMAC_DEFAULT_CONFIG() already
+// encodes this pinout (MDC=31 MDIO=52 CLK_EXT_IN=50 TX_EN=49 TXD0=34 TXD1=35
+// CRS_DV=28 RXD0=29 RXD1=30), so eth.c uses it verbatim.
+#define ETH_PHY_RST_GPIO 51      // J1.36
+#define ETH_PHY_ADDR     1       // AD0 pulled high, AD1/AD2 low
+
+// Halo: 24x SK6812SIDE-A around the perimeter, driven from GPIO48 through a
+// 74AHCT level shifter. AHCT is TTL-threshold (VIH 2.0V at 5V VCC), and GPIO48
+// sits on the GPIO39-48 LDO domain — IO_LDO_CHAN must be acquired before use or
+// the pin cannot reach a valid logic high and the ring stays dark.
+#define PIN_RGB_LED      48
+#define HALO_COUNT       24
+
 #define MMK_SNAPSHOT     0   // OFF: on the 480x800 panel the framebuffer-over-serial dump starves LVGL -> task WDT reboot loop. Dev-only; flip to 1 on the bench.
 
 // C6 slave OTA (bench only): flip to 1 to run a ONE-SHOT OTA of the onboard
@@ -170,6 +189,15 @@
 #define DSI_LANE_MBPS    500
 #define DSI_DPI_CLK_MHZ  30
 #define DSI_PHY_LDO_CHAN 3      // esp_ldo channel powering the MIPI D-PHY
+
+// GPIO39-48 on the P4 are NOT on the main 3.3V IO rail — they sit on their own
+// internal LDO domain (LDO_VO4 on the ws43, where it also feeds the microSD
+// pull-ups). Unacquired it idles around 1.2V, so any of those pins used as an
+// output cannot reach a valid 3.3V logic high, and anything downstream of them
+// silently does nothing. 3.3V is also the correct level for the SD domain
+// (1.8V is the optional UHS-I mode only).
+#define IO_LDO_CHAN      4      // esp_ldo channel powering GPIO39-48
+#define IO_LDO_MV        3300
 #define DSI_PHY_LDO_MV   2500
 // DPI video timings (from Waveshare's factory BSP for the ST7701):
 #define DSI_HSYNC_PULSE  12

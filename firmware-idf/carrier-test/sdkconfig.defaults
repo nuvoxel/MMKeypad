@@ -1,0 +1,18 @@
+# ws43 module mated to a backbox-poe carrier. Deliberately minimal: no PSRAM,
+# no LVGL, no WiFi/esp_hosted — this image only has to exercise carrier hardware,
+# and a small build flashes fast on the bench.
+CONFIG_IDF_TARGET="esp32p4"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
+
+# Console on the ws43's onboard USB-UART bridge (UART0), same as the ws43 target.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+
+# Internal EMAC + external RMII PHY (IP101GA, U1 on the carrier).
+CONFIG_ETH_USE_ESP32_EMAC=y
+CONFIG_ETH_PHY_INTERFACE_RMII=y
+
+# Early P4 silicon — this unit reads v1.3. A min is a floor, so this still runs
+# on newer chips.
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y

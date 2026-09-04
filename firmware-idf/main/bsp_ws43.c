@@ -155,8 +155,24 @@ static void i2c_start(void)
 static esp_lcd_dsi_bus_handle_t  s_dsi_bus;
 static esp_lcd_panel_io_handle_t s_dbi_io;
 
+// GPIO39-48 sit on their own internal LDO domain — see IO_LDO_CHAN in board.h.
+// Acquire it early: without it those pins idle around 1.2V and cannot drive a
+// logic high, which silently breaks anything on GPIO39-48 (on the backbox-poe
+// carrier, the halo). Idempotent and harmless on boards that do not use them.
+void bsp_io_ldo_start(void)
+{
+    static esp_ldo_channel_handle_t io_ldo;
+    if (io_ldo) return;
+    esp_ldo_channel_config_t cfg = { .chan_id = IO_LDO_CHAN, .voltage_mv = IO_LDO_MV };
+    esp_err_t e = esp_ldo_acquire_channel(&cfg, &io_ldo);
+    if (e != ESP_OK) ESP_LOGW(TAG, "IO LDO ch%d @ %dmV failed: %s",
+                              IO_LDO_CHAN, IO_LDO_MV, esp_err_to_name(e));
+}
+
 static esp_lcd_panel_handle_t dsi_panel_start(void)
 {
+    bsp_io_ldo_start();
+
     // The MIPI D-PHY is powered from an on-chip LDO (VDD_MIPI_DPHY = LDO_VO3) —
     // without this the bus is dead and panel init fails silently.
     static esp_ldo_channel_handle_t phy_ldo;

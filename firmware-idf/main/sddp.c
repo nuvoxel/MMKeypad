@@ -192,6 +192,16 @@ void sddp_start(uint16_t control_port)
         char tag[24];
         device_variant_tag(tag, sizeof(tag));
         const char *hwid = device_hardware_id();
+        /* Strip the "mmk-" prefix. hardware_id is "mmk-<efuse mac>", but Control4
+         * network bindings created before hardware_id existed stored the UUID as
+         * <tag>-<mac> (e.g. "M Keypad-WS43-e8f60ae0b295"). Announcing the prefixed
+         * form makes Director wait for a UUID nothing sends: the binding stays
+         * address="" / online=false forever, the driver loops "was unbound —
+         * binding", and C4:SetBindingAddress cannot help because Director owns the
+         * address on a UUID-type binding. The suffix is the same eFuse MAC either
+         * way, so dropping the prefix keeps the transport-independence this block
+         * was written for AND matches every binding already in the field. */
+        if (hwid && !strncmp(hwid, "mmk-", 4) && hwid[4]) hwid += 4;
         snprintf(s_host, sizeof(s_host), "%s-%s",
                  tag[0] ? tag : "Keypad", (hwid && hwid[0]) ? hwid : "unknown");
     }
