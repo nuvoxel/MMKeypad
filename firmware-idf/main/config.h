@@ -20,6 +20,13 @@ typedef struct {
     uint8_t  theme;            // 0=Control4 (X4)  1=Home Assistant — see ui.c THEME_X4/THEME_HA
     uint8_t  ringer_volume;    // 0..100 chime/announcement/ring loudness (panel speaker)
     uint8_t  muted;            // 0/1 mute the panel's own audio output (forces ringer -> 0)
+    // Which transport to bring up. 0=Auto keeps the shipping behaviour (wired
+    // first, WiFi fallback); 1 and 2 pin it. Read once at boot by main.c, so a
+    // change needs a restart -- see the comment there for why this is not a live
+    // switch. The escape hatch is 1: a panel whose switch port is STP/BPDU-guard
+    // blocked links but passes nothing, and Auto then burns 8 s on a DHCP lease
+    // that will never arrive before falling back anyway.
+    uint8_t  net_transport;    // 0=Auto (wired first)  1=Wi-Fi only  2=Ethernet only
 } settings_t;
 
 extern settings_t g_settings;

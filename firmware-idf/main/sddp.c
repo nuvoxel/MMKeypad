@@ -207,3 +207,5 @@ void sddp_start(uint16_t control_port)
     }
     xTaskCreate(sddp_task, "sddp", 4096, NULL, 4, NULL);
 }
+
+const char *sddp_host(void) { return s_host; }

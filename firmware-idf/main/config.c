@@ -26,6 +26,7 @@ settings_t g_settings = {
     .theme = 0,              // Control4 (X4) by default
     .ringer_volume = 80,     // panel chime/announcement loudness
     .muted = 0,              // not muted
+    .net_transport = 0,      // Auto: wired first, WiFi fallback
 };
 
 static const char *NS = "mmkeypad";
@@ -45,6 +46,7 @@ void settings_load(void)
     if (nvs_get_u8(h, "theme", &u8) == ESP_OK) g_settings.theme = u8;
     if (nvs_get_u8(h, "ringvol", &u8) == ESP_OK) g_settings.ringer_volume = u8;
     if (nvs_get_u8(h, "muted", &u8) == ESP_OK) g_settings.muted = u8;
+    if (nvs_get_u8(h, "nettr", &u8) == ESP_OK) g_settings.net_transport = u8;
     nvs_close(h);
 }
 
@@ -61,6 +63,7 @@ void settings_save(void)
     nvs_set_u8(h, "theme", g_settings.theme);
     nvs_set_u8(h, "ringvol", g_settings.ringer_volume);
     nvs_set_u8(h, "muted", g_settings.muted);
+    nvs_set_u8(h, "nettr", g_settings.net_transport);
     nvs_commit(h);
     nvs_close(h);
 }

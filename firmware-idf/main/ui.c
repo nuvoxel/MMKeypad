@@ -5,6 +5,7 @@
 #include "config.h"
 #include "bsp.h"
 #include "net.h"
+#include "sddp.h"   // sddp_host() — the name Settings shows as "Discovery name"
 #include "sip.h"
 #include "audio.h"
 #include "lvgl.h"
@@ -864,7 +865,7 @@ void ui_set_endpoints(const intercom_target_t *eps, int n)
 // ── #11 on-device Settings overlay (display settings; Wi-Fi join is a follow-up) ─────
 static lv_obj_t *s_settings;   // the overlay, NULL when closed
 typedef struct { const char *const *opts; uint8_t n; uint8_t *field; uint8_t apply; lv_obj_t *val; } cyclerow_t;
-static cyclerow_t s_cyc[6];    // apply: 1=backlight  2=orientation+rebuild  3=rebuild  (0=save only)
+static cyclerow_t s_cyc[8];    // apply: 1=backlight  2=orientation+rebuild  3=rebuild  (0=save only)
 static int s_ncyc;
 #ifdef MMK_CAN_ROTATE
 static const char *const OPT_ORIENT[] = { "Landscape", "Portrait", "Landscape flipped", "Portrait flipped" };
@@ -876,6 +877,14 @@ static const char *const OPT_IDLE[]     = { "Screen off", "5%", "10%", "25%", "5
 static const uint8_t      IDLE_VALS[]   = { 0, 5, 10, 25, 50 };
 static uint8_t            s_idleIdx;
 static const char *const OPT_MUTE[]     = { "Off", "On" };   // maps directly to g_settings.muted
+#if MMK_NET_ETH && MMK_NET_WIFI
+// Transport override. Index order matches settings_t.net_transport, and main.c
+// reads it at boot -- hence the note the row shows when you change it. Guarded to
+// match the row itself: on a single-transport board there is nothing to choose
+// between, and an unused table is a -Werror=unused-const-variable build failure.
+static const char *const OPT_NET[]      = { "Auto", "Wi-Fi", "Ethernet" };
+static lv_obj_t         *s_netNoteLbl;  // "Restart to apply", hidden until touched
+#endif
 
 // Diagnostics card: mic test status label + its auto-revert timer, so a settings
 // close mid-test doesn't leave the timer firing into a freed label (LVGL deletes
@@ -888,6 +897,13 @@ static lv_obj_t   *s_micTestLbl;
 // forever when we're already current. Same teardown discipline as the mic test.
 static lv_timer_t *s_fwCheckTimer;
 static lv_obj_t   *s_fwCheckLbl;
+// Live network rows on the Settings page — see onNetPoll() for why they are polled.
+// Declared here because onSettingsClose(), just below, tears them down.
+static lv_obj_t   *s_netIpLbl;     // "IP address" value (NULL when the page is closed)
+static lv_obj_t   *s_netLinkLbl;   // "Link" value
+static lv_obj_t   *s_netC4Lbl;     // "Control4" value, C4 theme only
+static lv_obj_t   *s_netSddpLbl;   // "Discovery name" value — what Control4 binds against
+static lv_timer_t *s_netTimer;
 
 static void onSettingsClose(lv_event_t *e) {
     (void)e;
@@ -895,11 +911,17 @@ static void onSettingsClose(lv_event_t *e) {
     s_micTestLbl = NULL;
     if (s_fwCheckTimer) { lv_timer_delete(s_fwCheckTimer); s_fwCheckTimer = NULL; }
     s_fwCheckLbl = NULL;
+    if (s_netTimer) { lv_timer_delete(s_netTimer); s_netTimer = NULL; }
+    s_netIpLbl = NULL; s_netLinkLbl = NULL; s_netC4Lbl = NULL;
+    s_netSddpLbl = NULL;
+#if MMK_NET_ETH && MMK_NET_WIFI
+    s_netNoteLbl = NULL;
+#endif
     if (s_settings) { lv_obj_del(s_settings); s_settings = NULL; }
 }
 // Defined later in this file; the firmware overlay below reuses them.
 static lv_obj_t *settings_card(lv_obj_t *parent, const char *title);
-static void settings_info_row(lv_obj_t *card, const char *label, const char *value, uint32_t valColor);
+static lv_obj_t *settings_info_row(lv_obj_t *card, const char *label, const char *value, uint32_t valColor);
 
 // ── Firmware update overlay: list this SKU's images from GitHub Releases and
 // let the user pick one on-screen (fwupdate.c does the fetch + apply; no cloud).
@@ -1073,6 +1095,11 @@ static void onCycle(lv_event_t *e) {
     else if (c->apply == 2) { bsp_apply_orientation(g_settings.orientation); ui_request_rebuild(); }
     else if (c->apply == 3) ui_request_rebuild();
     else if (c->apply == 4) { g_settings.dim_brightness = IDLE_VALS[*c->field]; settings_save(); } // idle % from index
+#if MMK_NET_ETH && MMK_NET_WIFI
+    else if (c->apply == 6) {   // transport override -- main.c reads this at boot only
+        if (s_netNoteLbl) lv_obj_clear_flag(s_netNoteLbl, LV_OBJ_FLAG_HIDDEN);
+    }
+#endif
     else if (c->apply == 5) {   // mute toggle -- gates ringer AND master output
         uint8_t v = g_settings.muted ? 0 : g_settings.ringer_volume;
         audio_set_ringer_volume(v);
@@ -1155,7 +1182,7 @@ static lv_obj_t *settings_card(lv_obj_t *parent, const char *title) {
 }
 
 
-static void settings_info_row(lv_obj_t *card, const char *label, const char *value, uint32_t valColor) {
+static lv_obj_t *settings_info_row(lv_obj_t *card, const char *label, const char *value, uint32_t valColor) {
     lv_obj_t *row = lv_obj_create(card);
     lv_obj_remove_style_all(row);
     lv_obj_set_width(row, LV_PCT(100));
@@ -1171,6 +1198,34 @@ static void settings_info_row(lv_obj_t *card, const char *label, const char *val
     lv_obj_set_style_text_color(v, lv_color_hex(valColor), 0);
     lv_obj_set_style_text_font(v, F16, 0);
     lv_obj_set_style_text_align(v, LV_TEXT_ALIGN_RIGHT, 0);
+    return v;
+}
+
+// ── Live network rows ───────────────────────────────────────────────────────
+// Link/IP/Control4 are the only values on this page that change while you are
+// looking at it, and on a wired-capable board the change routinely lands AFTER
+// the page is drawn: eth_start() spends 8 s waiting for a DHCP lease before WiFi
+// is even started, so a panel falling back to WiFi has no address at all for the
+// first ~22 s. Drawn once, the card then read "offline" for as long as it stayed
+// open -- indistinguishable from a panel with no network, and it made a working
+// fallback look like a broken one. Poll them; the rest of the card is fixed.
+
+static void set_row(lv_obj_t *lbl, const char *txt, uint32_t color) {
+    if (!lbl || strcmp(lv_label_get_text(lbl), txt) == 0) return;
+    lv_label_set_text(lbl, txt);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(color), 0);
+}
+
+static void onNetPoll(lv_timer_t *t) {
+    (void)t;
+    char ip[24]; net_get_ip(ip, sizeof(ip));
+    set_row(s_netIpLbl, ip[0] ? ip : "offline", ip[0] ? C_TEXT : C_SUBTLE);
+    const char *tr = net_active_transport();
+    set_row(s_netLinkLbl, tr[0] ? tr : "none", tr[0] ? C_TEXT : C_SUBTLE);
+    const char *host = sddp_host();
+    set_row(s_netSddpLbl, host[0] ? host : "—", host[0] ? C_TEXT : C_SUBTLE);
+    bool up = net_connected();
+    set_row(s_netC4Lbl, up ? "Connected" : "Offline", up ? C_GREEN : 0xC85050);
 }
 
 static void ui_show_settings(void) {
@@ -1233,8 +1288,8 @@ static void ui_show_settings(void) {
         // theme has no Director to show, so this card is just the generic device
         // identity (IP/firmware/device) there.
         if (isC4) {
-            settings_info_row(card, "Control4", up ? "Connected" : "Offline",
-                              up ? C_GREEN : 0xC85050);
+            s_netC4Lbl = settings_info_row(card, "Control4", up ? "Connected" : "Offline",
+                                           up ? C_GREEN : 0xC85050);
             if (up && s_lastState.room[0]) settings_info_row(card, "Room", s_lastState.room, C_TEXT);
             if (up && net_peer_ip()[0])    settings_info_row(card, "Director", net_peer_ip(), C_TEXT);
             // Just "v1" (the wire-protocol version). Only if a paired driver
@@ -1250,7 +1305,34 @@ static void ui_show_settings(void) {
             // driver-side facts, visible in Composer and the portal, and they were
             // noise on a panel someone walks up to.
         }
-        settings_info_row(card, "IP address", ip[0] ? ip : "offline", ip[0] ? C_TEXT : C_SUBTLE);
+        {   // Which interface is carrying us, above the address it carries.
+            const char *tr = net_active_transport();
+            s_netLinkLbl = settings_info_row(card, "Link", tr[0] ? tr : "none",
+                                             tr[0] ? C_TEXT : C_SUBTLE);
+        }
+        s_netIpLbl = settings_info_row(card, "IP address", ip[0] ? ip : "offline",
+                                       ip[0] ? C_TEXT : C_SUBTLE);
+        {   // The string Control4 binds against. Worth surfacing because when it
+            // disagrees with the stored binding, the panel is on the network and
+            // still undiscoverable — and there is otherwise nowhere to read it.
+            const char *host = sddp_host();
+            s_netSddpLbl = settings_info_row(card, "Discovery name", host[0] ? host : "—",
+                                             host[0] ? C_TEXT : C_SUBTLE);
+        }
+        // 1 s is plenty: this tracks DHCP and link changes, not anything the eye
+        // needs to follow, and it only ticks while the page is actually open.
+        s_netTimer = lv_timer_create(onNetPoll, 1000, NULL);
+#if MMK_NET_ETH && MMK_NET_WIFI
+        // Only worth offering on a board that genuinely has both.
+        settingsCycler(card, "Network", OPT_NET, 3, &g_settings.net_transport, 6);
+        {
+            s_netNoteLbl = lv_label_create(card);
+            lv_label_set_text(s_netNoteLbl, "Restart to apply");
+            lv_obj_set_style_text_color(s_netNoteLbl, lv_color_hex(C_SUBTLE), 0);
+            lv_obj_set_style_text_font(s_netNoteLbl, F16, 0);
+            lv_obj_add_flag(s_netNoteLbl, LV_OBJ_FLAG_HIDDEN);
+        }
+#endif
         settings_info_row(card, "Firmware",   fw_version(), C_TEXT);
         {   // Check-for-update action button, right under the running version.
             lv_obj_t *fwbtn = lv_button_create(card);

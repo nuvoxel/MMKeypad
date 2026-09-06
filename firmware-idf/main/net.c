@@ -235,6 +235,18 @@ void net_get_ip(char *buf, size_t n)
     }
 }
 
+// Which transport is actually carrying us, by the same has-an-address test
+// mmk_default_netif() uses -- so Settings can never disagree with the interface
+// the panel is really announcing and serving on.
+const char *net_active_transport(void)
+{
+    esp_netif_t *nif = mmk_default_netif();
+    if (!nif) return "";
+    esp_netif_ip_info_t ipi;
+    if (esp_netif_get_ip_info(nif, &ipi) != ESP_OK || ipi.ip.addr == 0) return "";
+    return (nif == esp_netif_get_handle_from_ifkey("ETH_DEF")) ? "Ethernet" : "Wi-Fi";
+}
+
 // ── parse helpers ───────────────────────────────────────────────────────────
 static void get_str(const cJSON *o, const char *k, char *dst, size_t n)
 {
@@ -721,11 +733,28 @@ void net_start(uint16_t port, const net_callbacks_t *cb)
 }
 
 // ── transport-agnostic helpers (see net.h) ──────────────────────────────────
+// Prefer whichever transport actually holds an address, not merely whichever
+// handle exists. eth.c creates the ETH_DEF netif at init whether or not the port
+// ever links or takes a DHCP lease, so keying off the handle alone blanks out
+// every caller on a unit that is perfectly reachable over WiFi: net_get_ip()
+// returns "" and Settings reads "offline", and sddp.c's announce bails on the
+// zero address, so the Director never discovers the panel. Routed traffic is
+// unaffected (it goes through the routing table, not this helper) — which is why
+// such a panel can still fetch the OTA release list while claiming to have no IP.
+// mmk_read_mac() below already gates on eth_is_up() for exactly this reason.
+static bool netif_has_ip(esp_netif_t *n)
+{
+    esp_netif_ip_info_t ipi;
+    return n && esp_netif_get_ip_info(n, &ipi) == ESP_OK && ipi.ip.addr != 0;
+}
+
 esp_netif_t *mmk_default_netif(void)
 {
-    esp_netif_t *n = esp_netif_get_handle_from_ifkey("ETH_DEF");
-    if (!n) n = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    return n;
+    esp_netif_t *eth = esp_netif_get_handle_from_ifkey("ETH_DEF");
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif_has_ip(eth)) return eth;   // wired still wins when it is really up
+    if (netif_has_ip(sta)) return sta;
+    return eth ? eth : sta;              // nothing addressed yet: prior order
 }
 
 void mmk_read_mac(uint8_t mac[6])

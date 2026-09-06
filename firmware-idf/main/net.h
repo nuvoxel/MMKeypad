@@ -98,6 +98,7 @@ typedef struct {
 void net_start(uint16_t port, const net_callbacks_t *cb);
 bool net_connected(void);
 void net_get_ip(char *buf, size_t n);   // primary local IPv4 string ("" if offline)
+const char *net_active_transport(void); // "Ethernet" / "Wi-Fi" / "" when nothing is addressed
 int  net_driver_proto(void);            // driver's protocol version (0 = unknown/offline)
 const char *net_peer_ip(void);          // connected Director/driver IP ("" if offline)
 const char *net_current_room(void);     // last room the driver reported ("" if none yet)

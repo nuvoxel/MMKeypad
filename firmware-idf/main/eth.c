@@ -17,12 +17,15 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "driver/gpio.h"    // we drive the PHY reset line ourselves — see phy_reset_release()
+#include "esp_timer.h"      // measuring the reflect window
 
 static const char *TAG = "eth";
 
 static EventGroupHandle_t s_eg;
 #define BIT_GOT_IP BIT0
 static bool s_up;
+static esp_eth_handle_t s_handle;   // kept for eth_stand_down()
 
 static void on_eth_evt(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -92,6 +95,42 @@ out:
     esp_eth_ioctl(h, ETH_CMD_WRITE_PHY_REG, &rst);
 }
 
+// ── PHY reset, driven by us rather than by the PHY driver ───────────────────
+// The clear above is only safe if it lands before autonegotiation brings the link
+// up (1-3 s after the PHY leaves reset). Left to esp_eth_phy_new_ip101(), reset is
+// released at some point *inside* esp_eth_driver_install() that we neither control
+// nor can see — so the size of the reflect window depended on how much other work
+// (display init, ESP-Hosted's SDIO bring-up) happened to be scheduled first. A
+// measured boot showed the clear at 3843 ms and link up at 5952 ms: a 2.1 s margin,
+// but one nobody had chosen, on a board where losing the race means a customer's
+// switch blocking the port.
+//
+// So take the line. Holding the PHY in reset until immediately before install
+// starts the autonegotiation clock at an instant we pick, a few milliseconds
+// before the clear — which converts the margin from an artifact of task
+// scheduling into very nearly the full autonegotiation time, every boot.
+//
+// (The real fix is still a 5.1k pull-up on INTR — see REVE.md §0. This only makes
+// the firmware mitigation deterministic.)
+#define PHY_RESET_ASSERT_MS   20   // IP101 wants >=10 ms low
+#define PHY_RESET_SETTLE_MS   20   // ...and >=10 ms before MDIO after release
+
+static void phy_reset_release(void)
+{
+    const gpio_config_t io = {
+        .pin_bit_mask = 1ULL << ETH_PHY_RST_GPIO,
+        .mode         = GPIO_MODE_OUTPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&io));
+    gpio_set_level(ETH_PHY_RST_GPIO, 0);            // hold in reset: cannot link, cannot reflect
+    vTaskDelay(pdMS_TO_TICKS(PHY_RESET_ASSERT_MS));
+    gpio_set_level(ETH_PHY_RST_GPIO, 1);            // autonegotiation clock starts HERE
+    vTaskDelay(pdMS_TO_TICKS(PHY_RESET_SETTLE_MS)); // settle before the first MDIO read
+}
+
 void eth_start(void)
 {
     s_eg = xEventGroupCreate();
@@ -105,8 +144,13 @@ void eth_start(void)
 
     eth_phy_config_t phy_cfg = ETH_PHY_DEFAULT_CONFIG();
     phy_cfg.phy_addr = ETH_PHY_ADDR;            // 1
-    phy_cfg.reset_gpio_num = ETH_PHY_RST_GPIO;  // 51
+    phy_cfg.reset_gpio_num = -1;                // 51, but WE drive it — phy_reset_release()
     esp_eth_phy_t *phy = esp_eth_phy_new_ip101(&phy_cfg);
+
+    // Everything above only built config structs; nothing has touched the PHY yet.
+    // Release it now so the window below is as short as we can make it.
+    phy_reset_release();
+    const int64_t t_release = esp_timer_get_time();
 
     esp_eth_config_t eth_cfg = ETH_DEFAULT_CONFIG(mac, phy);
     esp_eth_handle_t handle = NULL;
@@ -114,14 +158,32 @@ void eth_start(void)
     // PHY does not answer on MDIO. A keypad must not panic because Ethernet is
     // absent — log it and carry on (WiFi is still there).
     esp_err_t ie = esp_eth_driver_install(&eth_cfg, &handle);
+    s_handle = (ie == ESP_OK) ? handle : NULL;
     if (ie != ESP_OK) {
         ESP_LOGW(TAG, "no Ethernet PHY (%s) — carrier absent or PHY fault; continuing",
                  esp_err_to_name(ie));
+        // Tear the netif back down. It was created above, before we knew whether
+        // there was a PHY to attach it to; returning without this leaves an
+        // ETH_DEF handle that exists but is never attached and never addressed.
+        // mmk_default_netif() then hands that orphan to every caller for the rest
+        // of the boot, so a WiFi-only unit reports no IP in Settings and stops
+        // announcing over SDDP (sddp.c bails on the zero address) while its WiFi
+        // link works perfectly — including OTA, which routes normally.
+        esp_netif_destroy(netif);
+        // Put it back in reset. Install failing means the clear never ran, so the
+        // part is sitting there in loopback; a PHY held in reset cannot link, and
+        // so cannot reflect at a switch that has no idea we gave up.
+        gpio_set_level(ETH_PHY_RST_GPIO, 0);
         return;
     }
 
-    // Must run before esp_eth_start() — see the comment block above.
+    // Must run before esp_eth_start(), and as soon after phy_reset_release() as
+    // possible — see the comment block above.
     ip101_clear_rx2tx_loopback(handle);
+    // Log the real number so a regression here is visible rather than assumed.
+    // Autonegotiation takes 1-3 s; anything approaching that is a bug.
+    ESP_LOGI(TAG, "PHY out of reset -> loopback cleared in %" PRId64 " ms",
+             (esp_timer_get_time() - t_release) / 1000);
 
     ESP_ERROR_CHECK(esp_netif_attach(netif, esp_eth_new_netif_glue(handle)));
 
@@ -138,3 +200,16 @@ void eth_start(void)
 }
 
 bool eth_is_up(void) { return s_up; }
+
+// See eth.h. The netif is deliberately left in place rather than destroyed: it is
+// attached to a live glue object, and mmk_default_netif() already ignores any
+// interface without an address, so an idle ETH_DEF holding 0.0.0.0 is inert.
+void eth_stand_down(void)
+{
+    if (!s_handle) return;
+    ESP_LOGI(TAG, "standing down wired (WiFi has the link)");
+    esp_eth_stop(s_handle);
+    gpio_set_level(ETH_PHY_RST_GPIO, 0);   // back in reset: cannot link, cannot reflect
+    s_handle = NULL;
+    s_up = false;
+}

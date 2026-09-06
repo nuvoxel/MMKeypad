@@ -283,14 +283,49 @@ void app_main(void)
     //
     // Deliberately NOT both at once — two interfaces on one LAN means two IPs,
     // ambiguous ARP and SDDP announcing twice.
+    //
+    // g_settings.net_transport pins that choice when Auto is wrong for the site:
+    // 1 = Wi-Fi only, 2 = Ethernet only. It is read HERE, once, and applying it
+    // needs a restart. That is deliberate rather than lazy -- switching live means
+    // tearing down a netif with the TCP server, SDDP and SIP already bound to it,
+    // and the invariant above (never two interfaces at once) is exactly what makes
+    // that teardown hard to get right. A setting the user changes perhaps twice in
+    // a panel's life does not justify that risk.
+    const uint8_t transport = g_settings.net_transport;
 #if MMK_NET_ETH
-    eth_start();
+    if (transport != 1) eth_start();
 #endif
 #if MMK_NET_WIFI
 #if MMK_NET_ETH
-    if (!eth_is_up())
+    if (!eth_is_up()) {
+        // Wired lost (or was never there). Stop it before WiFi comes up: eth_start()
+        // returns after its 8 s DHCP timeout but leaves the driver running, so a lease
+        // arriving late would land a SECOND address on the device — the exact "two IPs,
+        // ambiguous ARP, SDDP announcing twice" state the invariant above forbids, and
+        // the panel would silently change the address it advertises mid-life. On the
+        // product the cable IS the power, so wired-arrives-late cannot really happen;
+        // where it can (bench, USB power), a reboot picks it up.
+        eth_stand_down();
+        if (transport == 2) {
+            // Pinned to Ethernet and it never came up. Offer onboarding anyway, so a
+            // dead switch port is recoverable without pulling the panel off the wall —
+            // but ONLY the QR/portal, never saved credentials, or the pin would be
+            // undone by a bad cable rather than by a person.
+            ESP_LOGW(TAG, "Ethernet pinned but never came up — offering setup for recovery");
+            wifi_start_onboarding();
+            if (wifi_is_up()) {
+                // Someone stood at the panel and provisioned it: honour that over the pin.
+                ESP_LOGW(TAG, "provisioned over WiFi — clearing the Ethernet pin");
+                g_settings.net_transport = 0;
+                settings_save();
+            }
+        } else {
+            wifi_start();
+        }
+    }
+#else
+    wifi_start();
 #endif
-        wifi_start();
 #endif
 
 #ifdef MMK_C6_OTA

@@ -374,6 +374,8 @@ static void stop_portal(void)
 }
 
 
+static void run_onboarding(void);
+
 void wifi_start(void)
 {
     s_eg = xEventGroupCreate();
@@ -440,11 +442,17 @@ void wifi_start(void)
     if (esp_wifi_get_config(WIFI_IF_STA, &saved) == ESP_OK && saved.sta.ssid[0]) {
         if (try_sta((char *)saved.sta.ssid, (char *)saved.sta.password, 15000)) return;
     }
-    // 3) First boot / failed: run the onboarding paths until connected. On BLE
-    //    boards we offer BOTH the ESP BLE-provisioning path AND the softAP captive
-    //    portal at once — the user picks whichever they prefer, and BIT_CONNECTED
-    //    (set on IP_EVENT_STA_GOT_IP) fires from whichever path wins. On non-BLE
-    //    boards it's portal-only, exactly as before.
+    // 3) First boot / failed: run the onboarding paths until connected.
+    run_onboarding();
+}
+
+// The onboarding half of wifi_start(), split out so a panel pinned to Ethernet can
+// reach it WITHOUT the saved-credential step above. On BLE boards we offer BOTH the
+// ESP BLE-provisioning path AND the softAP captive portal at once — the user picks
+// whichever they prefer, and BIT_CONNECTED (set on IP_EVENT_STA_GOT_IP) fires from
+// whichever path wins. On non-BLE boards it's portal-only, exactly as before.
+static void run_onboarding(void)
+{
 #ifdef MMK_HAS_BLE_PROV
     // Offer BOTH paths concurrently (C6 boards have the RAM): BLE app provisioning
     // AND the softAP captive portal. The pop = the 6-hex MAC suffix of the SSID
@@ -466,5 +474,12 @@ void wifi_start(void)
     stop_portal();                 // tear down softAP + captive DNS
     if (lvgl_port_lock(0)) { ui_hide_setup(); lvgl_port_unlock(); }
 }
+
+// Onboarding WITHOUT the saved-credential step -- the recovery path for a panel
+// pinned to Ethernet whose port is dead. Going through wifi_start() there would
+// silently rejoin a remembered SSID, which is precisely what pinning exists to
+// prevent; this offers only the QR/portal, so the panel joins WiFi only
+// because someone stood in front of it and provisioned it.
+void wifi_start_onboarding(void) { run_onboarding(); }
 
 bool wifi_is_up(void) { return s_up; }
