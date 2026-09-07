@@ -17,6 +17,7 @@
  *     MMK_ROT=0|1|2       pin the now-playing bar's rotating line
  *     MMK_IC=1            open the intercom target picker
  *     MMK_CALL=<event>    call screen: incoming | outgoing | active
+ *     MMK_SETTINGS=1      the Settings overlay
  *     MMK_CALLPEER=<name> who is calling (default "Front Door")
  */
 #include <stdio.h>
@@ -254,6 +255,10 @@ int main(int argc, char **argv)
     }
     if (env_int("MMK_ROOMS", 0)) ui_show_rooms_panel();
     if (env_int("MMK_IC", 0)) ui_show_intercom_panel();
+    /* Settings lives on lv_layer_top() like setup/call, so it needs the same
+     * snapshot root -- off the active screen it renders invisibly. */
+    const bool settings_scene = env_int("MMK_SETTINGS", 0) != 0;
+    if (settings_scene) ui_show_settings_panel();
     const char *call_ev = getenv("MMK_CALL");
     const bool call_scene = (call_ev && *call_ev);
     if (call_scene) {
@@ -266,7 +271,7 @@ int main(int argc, char **argv)
 
     /* The call overlay lives on lv_layer_top() (like the setup screen), so it has
      * to be snapshotted there -- off the active screen it renders invisibly. */
-    lv_obj_t *root = (setup_scene || call_scene) ? lv_layer_top() : lv_screen_active();
+    lv_obj_t *root = (setup_scene || call_scene || settings_scene) ? lv_layer_top() : lv_screen_active();
     lv_obj_update_layout(root);
     lv_refr_now(disp);
 

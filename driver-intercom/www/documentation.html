@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media Keypad Intercom — NuVoxel</title>
+<style>
+
+  :root { --navy:#12315f; --blue:#3a7bd5; --green:#8dc63f; --ink:#1a2530; --muted:#5b6b7b; }
+  * { box-sizing: border-box; }
+  /* Composer renders this in a WIDE, short pane. A 760px centred column left huge
+     empty margins either side and pushed everything below the fold, so the page is
+     full-bleed with a generous cap, and the masthead is a compact row rather than a
+     tall centred block. */
+  body { margin:0; font:14px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+         color:var(--ink); background:#fff; }
+  .wrap { max-width:1180px; margin:0 auto; padding:10px 20px 32px; }
+  header { display:flex; align-items:center; gap:14px; border-bottom:2px solid var(--green);
+           padding:0 0 8px; margin-bottom:14px; flex-wrap:wrap; }
+  header img { width:150px; height:auto; flex:none; }
+  .titles { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; color:var(--navy); }
+  .sub { color:var(--muted); margin:0; font-size:13px; }
+  h2 { font-size:14px; margin:18px 0 6px; color:var(--navy); text-transform:uppercase;
+       letter-spacing:.04em; }
+  code { background:#eef2f7; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  table { border-collapse:collapse; width:100%; margin:4px 0 8px; }
+  th,td { text-align:left; padding:5px 10px; border-bottom:1px solid #e2e8f0; vertical-align:top; }
+  th { color:var(--navy); font-weight:600; width:210px; white-space:nowrap; }
+  ul { margin:4px 0; padding-left:18px; }
+  li { margin:2px 0; }
+  p { margin:6px 0; }
+  .note { background:#eef6ff; border-left:3px solid var(--blue); padding:8px 12px;
+          border-radius:5px; margin:8px 0; }
+  .warn { background:#fff6e8; border-left:3px solid #e0a032; padding:8px 12px;
+          border-radius:5px; margin:8px 0; }
+  /* Two columns on a wide pane — the reason the width was being wasted. */
+  .cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(430px,1fr)); gap:0 34px; }
+
+  .links { display:flex; gap:10px; margin-left:auto; flex:none; align-items:center; }
+  .links a { display:inline-flex; align-items:center; gap:6px; text-decoration:none;
+             font-size:12px; font-weight:600; padding:5px 11px; border-radius:6px;
+             border:1px solid #d4dce6; color:var(--navy); background:#f7f9fc; }
+  .links a:hover { background:#eef2f7; border-color:#b9c6d6; }
+  .links a.coffee { background:#fff3d6; border-color:#e6c98a; color:#7a5a12; }
+  .links svg { width:14px; height:14px; flex:none; }
+  footer a { color:var(--blue); text-decoration:none; }
+  footer a:hover { text-decoration:underline; }
+  footer { color:var(--muted); font-size:11.5px; margin-top:22px; border-top:1px solid #e2e8f0;
+           padding-top:8px; }
+
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="nuvoxel-logo.png" alt="NuVoxel">
+    <div class="titles">
+      <h1>Media Keypad Intercom</h1>
+      <p class="sub">SIP intercom endpoint for a NuVoxel Media Keypad</p>
+    </div>
+    <div class="links"><a href="https://github.com/nuvoxel/MMKeypad" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.120 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.20 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a><a class="coffee" href="https://buymeacoffee.com/nuvoxel" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 3h13v2H4V3zm0 4h13a3 3 0 0 1 3 3v1a4 4 0 0 1-4 4h-.2A6 6 0 0 1 10 19H9a6 6 0 0 1-5-5.9V7zm2 2v4.1A4 4 0 0 0 9 17h1a4 4 0 0 0 4-3.9V9H6zm10 0v3h.5A2.5 2.5 0 0 0 18 10.5V10a1 1 0 0 0-1-1h-1zM3 21h16v2H3v-2z"/></svg>Buy me a coffee</a></div>
+  </header>
+
+  <p>This driver gives a NuVoxel Media Keypad its <strong>intercom endpoint</strong>: SIP
+  registration, intercom calls, announcements and door-station handling. It is a companion to
+  the <strong>Media Keypad</strong> driver &mdash; one of each, per panel.</p>
+
+  <div class="warn"><strong>It is a separate driver on purpose.</strong> A driver's proxy set is
+  frozen once installed, so folding an intercom proxy into the keypad driver would corrupt every
+  project that already had one. Add both drivers, then run <strong>Find and Bind Intercom</strong>
+  on the keypad driver to link them.</div>
+
+  <div class="cols">
+  <div>
+  <h2>Installation</h2>
+  <ul>
+    <li>Add the <em>Media Keypad</em> driver first and let it pair with the panel.</li>
+    <li>Add this driver, in the <strong>same room</strong>.</li>
+    <li>On the keypad driver, run <strong>Actions &rarr; Find and Bind Intercom</strong>. It
+        prefers an instance in its own room.</li>
+    <li>The Communications agent picks the endpoint up on its own. Registering is not the same as
+        being callable &mdash; if it registers but callers get "Can't find user", the agent has not
+        re-scanned yet.</li>
+  </ul>
+
+  <h2>Door Actions</h2>
+  <p>When a <strong>door station</strong> calls the panel, the call screen can show up to two extra
+  buttons &mdash; typically <em>Unlock</em> and <em>Open Gate</em>.</p>
+  <table>
+    <tr><th>Door Action 1 Label</th><td>Text for the first button, e.g. <code>Unlock</code>.
+      Blank = no button.</td></tr>
+    <tr><th>Door Action 2 Label</th><td>Text for the second button, e.g. <code>Open Gate</code>.
+      Blank = no button.</td></tr>
+  </table>
+  <p>The buttons do nothing by themselves. Give them a label here, then in
+  <strong>Programming</strong> handle this driver's <strong>Door Action 1</strong> /
+  <strong>Door Action 2</strong> events and drive whatever you want &mdash; a lock relay, a gate,
+  a scene. The <code>LAST_DOOR_PEER</code> variable holds <em>which</em> door station the call came
+  from, so one event can serve several doors.</p>
+
+  <div class="note">They only appear on calls from a peer the Director reports as a door station,
+  never on a room-to-room intercom call.</div>
+  </div>
+
+  <div>
+  <h2>Properties</h2>
+  <table>
+    <tr><th>Door Action 1 / 2 Label</th><td>See above.</td></tr>
+    <tr><th>Debug Logging</th><td>Where this driver's diagnostics go: Composer's Lua output, the
+      director log, both, or off.</td></tr>
+  </table>
+
+  <h2>Actions</h2>
+  <table>
+    <tr><th>Re-register SIP</th><td>Force a fresh SIP registration and re-push the account to the
+      panel. This is the right place to fix SIP &mdash; the keypad driver's <em>Re-link Intercom</em>
+      only re-announces the pairing.</td></tr>
+  </table>
+
+  <h2>Events</h2>
+  <table>
+    <tr><th>Door Action 1 / 2</th><td>Fired when someone taps that button on a door-station call.
+      Read <code>LAST_DOOR_PEER</code> to know which door.</td></tr>
+  </table>
+
+  <h2>The standard intercom properties</h2>
+  <p>The <em>Properties</em> page above the driver's own settings is Control4's stock intercom
+  endpoint page (Appearance, Behavior, Audio Control, SIP Information). Those are handled by the
+  intercom proxy, and the ones that apply here work as they do on any Control4 endpoint &mdash;
+  Play Door Chime, Do Not Disturb, Auto Answer, Monitor Mode, and the ringer / speaker / microphone
+  levels all reach the panel.</p>
+  <div class="note"><strong>Custom Button 1 and 2</strong> on that stock page are <em>not</em> wired
+  up in this driver &mdash; use <strong>Door Action 1 / 2</strong> above instead. Video-specific
+  options (Send Video, Alternate Camera) do nothing: these panels are audio-only.</div>
+  </div>
+  </div>
+
+  <footer>&copy; 2026 NuVoxel &middot; <a href="https://github.com/nuvoxel/MMKeypad" target="_blank" rel="noopener">github.com/nuvoxel/MMKeypad</a> &middot; open source, Apache-2.0 &middot; <a href="https://buymeacoffee.com/nuvoxel" target="_blank" rel="noopener">buy me a coffee</a></footer>
+</div>
+</body>
+</html>

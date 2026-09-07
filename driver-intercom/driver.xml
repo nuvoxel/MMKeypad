@@ -52,6 +52,12 @@
     <is_doorstation>false</is_doorstation>
     <has_camera>false</has_camera>
     <has_display>false</has_display>
+    <!-- Stays false, and the stock "Custom Buttons" box stays greyed. Verified against
+         Control4's own control4_doorstation.c4i, which pairs has_buttons=true with
+         is_doorstation=true: those buttons are the ones a DOOR STATION OFFERS to whoever
+         it calls. This panel is the callee, not a door station, so claiming the capability
+         would be a lie, and Composer greys the box anyway without is_doorstation.
+         The buttons we want are the CALLING door's, discovered per call. See Door Actions. -->
     <has_buttons>false</has_buttons>
     <has_dial_pad_ui>false</has_dial_pad_ui>
     <has_play_door_chime>true</has_play_door_chime>

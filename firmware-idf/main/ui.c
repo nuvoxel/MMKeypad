@@ -3558,6 +3558,11 @@ static void setup_toggle_cb(lv_event_t *e)
     setup_build();   // just swaps the QR/hint; BLE + softAP run concurrently already
 }
 
+// Public entry so the headless sim (and any programmatic caller) can open Settings
+// without faking a touch event -- same reason ui_show_rooms_panel/
+// ui_show_intercom_panel exist.
+void ui_show_settings_panel(void) { ui_show_settings(); }
+
 void ui_show_setup(const char *ap_name, const char *ap_pass, const char *pop)
 {
     if (s_setup) return;

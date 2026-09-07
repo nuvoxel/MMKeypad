@@ -244,7 +244,7 @@
       <!-- "Halo": the onboard RGB LED, used as a nightlight/accent + ring indicator. -->
       <property><name>Halo</name><type>LABEL</type><default>Halo</default></property>
       <property>
-        <name>Halo Color</name>
+        <name>Halo Idle Color</name>
         <type>LIST</type>
         <items>
           <item>Off</item><item>White</item><item>Warm White</item><item>Blue</item>
@@ -253,9 +253,9 @@
         </items>
         <default>Blue</default>
         <readonly>false</readonly>
-      <tooltip>Idle color of the onboard RGB "halo" LED (nightlight / design accent).</tooltip></property>
+      <tooltip>The halo's RESTING colour - what it shows sitting idle on the wall (nightlight / design accent). Same physical LED as Halo Call Color; they just apply at different times.</tooltip></property>
       <property>
-        <name>Halo Ring Color</name>
+        <name>Halo Call Color</name>
         <type>LIST</type>
         <items>
           <item>Off</item><item>White</item><item>Warm White</item><item>Blue</item>
@@ -264,7 +264,7 @@
         </items>
         <default>Blue</default>
         <readonly>false</readonly>
-      <tooltip>Color the halo LED breathes/pulses while an intercom call is ringing.</tooltip></property>
+      <tooltip>The colour the halo pulses WHILE AN INTERCOM CALL IS RINGING. (This was "Halo Ring Color", which read as the colour of the LED ring - it never meant that.) Returns to Halo Idle Color when the call ends.</tooltip></property>
       <property>
         <name>Halo Brightness</name>
         <type>LIST</type>
@@ -289,7 +289,7 @@
         <maximum>10000</maximum>
         <default>1000</default>
         <readonly>false</readonly>
-      </property>
+      <tooltip>How often the driver re-reads the room's media state (volume, source, now-playing) when Control4 is not pushing events. Only used while the room is ON and playing; idle rooms poll far slower. Lower = snappier screen, more Director load. 1000 is the default and rarely needs changing.</tooltip></property>
       <property>
         <name>Debug Logging</name>
         <type>LIST</type>
@@ -301,7 +301,7 @@
         </items>
         <default>Print</default>
         <readonly>false</readonly>
-      </property>
+      <tooltip>Where this driver's diagnostic output goes: Print = Composer's Lua output, Log = the director log, or both. Off is quietest. Turn it up when chasing a problem; it does not change what the keypad does.</tooltip></property>
       <property>
         <name>Device MAC Override</name>
         <type>STRING</type>
@@ -391,10 +391,20 @@
       <action>
         <name>Identify Device</name>
         <command>IdentifyDevice</command>
+        <description>Flash a full-screen "M Keypad" splash on the panel for a few seconds. Tells you WHICH physical keypad this driver instance is talking to - the one thing you cannot work out from Composer when several are installed.</description>
       </action>
       <action>
         <name>Reconnect</name>
         <command>Reconnect</command>
+        <description>Drop and re-dial the network link to the keypad. Use when the driver shows offline but the panel is reachable (after a network change, or a driver reload that left the link stale). Does not change pairing or settings.</description>
+      </action>
+      <!-- The intercom lives in a separate driver, so a keypad added on its own has no
+           intercom until this link is made. It was previously only makeable by hand on
+           the Connections page, and nothing told you it was missing. -->
+      <action>
+        <name>Find and Bind Intercom</name>
+        <command>BindIntercomAuto</command>
+        <description>Link this keypad to its companion NuVoxel Keypad Intercom driver, preferring one in the same room. The intercom is a SEPARATE driver that must already be added to the project - this only makes the connection between them. Without it the panel has media but no intercom, announcements or door-station calls.</description>
       </action>
       <action>
         <name>Forget Device</name>
@@ -402,17 +412,29 @@
         <description>Unpair this driver from its keypad: clears the remembered hardware id, MAC, IP and network binding, then reopens discovery. Needed when swapping in DIFFERENT hardware (RMA, spare, moving the driver to another panel) — the driver refuses a keypad whose hardware id does not match the one it paired with.</description>
       </action>
 
-      <!-- Re-provision the auto-generated SIP account to both the proxy and the
-           device (absorbed from the retired companion intercom driver). -->
+      <!-- NOT SIP re-registration: SIP belongs to the companion intercom driver. This
+           re-announces us over the relay so that driver re-provisions the panel. The old
+           name was left over from when the intercom was absorbed into this driver, and
+           read as if this were the place to fix SIP. -->
       <action>
-        <name>Re-register SIP</name>
+        <name>Re-link Intercom</name>
         <command>ReRegister</command>
+        <description>Re-announce this keypad to the bound intercom driver so it re-sends the panel its SIP account and call settings. Use if the panel rings but cannot be called, or after changing intercom settings. SIP registration itself belongs to the NuVoxel Keypad Intercom driver - fix it there, not here.</description>
       </action>
 
       <!-- Remote firmware update. The panel downloads from this project's GitHub
            Releases itself; the Director only sends the trigger. Leave Version empty
            for "newest, if not already running it" - the device will not install an
            OLDER image unless a version is named, so this is safe to fire project-wide. -->
+      <!-- RebootDevice has existed as a programming command since the start, but there
+           was no button for it: an installer standing at a wedged panel had to write a
+           line of Programming to do the one thing that fixes it. -->
+      <action>
+        <name>Reboot Keypad</name>
+        <command>RebootDevice</command>
+        <description>Restart the keypad. Useful after a driver reload leaves the link in a bad state, or to recover a panel that is reachable but not behaving. Settings, pairing and firmware are untouched.</description>
+      </action>
+
       <action>
         <name>Update Firmware (newest)</name>
         <command>UpdateFirmware</command>
@@ -512,13 +534,19 @@
       <classes><class><classname>KEYPAD</classname></class></classes>
     </connection>
     <!-- Per-button BUTTON_LINK bindings (CONTROL type 1) so each button is linkable
-         in Composer Connections, like a Control4 keypad. binding id 300+N -> button N. -->
-    <connection proxybindingid="5002"><id>301</id><type>1</type><connectionname>Button 1</connectionname><consumer>True</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
-    <connection proxybindingid="5002"><id>302</id><type>1</type><connectionname>Button 2</connectionname><consumer>True</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
-    <connection proxybindingid="5002"><id>303</id><type>1</type><connectionname>Button 3</connectionname><consumer>True</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
-    <connection proxybindingid="5002"><id>304</id><type>1</type><connectionname>Button 4</connectionname><consumer>True</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
-    <connection proxybindingid="5002"><id>305</id><type>1</type><connectionname>Button 5</connectionname><consumer>True</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
-    <connection proxybindingid="5002"><id>306</id><type>1</type><connectionname>Button 6</connectionname><consumer>True</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
+         in Composer Connections, like a Control4 keypad. binding id 300+N -> button N.
+         consumer=False (PROVIDER). These were consumers while buttons 7+ - created at
+         runtime with AddDynamicBinding(..., true, ...) - were providers, so Composer
+         listed the first six as Control INPUTS and the rest as OUTPUTS on the same
+         keypad. Control4's own room_control_keypad uses the provider form; this matches
+         it. Changing direction re-seats the binding, so existing button links must be
+         made again. -->
+    <connection proxybindingid="5002"><id>301</id><type>1</type><connectionname>Button 1</connectionname><consumer>False</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
+    <connection proxybindingid="5002"><id>302</id><type>1</type><connectionname>Button 2</connectionname><consumer>False</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
+    <connection proxybindingid="5002"><id>303</id><type>1</type><connectionname>Button 3</connectionname><consumer>False</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
+    <connection proxybindingid="5002"><id>304</id><type>1</type><connectionname>Button 4</connectionname><consumer>False</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
+    <connection proxybindingid="5002"><id>305</id><type>1</type><connectionname>Button 5</connectionname><consumer>False</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
+    <connection proxybindingid="5002"><id>306</id><type>1</type><connectionname>Button 6</connectionname><consumer>False</consumer><classes><class><classname>BUTTON_LINK</classname></class></classes></connection>
     <!-- Intercom relay PROVIDER (control binding 700). The companion
          NuVoxelKeypadIntercom driver (intercomproxy-primary, so the Communication
          agent enrolls it) consumes this; we forward its SIP/call JSON onto the device

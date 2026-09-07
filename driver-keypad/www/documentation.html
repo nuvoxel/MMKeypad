@@ -7,70 +7,151 @@
 <style>
   :root { --navy:#12315f; --blue:#3a7bd5; --green:#8dc63f; --ink:#1a2530; --muted:#5b6b7b; }
   * { box-sizing: border-box; }
-  body { margin:0; font:15px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-         color:var(--ink); background:#f5f7fa; }
-  .wrap { max-width:760px; margin:0 auto; padding:28px 24px 60px; }
-  header { text-align:center; padding:24px 0 8px; }
-  header img { width:min(360px,80%); height:auto; }
-  h1 { font-size:22px; margin:18px 0 2px; color:var(--navy); }
-  .sub { color:var(--muted); margin:0 0 8px; }
-  h2 { font-size:16px; margin:28px 0 8px; color:var(--navy);
-       border-bottom:2px solid var(--green); padding-bottom:4px; }
-  code { background:#e9eef4; padding:1px 5px; border-radius:4px; font-size:13px; }
-  table { border-collapse:collapse; width:100%; margin:6px 0; }
-  th,td { text-align:left; padding:7px 10px; border-bottom:1px solid #e2e8f0; vertical-align:top; }
-  th { color:var(--muted); font-weight:600; width:34%; }
-  ul { margin:6px 0; padding-left:20px; }
-  .note { background:#eef6ff; border-left:3px solid var(--blue); padding:10px 14px; border-radius:6px; margin:10px 0; }
-  footer { text-align:center; color:var(--muted); font-size:12px; margin-top:40px; }
+  /* Composer renders this in a WIDE, short pane. A 760px centred column left huge
+     empty margins either side and pushed everything below the fold, so the page is
+     full-bleed with a generous cap, and the masthead is a compact row rather than a
+     tall centred block. */
+  body { margin:0; font:14px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+         color:var(--ink); background:#fff; }
+  .wrap { max-width:1180px; margin:0 auto; padding:10px 20px 32px; }
+  header { display:flex; align-items:center; gap:14px; border-bottom:2px solid var(--green);
+           padding:0 0 8px; margin-bottom:14px; flex-wrap:wrap; }
+  header img { width:150px; height:auto; flex:none; }
+  .titles { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; color:var(--navy); }
+  .sub { color:var(--muted); margin:0; font-size:13px; }
+  h2 { font-size:14px; margin:18px 0 6px; color:var(--navy); text-transform:uppercase;
+       letter-spacing:.04em; }
+  code { background:#eef2f7; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  table { border-collapse:collapse; width:100%; margin:4px 0 8px; }
+  th,td { text-align:left; padding:5px 10px; border-bottom:1px solid #e2e8f0; vertical-align:top; }
+  th { color:var(--navy); font-weight:600; width:210px; white-space:nowrap; }
+  ul { margin:4px 0; padding-left:18px; }
+  li { margin:2px 0; }
+  p { margin:6px 0; }
+  .note { background:#eef6ff; border-left:3px solid var(--blue); padding:8px 12px;
+          border-radius:5px; margin:8px 0; }
+  .warn { background:#fff6e8; border-left:3px solid #e0a032; padding:8px 12px;
+          border-radius:5px; margin:8px 0; }
+  /* Two columns on a wide pane — the reason the width was being wasted. */
+  .cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(430px,1fr)); gap:0 34px; }
+
+  .links { display:flex; gap:10px; margin-left:auto; flex:none; align-items:center; }
+  .links a { display:inline-flex; align-items:center; gap:6px; text-decoration:none;
+             font-size:12px; font-weight:600; padding:5px 11px; border-radius:6px;
+             border:1px solid #d4dce6; color:var(--navy); background:#f7f9fc; }
+  .links a:hover { background:#eef2f7; border-color:#b9c6d6; }
+  .links a.coffee { background:#fff3d6; border-color:#e6c98a; color:#7a5a12; }
+  .links svg { width:14px; height:14px; flex:none; }
+  footer a { color:var(--blue); text-decoration:none; }
+  footer a:hover { text-decoration:underline; }
+  footer { color:var(--muted); font-size:11.5px; margin-top:22px; border-top:1px solid #e2e8f0;
+           padding-top:8px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <img src="nuvoxel-logo.png" alt="NuVoxel">
-    <h1>Media Keypad</h1>
-    <p class="sub">Control4 media keypad &amp; now-playing display</p>
+    <div class="titles">
+      <h1>Media Keypad</h1>
+      <p class="sub">Control4 media keypad &amp; now-playing display</p>
+    </div>
+    <div class="links"><a href="https://github.com/nuvoxel/MMKeypad" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.120 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.20 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a><a class="coffee" href="https://buymeacoffee.com/nuvoxel" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 3h13v2H4V3zm0 4h13a3 3 0 0 1 3 3v1a4 4 0 0 1-4 4h-.2A6 6 0 0 1 10 19H9a6 6 0 0 1-5-5.9V7zm2 2v4.1A4 4 0 0 0 9 17h1a4 4 0 0 0 4-3.9V9H6zm10 0v3h.5A2.5 2.5 0 0 0 18 10.5V10a1 1 0 0 0-1-1h-1zM3 21h16v2H3v-2z"/></svg>Buy me a coffee</a></div>
   </header>
 
-  <h2>Overview</h2>
   <p>The <strong>Media Keypad</strong> is a NuVoxel touchscreen media keypad. It shows the
   room's now-playing media (title, artist, cover art, transport, volume) and provides
-  programmable on-screen keypad buttons with RGB accent LEDs. SIP intercom, announcements
-  and door-station call handling are <strong>built in</strong> &mdash; the driver installs an
-  intercom endpoint of its own (shown beneath it in System Design), so there is no companion
-  driver to add and nothing to bind.</p>
+  programmable on-screen keypad buttons with RGB accent LEDs.</p>
 
+  <div class="warn"><strong>The intercom is a separate driver.</strong> Announcements, SIP
+  intercom and door-station calls need the <strong>NuVoxel Keypad Intercom</strong> driver
+  added to the project <em>as well</em>, and linked to this one. Add it, then run
+  <strong>Actions &rarr; Find and Bind Intercom</strong>. Until that link exists the panel
+  has media but no intercom &mdash; everything else still works, so it fails quietly.</div>
+
+  <div class="cols">
+  <div>
   <h2>Installation</h2>
   <ul>
-    <li>Power the keypad and connect it to the network (Wi-Fi setup via the on-device setup page).</li>
-    <li>The keypad advertises over <strong>SDDP</strong> — add it from Composer's discovered
-        devices, or add the <em>Media Keypad</em> driver and bind its <strong>Media Keypad
-        Network</strong> connection to the device.</li>
-    <li>Place the driver in the room whose media it should display.</li>
+    <li>Power the keypad and get it on the network (Ethernet, or Wi-Fi via the on-screen setup QR).</li>
+    <li>The keypad advertises over <strong>SDDP</strong> &mdash; add it from Composer's
+        discovered devices, or add the <em>Media Keypad</em> driver and let it find the panel
+        itself (it learns which unit is its own on first connection and re-binds if the IP moves).</li>
+    <li>Place the driver in the room whose media it should display. Moving it later is picked
+        up automatically.</li>
+    <li>Add the <em>NuVoxel Keypad Intercom</em> driver and run <strong>Find and Bind Intercom</strong>.</li>
   </ul>
+
+  <h2>Actions</h2>
+  <table>
+    <tr><th>Identify Device</th><td>Flashes a full-screen splash on the panel for a few seconds
+      &mdash; tells you <em>which</em> physical keypad this instance drives.</td></tr>
+    <tr><th>Reconnect</th><td>Drops and re-dials the link. For when the driver reads offline but
+      the panel is reachable. Changes no settings.</td></tr>
+    <tr><th>Forget Device</th><td>Unpairs this driver from its keypad (clears hardware id, MAC, IP
+      and binding) and reopens discovery. Only for <em>swapping in different hardware</em> &mdash;
+      an RMA, a spare, or moving the driver to another panel.</td></tr>
+    <tr><th>Find and Bind Intercom</th><td>Links this keypad to its companion intercom driver,
+      preferring one in the same room.</td></tr>
+    <tr><th>Re-link Intercom</th><td>Re-announces this keypad to the bound intercom driver so it
+      re-sends the SIP account and call settings. <em>Not</em> SIP registration &mdash; that lives
+      in the intercom driver.</td></tr>
+    <tr><th>Reboot Keypad</th><td>Restarts the panel. Settings, pairing and firmware are untouched.</td></tr>
+    <tr><th>Update Firmware (newest)</th><td>Tells the panel to update itself from GitHub Releases.
+      Does nothing if it is already current.</td></tr>
+  </table>
 
   <h2>Connections</h2>
   <table>
-    <tr><th>Media Keypad Network</th><td>IP binding to the keypad (the driver dials the device).</td></tr>
-    <tr><th>Button 1–6</th><td>Link each on-screen keypad button to a device/scene, like a physical Control4 keypad.</td></tr>
-    <tr><th>INTERCOM</th><td>The built-in intercom endpoint. Managed by the Communications agent; no manual binding needed.</td></tr>
+    <tr><th>Media Keypad Network</th><td>The link to the panel. The driver dials the device.</td></tr>
+    <tr><th>Button 1&ndash;N</th><td>Link each on-screen button to a device or scene, like a physical
+      keypad. How many exist depends on the panel size.</td></tr>
+    <tr><th>NuVoxel Keypad Intercom Relay</th><td>Carries intercom traffic to the companion driver.
+      Made for you by <em>Find and Bind Intercom</em>.</td></tr>
   </table>
+  </div>
 
-  <h2>Key properties</h2>
+  <div>
+  <h2>Properties worth knowing</h2>
   <table>
     <tr><th>Sources</th><td>Which sources the on-screen picker offers: Listen, Watch, or Both.</td></tr>
-    <tr><th>Display Orientation / Layout</th><td>Screen rotation and now-playing layout (Cover / Fit / Compact).</td></tr>
-    <tr><th>Active / Idle Brightness</th><td>Backlight while active and after the idle timeout (Idle = <em>Screen off</em> turns the display fully dark; a touch wakes it).</td></tr>
-    <tr><th>Idle Timeout</th><td>How long after the last touch the screen dims/sleeps. Never dims while media is playing.</td></tr>
-    <tr><th>Button Style / Background / Halo</th><td>Keypad button appearance, background gradient, and the RGB accent LED.</td></tr>
+    <tr><th>Display Orientation / Layout</th><td>Rotation, and the now-playing layout (Cover / Fit / Compact).</td></tr>
+    <tr><th>Active / Idle Brightness</th><td>Backlight while in use, and after the idle timeout.
+      Idle = <em>Screen off</em> goes fully dark; a touch wakes it.</td></tr>
+    <tr><th>Idle Timeout</th><td>How long after the last touch the screen dims. Never dims while
+      media is playing.</td></tr>
+    <tr><th>Halo Idle Color</th><td>The halo's <strong>resting</strong> colour &mdash; what it shows
+      sitting idle on the wall (nightlight / design accent).</td></tr>
+    <tr><th>Halo Call Color</th><td>The colour it pulses <strong>while an intercom call is
+      ringing</strong>. Same physical halo as Halo Idle Color, at a different
+      time. (Renamed from "Halo Ring Color", which read as the colour of the LED ring.)</td></tr>
+    <tr><th>Halo Brightness</th><td>Overall halo brightness, as a percentage.</td></tr>
+    <tr><th>Room Poll Interval (ms)</th><td>How often the driver re-reads room media state when
+      Control4 is not pushing events. Only while the room is on and playing; idle rooms poll far
+      slower. Lower = snappier, more Director load. 1000 is fine.</td></tr>
+    <tr><th>Debug Logging</th><td>Where diagnostics go: Composer's Lua output, the director log,
+      both, or off. Does not change behaviour.</td></tr>
+    <tr><th>Device MAC Override</th><td>Normally blank. The driver finds its own panel. Set a MAC
+      only to force-bind one specific unit.</td></tr>
   </table>
 
-  <div class="note">Firmware updates are done on the keypad itself: <strong>Settings &rarr;
-  Check for update</strong> lists the images published on the project's GitHub Releases and
-  installs the one you pick. USB flashing also works.</div>
+  <h2>Firmware</h2>
+  <p>Two ways, both pulling from this project's GitHub Releases:</p>
+  <ul>
+    <li><strong>Remotely</strong> &mdash; <em>Actions &rarr; Update Firmware (newest)</em>, or the
+      <code>UpdateFirmware</code> programming command, which takes a <code>Version</code>. Blank
+      means newest; naming a version is the only way to go <em>backwards</em>, for rolling back a
+      bad release.</li>
+    <li><strong>On the panel</strong> &mdash; <em>Settings &rarr; Check for update</em>.</li>
+  </ul>
+  <p>A panel will never install an older image unless a version is named, so the blank form is safe
+  to fire at a whole project. The panel downloads directly over TLS &mdash; nothing passes through
+  the Director.</p>
+  </div>
+  </div>
 
-  <footer>© 2026 NuVoxel · shop.nuvoxel.com</footer>
+  <footer>&copy; 2026 NuVoxel &middot; <a href="https://github.com/nuvoxel/MMKeypad" target="_blank" rel="noopener">github.com/nuvoxel/MMKeypad</a> &middot; open source, Apache-2.0 &middot; <a href="https://buymeacoffee.com/nuvoxel" target="_blank" rel="noopener">buy me a coffee</a></footer>
 </div>
 </body>
 </html>

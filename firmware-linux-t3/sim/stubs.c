@@ -89,6 +89,26 @@ const char *device_power_source(void)   { return "wall"; }
 const char *device_driver_version(void) { return "sim-drv"; }
 void        device_ota_check_now(void)  { }
 
+/* Settings now shows Link / Discovery name, and its firmware overlay drives
+ * fwupdate.c. Neither belongs in a headless renderer (one wants a live netif, the
+ * other HTTPS to GitHub), so stub them with representative values -- the point is
+ * to lay out the real strings at the real lengths. */
+#include "fwupdate.h"
+const char *net_active_transport(void) { return "Ethernet"; }
+const char *sddp_host(void)            { return "WS43-e8f60ae4207c"; }
+
+static const fwupdate_rel_t s_sim_rel[] = {
+    { .version = "2026.09.06.002", .url = "", .size = 2710192, .current = true  },
+    { .version = "2026.09.06.001", .url = "", .size = 2705536, .current = false },
+    { .version = "2026.09.03.001", .url = "", .size = 2705536, .current = false },
+};
+void             fwupdate_start_fetch(void) { }
+fwupdate_state_t fwupdate_state(void)       { return FWU_READY; }
+int              fwupdate_count(void)       { return (int)(sizeof(s_sim_rel)/sizeof(s_sim_rel[0])); }
+const fwupdate_rel_t *fwupdate_get(int i)   { return (i >= 0 && i < fwupdate_count()) ? &s_sim_rel[i] : 0; }
+const char      *fwupdate_error(void)       { return ""; }
+void             fwupdate_apply(int i)      { (void)i; }
+
 /* ── embedded boot splash PNG ───────────────────────────────────────────────
  * ui_splash() references these asm-named symbols unconditionally (so they must
  * link) but the sim never calls it. A 1-byte dummy is enough -- mirrors the T3

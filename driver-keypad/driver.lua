@@ -190,6 +190,53 @@ function RelayStatus()
       tostring(gIntercom or "?"), gRelayRx, gRelayTx, gConnected and "connected" or "offline"))
   end)
 end
+-- Find the companion intercom driver in the project and bind our relay to it.
+--
+-- The intercom is a SEPARATE driver (see RELAY_BINDING above and the proxy-freeze
+-- note in driver.xml), which means a keypad added on its own has working media and
+-- silently no intercom until someone makes the Connections-page link by hand. That
+-- is not discoverable, and the documentation used to claim the endpoint was built
+-- in, so nobody went looking for it.
+--
+-- Prefer an instance in OUR room, then any unbound one, so a project with several
+-- keypads pairs the obvious way instead of grabbing a sibling's endpoint.
+function FindAndBindIntercom()
+  if relayCount() > 0 or gIntercom then
+    print("NuVoxelKeypad: intercom already bound (device " .. tostring(gIntercom or "via binding") .. ")")
+    RelayHello(); return
+  end
+  -- GetDevicesByC4iName wants the .c4z name, not .c4i.
+  local ok, list = pcall(function() return C4:GetDevicesByC4iName("NuVoxelKeypadIntercom.c4z") end)
+  if not ok or type(list) ~= "table" then
+    print("NuVoxelKeypad: no NuVoxel Keypad Intercom driver found in this project — add one first")
+    return
+  end
+  local myRoom, sameRoom, anyOne = tonumber(gRoom), nil, nil
+  for id in pairs(list) do
+    local n = tonumber(id)
+    if n then
+      anyOne = anyOne or n
+      local okr, r = pcall(function() return C4:RoomGetId(n) end)
+      if okr and myRoom and tonumber(r) == myRoom then sameRoom = sameRoom or n end
+    end
+  end
+  local pick = sameRoom or anyOne
+  if not pick then
+    print("NuVoxelKeypad: no NuVoxel Keypad Intercom driver found in this project — add one first")
+    return
+  end
+  local okb = pcall(function()
+    C4:Bind(myDeviceId(), RELAY_BINDING, pick, RELAY_BINDING, "MMKEYPAD_INTERCOM")
+  end)
+  if okb then
+    print("NuVoxelKeypad: bound intercom device " .. tostring(pick) ..
+          (sameRoom and " (same room)" or " (first found)"))
+    RelayHello()
+  else
+    print("NuVoxelKeypad: failed to bind intercom device " .. tostring(pick))
+  end
+end
+
 function RelayHello()   -- tell the bound intercom driver our device id
   local me = myDeviceId()
   for _, id in ipairs(relayTargets()) do
@@ -372,7 +419,7 @@ function OnPropertyChanged(prop)
       or prop == "Show Info Button" or prop == "Show Progress Bar"
       or prop == "Active Brightness" or prop == "Idle Timeout" or prop == "Idle Brightness" then
     if gConnected then pcall(PushState, true) end   -- device persists + applies live
-  elseif prop == "Halo Color" or prop == "Halo Ring Color" or prop == "Halo Brightness" then
+  elseif prop == "Halo Idle Color" or prop == "Halo Call Color" or prop == "Halo Brightness" then
     if gConnected then pcall(PushHalo) end
   end
 end
@@ -423,6 +470,8 @@ function ExecuteCommand(cmd, params)
   elseif cmd == "ReRegister" then
     -- SIP now lives in the companion intercom driver; re-hello so it re-provisions.
     RelayHello()
+  elseif cmd == "BindIntercomAuto" then
+    FindAndBindIntercom()
   elseif cmd == "PlayAnnouncement" then
     local text  = params and tostring(params.Text or "")
     local chime = not (params and tostring(params.Chime or "Yes") == "No")
@@ -785,13 +834,13 @@ local HALO_COLORS = {
 }
 function PushHalo()
   local function rgb(name) return HALO_COLORS[name or "Off"] or HALO_COLORS["Off"] end
-  local idle   = rgb(Properties and Properties["Halo Color"])
-  local ring   = rgb(Properties and Properties["Halo Ring Color"])
+  local idle   = rgb(Properties and Properties["Halo Idle Color"])
+  local ring   = rgb(Properties and Properties["Halo Call Color"])
   local bright = tonumber(Properties and Properties["Halo Brightness"]) or 50
   Send({ t = "halo", r = idle[1], g = idle[2], b = idle[3],
          pr = ring[1], pg = ring[2], pb = ring[3], bright = bright })
-  dbg("pushed halo: idle=" .. tostring(Properties and Properties["Halo Color"]) ..
-      " ring=" .. tostring(Properties and Properties["Halo Ring Color"]) .. " bright=" .. bright)
+  dbg("pushed halo: idle=" .. tostring(Properties and Properties["Halo Idle Color"]) ..
+      " ring=" .. tostring(Properties and Properties["Halo Call Color"]) .. " bright=" .. bright)
 end
 
 -- Named color -> "RRGGBB" hex, for the SetButtonLEDColor programming command (reuses
@@ -805,8 +854,8 @@ end
 -- Set Halo from Programming (SetHalo command). Overrides the idle color/brightness for
 -- this push; ring color stays the configured property. Blank args fall back to the props.
 function SendHalo(colorName, brightName)
-  local idle   = HALO_COLORS[tostring(colorName or "")] or HALO_COLORS[Properties and Properties["Halo Color"]] or {0, 0, 0}
-  local ring   = HALO_COLORS[Properties and Properties["Halo Ring Color"]] or idle
+  local idle   = HALO_COLORS[tostring(colorName or "")] or HALO_COLORS[Properties and Properties["Halo Idle Color"]] or {0, 0, 0}
+  local ring   = HALO_COLORS[Properties and Properties["Halo Call Color"]] or idle
   local bright = tonumber(brightName) or tonumber(Properties and Properties["Halo Brightness"]) or 50
   Send({ t = "halo", r = idle[1], g = idle[2], b = idle[3],
          pr = ring[1], pg = ring[2], pb = ring[3], bright = bright })
@@ -1228,7 +1277,7 @@ function ApplyManifestPropVisibility(mf)
   end
 
   show("Display Orientation", canRot)
-  for _, n in ipairs({ "Halo", "Halo Color", "Halo Ring Color", "Halo Brightness" }) do show(n, hasLed) end
+  for _, n in ipairs({ "Halo", "Halo Idle Color", "Halo Call Color", "Halo Brightness" }) do show(n, hasLed) end
   -- Intercom: install trigger + relay diagnostic — only on intercom-capable devices.
   -- Intercom rows: only on intercom-capable hardware. The intercomproxy sub-proxy
   -- itself always exists (proxies are fixed at install time and cannot be added or

@@ -38,6 +38,9 @@ trap 'rm -rf "$STAGE"' EXIT
 cp driver.lua driver.xml json.lua "$STAGE/"
 cp -R intercom_proxy "$STAGE/"
 [[ -d icons ]] && cp -R icons "$STAGE/"
+# www/ holds the Documentation tab's page. It was never staged OR zipped, so the tab
+# 404'd for the life of this driver — the file existed in neither place to notice.
+[[ -d www ]] && cp -R www "$STAGE/"
 sed -i '' -E "s/DRIVER_VERSION *= *\"[^\"]*\"/DRIVER_VERSION = \"${DVER}\"/" "$STAGE/driver.lua"
 sed -i '' -E "s#<version>[0-9]+</version>#<version>${IVER}</version>#"      "$STAGE/driver.xml"
 sed -i '' -E "s#<modified>[^<]*</modified>#<modified>${NOW}</modified>#"     "$STAGE/driver.xml"
@@ -51,6 +54,7 @@ rm -f "$OUT"
       driver.lua \
       json.lua \
       intercom_proxy/ \
+      $([[ -d www ]] && echo www/) \
       $([[ -d icons ]] && echo icons/) \
       -x '*.DS_Store' '*/.git/*' >/dev/null
 )
