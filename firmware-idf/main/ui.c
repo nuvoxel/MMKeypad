@@ -119,6 +119,9 @@ static const lv_font_t *g_fIconL  = &mmk_icons_34;
 #define G_CALL  "\xEE\x84\xB4"   // phone-call
 #define G_USERS "\xEE\x86\xA4"   // users (group / broadcast target)
 #define G_DOOR  "\xEE\x8F\x96"   // door-open (door-station target)
+#define G_SUN   "\xEE\x85\xB8"   // sun          (Settings > Display)
+#define G_WIFI  "\xEE\x86\xAE"   // wifi         (Settings > Network)
+#define G_TOOLS "\xEE\x85\x94"   // settings     (Settings > Diagnostics)
 #define G_MIC   "\xEE\x84\x98"   // mic
 
 // Friendly icon name (driver's "Button N Icon" list) -> Lucide glyph.
@@ -899,12 +902,16 @@ static lv_timer_t *s_fwCheckTimer;
 static lv_obj_t   *s_fwCheckLbl;
 // Live network rows on the Settings page — see onNetPoll() for why they are polled.
 // Declared here because onSettingsClose(), just below, tears them down.
+enum { PG_HOME = 0, PG_DISPLAY, PG_SOUND, PG_NETWORK, PG_DIAG, PG_ABOUT, PG_COUNT };
+static int s_setPage;          // which page is open; PG_HOME = the tile grid
+static lv_obj_t *s_tileVal[PG_COUNT];   // per-tile live value label (NULL when closed)
 static lv_obj_t   *s_netIpLbl;     // "IP address" value (NULL when the page is closed)
 static lv_obj_t   *s_netLinkLbl;   // "Link" value
 static lv_obj_t   *s_netC4Lbl;     // "Control4" value, C4 theme only
 static lv_obj_t   *s_netSddpLbl;   // "Discovery name" value — what Control4 binds against
 static lv_timer_t *s_netTimer;
 
+static void onSettingsBack(lv_event_t *e);
 static void onSettingsClose(lv_event_t *e) {
     (void)e;
     if (s_micTestTimer) { lv_timer_delete(s_micTestTimer); s_micTestTimer = NULL; }
@@ -1226,6 +1233,82 @@ static void onNetPoll(lv_timer_t *t) {
     set_row(s_netSddpLbl, host[0] ? host : "—", host[0] ? C_TEXT : C_SUBTLE);
     bool up = net_connected();
     set_row(s_netC4Lbl, up ? "Connected" : "Offline", up ? C_GREEN : 0xC85050);
+
+    // Tile values. Same timer, same cadence -- the grid should never disagree with
+    // the page behind it, which is the whole reason these are polled and not stamped.
+    char buf[40];
+    if (s_tileVal[PG_DISPLAY]) {
+        snprintf(buf, sizeof(buf), "Brightness %u%%", (unsigned)g_settings.brightness);
+        set_row(s_tileVal[PG_DISPLAY], buf, C_SUBTLE);
+    }
+    if (s_tileVal[PG_SOUND]) {
+        if (g_settings.muted) snprintf(buf, sizeof(buf), "Muted");
+        else                  snprintf(buf, sizeof(buf), "Volume %u%%", (unsigned)g_settings.ringer_volume);
+        set_row(s_tileVal[PG_SOUND], buf, C_SUBTLE);
+    }
+    if (s_tileVal[PG_NETWORK]) {
+        if (ip[0]) snprintf(buf, sizeof(buf), "%s  %s", tr[0] ? tr : "", ip);
+        else       snprintf(buf, sizeof(buf), "Offline");
+        set_row(s_tileVal[PG_NETWORK], buf, C_SUBTLE);
+    }
+    if (s_tileVal[PG_DIAG])  set_row(s_tileVal[PG_DIAG],  "Speaker, mic", C_SUBTLE);
+    if (s_tileVal[PG_ABOUT]) set_row(s_tileVal[PG_ABOUT], fw_version(), C_SUBTLE);
+}
+
+// ── Paged Settings ──────────────────────────────────────────────────────────
+// Settings used to be ONE scrolling column of cards with a NuVoxel wordmark and a
+// donation QR above the title -- so on a 1280x800 panel the first third of the
+// screen was a QR code and the word "Settings" sat below the fold, while the
+// content itself was a narrow ribbon down the middle of a very wide display.
+//
+// It is now a landing page of large tiles, one page per section. Rationale:
+//   * a wall panel is used standing up, often briefly -- big targets beat density
+//   * one topic per screen means no hunting through a long scroll
+//   * the tile grid reflows by width, so the 4.3" portrait/landscape pair and the
+//     T3 7"/10" all get a sensible number of columns from the same code
+//   * branding and the coffee QR move to About, where someone goes to look for
+//     them, instead of taxing every visit to Settings
+static lv_obj_t *s_pageSink;   // hidden bin: cards for pages we are not showing
+
+// Cards are built for every page on every open; only the current page's are parented
+// into the visible overlay. Keeps all the existing widget wiring (live-updating rows,
+// cycler field pointers) working untouched, at the cost of building a few small
+// objects that are never drawn.
+static lv_obj_t *settings_card_page(lv_obj_t *ov, int page, const char *title) {
+    return settings_card(page == s_setPage ? ov : s_pageSink, title);
+}
+
+static void settings_teardown(void) {
+    if (s_micTestTimer) { lv_timer_delete(s_micTestTimer); s_micTestTimer = NULL; }
+    s_micTestLbl = NULL;
+    if (s_fwCheckTimer) { lv_timer_delete(s_fwCheckTimer); s_fwCheckTimer = NULL; }
+    s_fwCheckLbl = NULL;
+    if (s_netTimer) { lv_timer_delete(s_netTimer); s_netTimer = NULL; }
+    s_netIpLbl = NULL; s_netLinkLbl = NULL; s_netC4Lbl = NULL;
+    s_netSddpLbl = NULL;
+    for (int i = 0; i < PG_COUNT; i++) s_tileVal[i] = NULL;
+#if MMK_NET_ETH && MMK_NET_WIFI
+    s_netNoteLbl = NULL;
+#endif
+    if (s_settings) { lv_obj_del(s_settings); s_settings = NULL; }
+    s_pageSink = NULL;   // a child of the overlay; deleted with it
+}
+
+static void ui_show_settings(void);
+static void settings_goto(int page) { settings_teardown(); s_setPage = page; ui_show_settings(); }
+static void onSettingsTile(lv_event_t *e) {
+    settings_goto((int)(intptr_t)lv_event_get_user_data(e));
+}
+
+static const char *settings_page_title(int page) {
+    switch (page) {
+        case PG_DISPLAY: return "Display";
+        case PG_SOUND:   return "Sound";
+        case PG_NETWORK: return "Network";
+        case PG_DIAG:    return "Diagnostics";
+        case PG_ABOUT:   return "About";
+        default:         return "Settings";
+    }
 }
 
 static void ui_show_settings(void) {
@@ -1251,7 +1334,12 @@ static void ui_show_settings(void) {
     // scrollbar instead of being caught in layout.
     lv_obj_set_scroll_dir(ov, LV_DIR_VER);
 
-    settings_add_logo(ov);   // NuVoxel wordmark banner, above the content
+    // Off-screen bin for cards belonging to other pages (see settings_card_page).
+    s_pageSink = lv_obj_create(ov);
+    lv_obj_remove_style_all(s_pageSink);
+    lv_obj_set_size(s_pageSink, 0, 0);
+    lv_obj_add_flag(s_pageSink, LV_OBJ_FLAG_HIDDEN);
+
 
     // Header: BACK button + title, the same pattern every other full-screen page uses
     // (rooms, keypad, intercom, favourites). This was a small close X in the opposite
@@ -1268,21 +1356,95 @@ static void ui_show_settings(void) {
     {
         int bsz = (s_uiscale < 0.99f) ? 30 : (int)(30 * s_uiscale);
         lv_obj_t *back = iconBtnImg(hdr, ICON_BACK, bsz, C_BTN, LV_OPA_COVER, 0xFFFFFF,
-                                    onSettingsClose, NULL);
+                                    onSettingsBack, NULL);
         // Touch target beyond the drawn circle -- cheap insurance on the smaller panels.
         if (back) lv_obj_set_ext_click_area(back, (int)(12 * s_uiscale));
     }
     lv_obj_t *t = lv_label_create(hdr);
-    lv_label_set_text(t, "Settings");
+    lv_label_set_text(t, settings_page_title(s_setPage));
     lv_obj_set_style_text_color(t, lv_color_hex(C_TEXT), 0);   // X4 titles are white, not green
     lv_obj_set_style_text_font(t, F24, 0);
+
+    // ── Landing: a grid of large tiles ──────────────────────────────────────────
+    // Sized by available width rather than by panel model, so one rule covers the
+    // 4.3" in portrait (2 columns) and landscape (3), and the T3 7"/10" (3-4). The
+    // minimum is what a finger needs, not what the text needs.
+    if (s_setPage == PG_HOME) {
+        static const struct { const char *name; const char *glyph; int page; } TILES[] = {
+            { "Display",     G_SUN,   PG_DISPLAY },
+            { "Sound",       G_VOL,   PG_SOUND   },
+            { "Network",     G_WIFI,  PG_NETWORK },
+            { "Diagnostics", G_TOOLS, PG_DIAG    },
+            { "About",       G_INFO,  PG_ABOUT   },
+        };
+        lv_obj_t *grid = lv_obj_create(ov);
+        lv_obj_remove_style_all(grid);
+        lv_obj_set_width(grid, LV_PCT(100));
+        lv_obj_set_height(grid, LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+        lv_obj_set_style_pad_row(grid, (int)(12 * s_uiscale), 0);
+        lv_obj_set_style_pad_column(grid, (int)(12 * s_uiscale), 0);
+        lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
+
+        int avail = lv_display_get_horizontal_resolution(NULL) - (int)(36 * s_uiscale);
+        int minTile = (int)(190 * s_uiscale);
+        int cols = avail / (minTile + (int)(12 * s_uiscale));
+        if (cols < 2) cols = 2;                 // never one giant column
+        if (cols > 4) cols = 4;
+        int gap = (int)(12 * s_uiscale);
+        int tileW = (avail - gap * (cols - 1)) / cols;
+        int tileH = (int)(96 * s_uiscale);
+
+        for (unsigned i = 0; i < sizeof(TILES) / sizeof(TILES[0]); i++) {
+            lv_obj_t *b = lv_button_create(grid);
+            lv_obj_set_size(b, tileW, tileH);
+            lv_obj_set_style_bg_color(b, lv_color_hex(0x000000), 0);
+            lv_obj_set_style_bg_opa(b, LV_OPA_40, 0);
+            lv_obj_set_style_radius(b, (int)(16 * s_uiscale), 0);
+            lv_obj_set_style_border_width(b, 0, 0);
+            lv_obj_set_style_pad_all(b, (int)(14 * s_uiscale), 0);
+            lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+            lv_obj_add_event_cb(b, onSettingsTile, LV_EVENT_CLICKED, (void *)(intptr_t)TILES[i].page);
+
+            // Icon + name on one row, live value beneath. The value is what makes the
+            // grid worth looking at: brightness, volume and link state are readable
+            // without opening anything, and they track changes while you stand there.
+            lv_obj_t *top = lv_obj_create(b);
+            lv_obj_remove_style_all(top);
+            lv_obj_set_width(top, LV_PCT(100));
+            lv_obj_set_height(top, LV_SIZE_CONTENT);
+            lv_obj_set_flex_flow(top, LV_FLEX_FLOW_ROW);
+            lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+            lv_obj_set_style_pad_column(top, (int)(9 * s_uiscale), 0);
+            lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
+
+            lv_obj_t *g = lv_label_create(top);
+            lv_label_set_text(g, TILES[i].glyph);
+            lv_obj_set_style_text_font(g, FICON, 0);
+            lv_obj_set_style_text_color(g, lv_color_hex(C_ACCENT), 0);
+
+            lv_obj_t *n = lv_label_create(top);
+            lv_label_set_text(n, TILES[i].name);
+            lv_obj_set_style_text_color(n, lv_color_hex(C_TEXT), 0);
+            lv_obj_set_style_text_font(n, F24, 0);
+
+            lv_obj_t *sub = lv_label_create(b);
+            lv_label_set_text(sub, "");
+            lv_obj_set_style_text_color(sub, lv_color_hex(C_SUBTLE), 0);
+            lv_obj_set_style_text_font(sub, F16, 0);
+            if (TILES[i].page >= 0 && TILES[i].page < PG_COUNT) s_tileVal[TILES[i].page] = sub;
+        }
+        if (!s_netTimer) s_netTimer = lv_timer_create(onNetPoll, 1000, NULL);
+        onNetPoll(NULL);   // fill the values now; do not show a blank line for a second
+    }
 
     // ── Device & Connection card (X4 glass) — what you can't see on-device ──────
     {
         char ip[24]; net_get_ip(ip, sizeof(ip));
         bool up = net_connected();
         bool isC4 = (g_settings.theme == 0);
-        lv_obj_t *card = settings_card(ov, "Device & Connection");
+        lv_obj_t *card = settings_card_page(ov, PG_NETWORK, "Device & Connection");
         // Control4-specific fields (link status, Room, Director IP, driver protocol
         // version) only mean something when paired with a Control4 driver — the HA
         // theme has no Director to show, so this card is just the generic device
@@ -1321,7 +1483,7 @@ static void ui_show_settings(void) {
         }
         // 1 s is plenty: this tracks DHCP and link changes, not anything the eye
         // needs to follow, and it only ticks while the page is actually open.
-        s_netTimer = lv_timer_create(onNetPoll, 1000, NULL);
+        if (!s_netTimer) s_netTimer = lv_timer_create(onNetPoll, 1000, NULL);
 #if MMK_NET_ETH && MMK_NET_WIFI
         // Only worth offering on a board that genuinely has both.
         settingsCycler(card, "Network", OPT_NET, 3, &g_settings.net_transport, 6);
@@ -1333,19 +1495,8 @@ static void ui_show_settings(void) {
             lv_obj_add_flag(s_netNoteLbl, LV_OBJ_FLAG_HIDDEN);
         }
 #endif
-        settings_info_row(card, "Firmware",   fw_version(), C_TEXT);
-        {   // Check-for-update action button, right under the running version.
-            lv_obj_t *fwbtn = lv_button_create(card);
-            lv_obj_set_width(fwbtn, LV_PCT(100));
-            lv_obj_set_style_bg_color(fwbtn, lv_color_hex(C_BTN), 0);
-            lv_obj_set_style_pad_ver(fwbtn, 10, 0);
-            lv_obj_add_event_cb(fwbtn, onCheckFirmware, LV_EVENT_CLICKED, NULL);
-            lv_obj_t *fwlbl = lv_label_create(fwbtn);
-            lv_label_set_text(fwlbl, "Check for update");
-            lv_obj_center(fwlbl);
-            lv_obj_set_style_text_font(fwlbl, F16, 0);
-            lv_obj_set_style_text_color(fwlbl, lv_color_hex(C_TEXT), 0);
-        }
+        // Firmware and the updater moved to About: this page is about the LINK,
+        // and a version string is something you look up, not something you watch.
         // Model / Device ID / MAC / link type / power source are all shown by the
         // Control4 driver, so they are not repeated here. What stays is what you need
         // while
@@ -1356,7 +1507,7 @@ static void ui_show_settings(void) {
 
     // ── Display card (X4 glass): brightness + the appearance options that apply ──
     {
-        lv_obj_t *card = settings_card(ov, "Display");
+        lv_obj_t *card = settings_card_page(ov, PG_DISPLAY, "Display");
         lv_obj_t *row = lv_obj_create(card);
         lv_obj_remove_style_all(row);
         lv_obj_set_width(row, LV_PCT(100));
@@ -1391,7 +1542,7 @@ static void ui_show_settings(void) {
     // ── Sound card: ringer/announcement/chime volume + mute for the panel's own
     // speaker (distinct from the media volume on the now-playing card). ──
     {
-        lv_obj_t *card = settings_card(ov, "Sound");
+        lv_obj_t *card = settings_card_page(ov, PG_SOUND, "Sound");
         lv_obj_t *row = lv_obj_create(card);
         lv_obj_remove_style_all(row);
         lv_obj_set_width(row, LV_PCT(100));
@@ -1416,7 +1567,7 @@ static void ui_show_settings(void) {
     // audio_selftest_async() already guard on audio_ready()). No video/camera
     // test here -- no board in the lineup has a camera today.
     {
-        lv_obj_t *card = settings_card(ov, "Diagnostics");
+        lv_obj_t *card = settings_card_page(ov, PG_DIAG, "Diagnostics");
         {
             lv_obj_t *btn = lv_button_create(card);
             lv_obj_set_width(btn, LV_PCT(100));
@@ -1443,11 +1594,38 @@ static void ui_show_settings(void) {
         }
     }
 
+    // ── About: identity, firmware, and the project branding ─────────────────────
+    if (s_setPage == PG_ABOUT) {
+        lv_obj_t *card = settings_card(ov, "This panel");
+        settings_info_row(card, "Model",    device_model_name(), C_TEXT);
+        settings_info_row(card, "Firmware", fw_version(), C_TEXT);
+        {   // Same updater the old page had, just no longer competing for attention.
+            lv_obj_t *fwbtn = lv_button_create(card);
+            lv_obj_set_width(fwbtn, LV_PCT(100));
+            lv_obj_set_style_bg_color(fwbtn, lv_color_hex(C_BTN), 0);
+            lv_obj_set_style_pad_ver(fwbtn, 10, 0);
+            lv_obj_add_event_cb(fwbtn, onCheckFirmware, LV_EVENT_CLICKED, NULL);
+            lv_obj_t *fwlbl = lv_label_create(fwbtn);
+            lv_label_set_text(fwlbl, "Check for update");
+            lv_obj_center(fwlbl);
+            lv_obj_set_style_text_font(fwlbl, F16, 0);
+            lv_obj_set_style_text_color(fwlbl, lv_color_hex(C_TEXT), 0);
+        }
+        settings_add_logo(ov);   // wordmark + "buy me a coffee" QR live here now
+    }
+
+}
+
+static void onSettingsBack(lv_event_t *e) {
+    // A sub-page steps back to the tile grid; the grid itself closes Settings.
+    if (s_setPage != PG_HOME) { settings_goto(PG_HOME); return; }
+    onSettingsClose(e);
 }
 
 static void onSettingsOpen(lv_event_t *e) {
     (void)e;
     if (s_infoPanel) lv_obj_add_flag(s_infoPanel, LV_OBJ_FLAG_HIDDEN);
+    s_setPage = PG_HOME;
     ui_show_settings();
 }
 
@@ -1793,6 +1971,18 @@ static void build_home_tiles(int W, int H, bool smallP)
     if (cols < 1) cols = 1;
     if (cols > 4) cols = 4;
     if (portrait && cols > 2) cols = 2;
+    // Width alone decides how many columns FIT; it should not decide how many to
+    // USE. A room with one favourite and no buttons laid two narrow tiles across a
+    // 1280px panel and left the rest empty -- small targets surrounded by nothing.
+    // Clamp the column count to what there is to show, so a short list spends the
+    // space on tile size instead of on gaps. tileCard sizes from cw/ch below, so
+    // this is the only lever needed.
+    {
+        int ntiles = (icAvail ? 1 : 0) + nfav + nbtn;
+        if (ntiles > 0 && cols > ntiles) cols = ntiles;
+        if (ntiles <= 2) cols = 1;
+        else if (ntiles <= 4 && cols > 2) cols = 2;
+    }
 
     const int miniH = smallP ? 0 : (int)(104 * s) + (int)(24 * s);
     int avail = H - miniH - (int)(16 * s) - cy;
@@ -1810,7 +2000,19 @@ static void build_home_tiles(int W, int H, bool smallP)
     // the 10", which rejected three 93px rows in favour of two 150px ones --
     // fatter tiles showing less. The floor is a touch-target minimum, not a
     // proportional one.
-    const int chMax = (int)(90 * s), chMin = (int)(48 * s) < 56 ? 56 : (int)(48 * s);
+    int chMax = (int)(90 * s);
+    // The 90px cap is right for a page that fills: it keeps a long list scrollable
+    // and stops three items becoming three slabs. But with only a handful of tiles
+    // it leaves most of the screen as empty gradient while the targets stay exactly
+    // as small as on a crowded page -- the opposite of what a short list wants.
+    // Raise the ceiling as the count falls, so the space goes into the tiles.
+    {
+        int ntiles = (icAvail ? 1 : 0) + nfav + nbtn;
+        if (ntiles <= 2)      chMax = (int)(180 * s);
+        else if (ntiles <= 4) chMax = (int)(140 * s);
+        else if (ntiles <= 6) chMax = (int)(110 * s);
+    }
+    const int chMin = (int)(48 * s) < 56 ? 56 : (int)(48 * s);
     int ch = (int)(76 * s);
     for (int r = need; r >= 1; r--) {
         int fit = (avail - (r - 1) * gap) / r;
@@ -3561,7 +3763,7 @@ static void setup_toggle_cb(lv_event_t *e)
 // Public entry so the headless sim (and any programmatic caller) can open Settings
 // without faking a touch event -- same reason ui_show_rooms_panel/
 // ui_show_intercom_panel exist.
-void ui_show_settings_panel(void) { ui_show_settings(); }
+void ui_show_settings_panel(int page) { s_setPage = page; ui_show_settings(); }
 
 void ui_show_setup(const char *ap_name, const char *ap_pass, const char *pop)
 {

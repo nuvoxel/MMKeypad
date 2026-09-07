@@ -25,7 +25,7 @@ void ui_set_endpoints(const intercom_target_t *eps, int n);
 void ui_set_rooms(const room_t *rooms, int n);
 void ui_show_rooms_panel(void);   // open the add-rooms panel (sim/preview + programmatic)
 void ui_show_intercom_panel(void);   // open the intercom target picker (sim/preview)
-void ui_show_settings_panel(void);   // open the Settings overlay (sim/preview + programmatic)
+void ui_show_settings_panel(int page);  // open Settings (sim/preview); 0 = the tile grid
 // Room navigator favorites grid (driver reply to `getfavorites`). favorite_t is in net.h.
 void ui_set_favorites(const favorite_t *favs, int n);
 

@@ -18,6 +18,9 @@
  *     MMK_IC=1            open the intercom target picker
  *     MMK_CALL=<event>    call screen: incoming | outgoing | active
  *     MMK_SETTINGS=1      the Settings overlay
+ *     MMK_FAVS=<n>        how many favourites to seed (0-5, default 5)
+ *     MMK_SETPAGE=<n>     which Settings page (0 grid, 1 display, 2 sound,
+ *                         3 network, 4 diagnostics, 5 about)
  *     MMK_CALLPEER=<name> who is calling (default "Front Door")
  */
 #include <stdio.h>
@@ -192,7 +195,11 @@ int main(int argc, char **argv)
             { .id = "ra.4", .title = "Classic Rock",          .kind = "stream" },
             { .id = "ra.5", .title = "Morning Coffee",        .kind = "stream" },
         };
-        ui_set_favorites(favs, 5);   /* 2 action cards + 5 favourites = scrolls */
+        /* MMK_FAVS trims the list so the "few favourites go bigger" reflow can be
+         * previewed without a driver: 1 and 2 are one-per-row, 3+ is the 2-up grid. */
+        int nf = env_int("MMK_FAVS", 5);
+        if (nf < 0) nf = 0; if (nf > 5) nf = 5;
+        ui_set_favorites(favs, nf);   /* 2 action cards + N favourites */
     }
     /* MMK_OFFLINE=1 previews the not-connected landing page (no driver link). */
     ui_set_connected(env_int("MMK_OFFLINE", 0) ? false : true);
@@ -258,7 +265,7 @@ int main(int argc, char **argv)
     /* Settings lives on lv_layer_top() like setup/call, so it needs the same
      * snapshot root -- off the active screen it renders invisibly. */
     const bool settings_scene = env_int("MMK_SETTINGS", 0) != 0;
-    if (settings_scene) ui_show_settings_panel();
+    if (settings_scene) ui_show_settings_panel(env_int("MMK_SETPAGE", 0));
     const char *call_ev = getenv("MMK_CALL");
     const bool call_scene = (call_ev && *call_ev);
     if (call_scene) {
