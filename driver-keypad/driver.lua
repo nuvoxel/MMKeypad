@@ -459,6 +459,17 @@ function ExecuteCommand(cmd, params)
   elseif cmd == "RebootDevice" then
     Send({ t = "reboot" })
     dbg("sent reboot")
+  elseif cmd == "UpdateFirmware" then
+    -- The panel fetches the image itself, straight from GitHub Releases over TLS; we
+    -- only say "go". Nothing here downloads or proxies firmware, so a Director on a
+    -- slow link is never in the transfer path.
+    --
+    -- An empty Version means "newest, if it is not already running it" -- the device
+    -- refuses to install an older image unless a version is named explicitly, so this
+    -- is safe to fire at a whole project. Name one to roll a bad release back.
+    local want = tostring((params and params.Version) or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    Send({ t = "ota", version = (want ~= "" and want or nil) })
+    dbg("sent ota", want ~= "" and want or "(newest)")
   end
 end
 
@@ -1864,6 +1875,35 @@ function SchedulePush()
   end, false)
 end
 
+-- Composer can move an instance to another room whenever it likes, and Director does
+-- NOT re-run OnDriverLateInit when it does -- so gRoom, captured there, silently goes
+-- on pointing at the room the driver was LOADED in. Every downstream read follows it:
+-- BuildState(gRoom), the watched room variables, volume, source, and the room name the
+-- panel prints. A keypad moved from the Office to Emily's Room kept calling itself
+-- Office and kept controlling the Office's audio, with nothing in the UI to suggest
+-- why. Re-read the room instead of trusting the one we cached at load.
+--
+-- Rides the existing poll timer rather than adding one, and only every Nth tick: this
+-- is a rare event and the Director must not pay for it on every pass.
+local ROOM_CHECK_EVERY = 5
+local gRoomCheckTick   = 0
+function CheckRoomMoved()
+  gRoomCheckTick = gRoomCheckTick + 1
+  if gRoomCheckTick < ROOM_CHECK_EVERY then return end
+  gRoomCheckTick = 0
+  local ok, r = pcall(function() return C4:RoomGetId() end)
+  if not ok or not r or r == 0 then return end
+  local rid = tostring(r)
+  if rid == gRoom then return end
+  print("NuVoxelKeypad: moved room " .. tostring(gRoom) .. " -> " .. rid)
+  UnwatchRoomVars()          -- reads gRoom, so it MUST run before we reassign it
+  gRoom = rid
+  gRoomSessionDev = nil      -- the session device belonged to the old room
+  WatchRoomVars()
+  pcall(RegisterMediaSessionEvents)
+  pcall(PushState, true)     -- full push so the panel relabels immediately
+end
+
 function StartPolling()
   StopPolling()
   -- Effective interval: fast (gPollMs) by default, but the slow heartbeat once
@@ -1878,7 +1918,11 @@ function StartPolling()
   elseif not gLastPlaying  then interval = QUIET_POLL_MS        -- on, but nothing moving
   else                          interval = gPollMs end          -- playing, events quiet
   gPollTimer = C4:SetTimer(interval, function()
-    if gConnected and gRoom then pcall(PushState, false) end
+    if not gConnected then return end
+    -- Not gated on gRoom: an instance that never resolved one at load must still be
+    -- able to pick one up later, which the old `gConnected and gRoom` guard prevented.
+    pcall(CheckRoomMoved)
+    if gRoom then pcall(PushState, false) end
   end, true)
 end
 

@@ -53,6 +53,17 @@ const char *fwupdate_error(void);
 // reboots into the new image on success; sets FWU_ERROR if it fails.
 void fwupdate_apply(int i);
 
+// Remote-triggered update: fetch, choose, apply, with nobody at the panel. `version`
+// picks an exact release ("2026.09.06.001"); NULL or "" means "the newest, if we are
+// not already on it". Returns false only if an update is already in flight. The whole
+// flow runs on its own task, so a caller on the :6700 reader is never blocked.
+//
+// Deliberately never installs an OLDER image when choosing for itself: the list is
+// newest-first, so an unqualified trigger either upgrades or does nothing. Naming a
+// version explicitly is the only way to go backwards, which is what makes it useful
+// for rolling a bad release back.
+bool fwupdate_update_now(const char *version);
+
 #ifdef __cplusplus
 }
 #endif

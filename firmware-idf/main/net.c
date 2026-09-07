@@ -18,6 +18,7 @@
 #include "halo.h"
 #endif
 #include "esp_netif.h"
+#include "fwupdate.h"   // remote OTA trigger ({"t":"ota"})
 
 #include <string.h>
 #include <stdio.h>
@@ -416,6 +417,22 @@ static void handle_line(const char *line)
         cJSON *p = cJSON_CreateObject();
         cJSON_AddStringToObject(p, "t", "pong");
         send_obj(p);
+    } else if (!strcmp(ts, "ota")) {
+        // Driver "Update Firmware" command. The open build has no cloud check-in, so
+        // before this the ONLY way to update was a person standing at the panel tapping
+        // Settings -> Check for update -- which does not scale past one keypad and is
+        // impossible for a panel mounted somewhere awkward.
+        //
+        // It rides this link rather than a new HTTP endpoint on purpose: :6700 is
+        // already peer-pinned to a single controller (see the accept loop), so the
+        // trigger inherits that restriction instead of opening a second, unauthenticated
+        // way to make a panel reboot itself. The image still comes from GitHub over TLS,
+        // so the worst a trigger can do is move the panel to an official release.
+        const cJSON *v = cJSON_GetObjectItem(d, "version");
+        const char *want = (cJSON_IsString(v) && v->valuestring) ? v->valuestring : NULL;
+        ESP_LOGW(TAG, "ota requested by driver (version=%s)", want ? want : "newest");
+        if (!fwupdate_update_now(want))
+            ESP_LOGW(TAG, "ota ignored: an update is already in flight");
     } else if (!strcmp(ts, "reboot")) {
         // Driver "Reboot Keypad" programming command.
         ESP_LOGW(TAG, "reboot requested by driver");

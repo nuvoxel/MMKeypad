@@ -294,6 +294,38 @@ command. No fields.
 
 ---
 
+### `ota` — update the firmware from GitHub Releases
+```json
+{"t":"ota"}
+{"t":"ota","version":"2026.09.06.001"}
+```
+Tells the device to update **itself**: it queries this project's GitHub Releases,
+picks an image, downloads it over TLS and reboots into it. The driver only sends
+the trigger — no firmware crosses this link, and the Director is never in the
+transfer path. Sent by the driver's `Update Firmware` programming command.
+
+| field | meaning |
+|---|---|
+| `version` (optional) | Install this release specifically, e.g. `2026.09.06.001`. Omitted or empty means **the newest release, if the device is not already running it**. |
+
+Without a `version` the device will **never install an older image** — the
+release list is newest-first and an unqualified trigger either upgrades or does
+nothing, so this is safe to fire at every keypad in a project. Naming a version
+is the only way to move backwards, which is what makes it the rollback path for a
+bad release.
+
+Ignored while an update is already in flight. A device that cannot reach GitHub
+logs the failure and stays on its current image; there is no reply on this link,
+so treat the trigger as fire-and-forget and read the result from the version in
+the next `hello`.
+
+**Why this rides `:6700` rather than an HTTP endpoint on the device:** this link
+is already pinned to a single controller (see *Peer pinning*), so the trigger
+inherits that restriction. A separate HTTP endpoint would be a second,
+unauthenticated way to make any panel on the LAN reboot itself.
+
+---
+
 ## Intercom / SIP — same **:6700** channel (Phase 3)
 
 Intercom control is **multiplexed onto the same :6700 socket** as the now-playing/

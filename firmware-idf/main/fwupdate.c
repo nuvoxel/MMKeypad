@@ -201,6 +201,45 @@ static void apply_task(void *arg) {
   vTaskDelete(NULL);
 }
 
+// ── Remote trigger (see fwupdate.h) ─────────────────────────────────────────
+static char s_want[48];
+
+static void update_now_task(void *arg) {
+  (void)arg;
+  fwupdate_start_fetch();
+  // Bounded wait — fetch_task always lands on READY or ERROR, but never spin here
+  // on the assumption that it does.
+  for (int i = 0; i < 600 && s_state == FWU_FETCHING; i++) vTaskDelay(pdMS_TO_TICKS(100));
+  if (s_state != FWU_READY) {
+    ESP_LOGW(TAG, "remote update: fetch failed (%s)", s_err[0] ? s_err : "timed out");
+    vTaskDelete(NULL);
+    return;
+  }
+  int pick = -1;
+  if (s_want[0]) {
+    for (int i = 0; i < s_count; i++)
+      if (strstr(s_rel[i].version, s_want)) { pick = i; break; }
+    if (pick < 0) ESP_LOGW(TAG, "remote update: no release matching '%s'", s_want);
+  } else if (s_count > 0 && !s_rel[0].current) {
+    pick = 0;                 // newest-first, and it is not what we are running
+  } else {
+    ESP_LOGI(TAG, "remote update: already on the newest release");
+  }
+  if (pick >= 0) {
+    ESP_LOGW(TAG, "remote update: applying %s", s_rel[pick].version);
+    fwupdate_apply(pick);     // reboots on success
+  }
+  vTaskDelete(NULL);
+}
+
+bool fwupdate_update_now(const char *version) {
+  if (s_state == FWU_FETCHING || s_state == FWU_APPLYING) return false;
+  s_want[0] = '\0';
+  if (version && version[0]) snprintf(s_want, sizeof(s_want), "%s", version);
+  xTaskCreate(update_now_task, "fwu_now", 4096, NULL, 4, NULL);
+  return true;
+}
+
 void fwupdate_apply(int i) {
   if (s_state != FWU_READY) return;
   if (i < 0 || i >= s_count) return;

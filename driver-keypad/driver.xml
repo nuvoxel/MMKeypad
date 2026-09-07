@@ -390,6 +390,23 @@
         <name>Re-register SIP</name>
         <command>ReRegister</command>
       </action>
+
+      <!-- Remote firmware update. The panel downloads from this project's GitHub
+           Releases itself; the Director only sends the trigger. Leave Version empty
+           for "newest, if not already running it" - the device will not install an
+           OLDER image unless a version is named, so this is safe to fire project-wide. -->
+      <action>
+        <name>Update Firmware</name>
+        <command>UpdateFirmware</command>
+        <description>Tell the keypad to update itself from GitHub Releases. Leave Version empty to take the newest release (a panel already on it does nothing). Name a version, e.g. 2026.09.06.001, to install that one specifically - the only way to go backwards, for rolling back a bad release.</description>
+        <params>
+          <param>
+            <name>Version</name>
+            <type>STRING</type>
+            <default></default>
+          </param>
+        </params>
+      </action>
     </actions>
   </config>
 
