@@ -37,10 +37,23 @@ version. The asset name is load-bearing (the on-screen picker filters by
 cd firmware-idf
 VER=2026.08.24.001
 for b in s3 poe nano ws43; do ./board.sh $b build; done
-# rename each build/*/mmkeypad_idf.bin to mmk-<sku>-$VER.bin, then:
+# rename each build/*/mmkeypad_idf.bin to mmk-<sku>-$VER.bin
+
+# The T3 is a SEPARATE tree and a different artifact — easy to forget, and a
+# release without it silently leaves every T3 with nothing to install (its
+# updater filters for "mmk-t3-*.tar" and simply lists none).
+cd ../firmware-linux-t3/lvgl-app && make && cd .. && make bundle
+#   -> build/mmk-t3-$VER.tar
+
 gh release create v$VER --repo nuvoxel/MMKeypad --target main \
-  mmk-s3-$VER.bin mmk-poe-$VER.bin mmk-nano-$VER.bin mmk-ws43-$VER.bin
+  mmk-s3-$VER.bin mmk-poe-$VER.bin mmk-nano-$VER.bin mmk-ws43-$VER.bin \
+  mmk-t3-$VER.tar
 ```
+
+**Every SKU, every release.** All five share `firmware-idf/version.txt`, so a
+partial release leaves some panels unable to see the version their siblings are
+reporting — and with the remote trigger below, a project-wide `Update Firmware`
+becomes a no-op on exactly the boards you forgot.
 
 Version scheme is the shared date-based `YYYY.MM.DD.NNN` + `FW`
 (`tools/nvversion.sh`); `firmware-idf/version.txt` is what the build stamps as
@@ -50,6 +63,32 @@ Integrity/authenticity: the download is TLS-authenticated to `github.com` /
 `objects.githubusercontent.com` against the bundled CA roots, and `esp_https_ota`
 validates the image header and app descriptor before it boots. (ESP Secure Boot
 is not enabled in the open build.)
+
+## Remote updates (from Control4)
+
+A panel does not need anyone standing at it. The keypad driver's **Update
+Firmware** exists in two forms:
+
+- **Actions tab → "Update Firmware (newest)"** — one click, this panel, newest
+  release. Does nothing if it is already running it.
+- **Programming → Device Specific Command → `UpdateFirmware`** — takes a
+  `Version`. Blank means newest; naming one (e.g. `2026.09.06.001`) installs
+  exactly that, which is the only way to move *backwards* and therefore the
+  rollback path for a bad release.
+
+Both send `{"t":"ota"}` on the `:6700` link ([PROTOCOL.md](PROTOCOL.md)). The
+device downloads from GitHub Releases itself over TLS — no firmware crosses the
+driver link and the Director is never in the transfer path. It works the same on
+every board, T3 included: the T3 just resolves a `.tar` bundle and applies it as
+the app/init overlay swap described below, rather than an app image.
+
+Without a `Version` a device will never install an older image, so the blank form
+is safe to fire at an entire project.
+
+Two limits worth knowing. The trigger cannot reach firmware that predates it, so
+every panel needs one update by USB or on-screen first. And there is no reply on
+the link — it is fire-and-forget, and the result shows up as the version in the
+next `hello`.
 
 ## USB flashing
 

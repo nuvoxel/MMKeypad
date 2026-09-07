@@ -365,6 +365,24 @@
         <name>RebootDevice</name>
         <description>Reboot the keypad</description>
       </command>
+      <!-- Push firmware to the keypad. The panel downloads from this project's GitHub
+           Releases itself over TLS; the Director only sends the trigger, so a slow
+           controller is never in the transfer path.
+
+           Leave Version empty for "the newest release, if it is not already running
+           it" — the device refuses to install an OLDER image unless a version is named,
+           which makes the empty form safe to fire at every keypad in a project (e.g.
+           from a scheduled event). Name a version to roll a bad release back. -->
+      <command>
+        <name>UpdateFirmware</name>
+        <description>Update keypad firmware to "PARAM1" (blank = newest)</description>
+        <params>
+          <param>
+            <name>Version</name>
+            <type>STRING</type>
+          </param>
+        </params>
+      </command>
     </commands>
 
     <!-- Installer-facing buttons (call ExecuteCommand). MUST live INSIDE <config> or
@@ -396,16 +414,9 @@
            for "newest, if not already running it" - the device will not install an
            OLDER image unless a version is named, so this is safe to fire project-wide. -->
       <action>
-        <name>Update Firmware</name>
+        <name>Update Firmware (newest)</name>
         <command>UpdateFirmware</command>
-        <description>Tell the keypad to update itself from GitHub Releases. Leave Version empty to take the newest release (a panel already on it does nothing). Name a version, e.g. 2026.09.06.001, to install that one specifically - the only way to go backwards, for rolling back a bad release.</description>
-        <params>
-          <param>
-            <name>Version</name>
-            <type>STRING</type>
-            <default></default>
-          </param>
-        </params>
+        <description>Tell this keypad to update itself to the newest release on GitHub. Does nothing if it is already running it. To install a SPECIFIC version - the only way to go backwards, for rolling a bad release back - use the UpdateFirmware programming command instead, which takes a Version.</description>
       </action>
     </actions>
   </config>
