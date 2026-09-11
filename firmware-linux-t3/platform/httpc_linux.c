@@ -6,15 +6,20 @@
  * Response header/body state is per-client (album-art fetch and the updater can
  * run on different threads concurrently).
  *
- * Cert verification is intentionally OFF for now (a later refinement wires a CA
- * bundle); album art and update metadata are low-value to MITM on the LAN
- * and the license itself is signature-verified offline regardless. */
+ * Cert verification is ON (VERIFY_REQUIRED against the embedded CA bundle
+ * below) — which means it depends on the system clock being sane. This box has
+ * no RTC battery and boots at the epoch (see init.c), and ntpd is fire-and-
+ * forget there, so esp_http_client_open() waits out the epoch itself below
+ * rather than trust every caller (fwupdate.c's release check, nv_ota_t3.c's
+ * download) to know to check first. */
 #include "esp_http_client.h"
 
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>   /* strncasecmp, for the chunked header match */
+#include <time.h>
 #include <unistd.h>
 
 #include "mbedtls/ctr_drbg.h"
@@ -30,6 +35,26 @@ extern const unsigned int nv_ca_bundle_pem_len;
 
 #define HDRS_CAP 1024
 #define STASH_CAP 4096
+
+/* "Sane" just means past the epoch danger zone, not correct -- ntpd keeps
+ * correcting it afterward. VERIFY_REQUIRED fails the handshake outright
+ * against a cert whose not-before is later than the clock, which an
+ * epoch-booted clock always is. Bounded wait: a panel with no route to
+ * pool.ntp.org (offline LAN, blocked NTP) must still finish opening in
+ * reasonable time and fail on the actual connect/handshake instead of hanging
+ * here forever. */
+#define TLS_CLOCK_EPOCH_THRESHOLD 1700000000L  /* 2023-11-14, comfortably before any real cert */
+#define TLS_CLOCK_WAIT_MAX_MS 15000
+#define TLS_CLOCK_WAIT_STEP_MS 250
+
+static void wait_for_sane_clock(void) {
+    int waited_ms = 0;
+    while (time(NULL) < TLS_CLOCK_EPOCH_THRESHOLD && waited_ms < TLS_CLOCK_WAIT_MAX_MS) {
+        struct timespec ts = {0, TLS_CLOCK_WAIT_STEP_MS * 1000000L};
+        nanosleep(&ts, NULL);
+        waited_ms += TLS_CLOCK_WAIT_STEP_MS;
+    }
+}
 
 struct esp_http_client {
     char host[256];
@@ -52,9 +77,17 @@ struct esp_http_client {
     mbedtls_net_context net;
     mbedtls_x509_crt cacert;
     int tls_up;
+    /* Set once the mbedtls_*_init calls below have run, so close() knows there is
+       something to mbedtls_*_free — needed because the redirect-follow loop in
+       nv_ota_t3.c calls close() then open() again on the SAME handle per hop, and
+       open() re-runs mbedtls_ssl_init et al unconditionally; without this, every
+       hop leaked the previous ssl/config/drbg/entropy/cert context (real asset
+       downloads always redirect once, so this fired on every update). */
+    int tls_inited;
     /* body bytes read past the header boundary during fetch_headers */
     char stash[STASH_CAP];
     int stash_len, stash_off;
+    int chunked, chunk_left;   /* Transfer-Encoding: chunked state (see the reader) */
 };
 
 static int parse_url(const char *url, esp_http_client_handle_t c) {
@@ -132,10 +165,13 @@ esp_err_t esp_http_client_open(esp_http_client_handle_t c, int write_len) {
     freeaddrinfo(res);
 
     if (c->https) {
+        wait_for_sane_clock();
         mbedtls_ssl_init(&c->ssl);
         mbedtls_ssl_config_init(&c->conf);
         mbedtls_ctr_drbg_init(&c->drbg);
         mbedtls_entropy_init(&c->entropy);
+        mbedtls_x509_crt_init(&c->cacert);
+        c->tls_inited = 1;
         const char *pers = "mmkeypad-http";
         mbedtls_ctr_drbg_seed(&c->drbg, mbedtls_entropy_func, &c->entropy,
                               (const unsigned char *)pers, strlen(pers));
@@ -144,7 +180,6 @@ esp_err_t esp_http_client_open(esp_http_client_handle_t c, int write_len) {
         /* Verify the server cert against the embedded CA bundle (len includes the
          * trailing NUL, as mbedtls PEM parsing requires). VERIFY_REQUIRED makes the
          * handshake fail on any chain/hostname error. */
-        mbedtls_x509_crt_init(&c->cacert);
         if (mbedtls_x509_crt_parse(&c->cacert, nv_ca_bundle_pem, nv_ca_bundle_pem_len) < 0)
             return ESP_FAIL;
         mbedtls_ssl_conf_ca_chain(&c->conf, &c->cacert, NULL);
@@ -216,6 +251,24 @@ int64_t esp_http_client_fetch_headers(esp_http_client_handle_t c) {
     char *cl = strstr(hdr, "Content-Length:");
     if (!cl) cl = strstr(hdr, "content-length:");
     if (cl) bodylen = atoi(cl + 15);
+    /* Chunked bodies. Only Content-Length was handled, so a chunked response came
+     * back to the caller with its chunk-size lines still in it. Asset DOWNLOADS from
+     * objects.githubusercontent.com carry Content-Length, which is why applying an
+     * update worked -- but the GitHub API's releases list is generated, and is served
+     * chunked. cJSON then rejected the framing and the T3 could never see a release
+     * at all: remote OTA reported "bad response from GitHub", and the on-screen
+     * picker silently listed nothing. */
+    c->chunked = 0; c->chunk_left = 0;
+    {
+        char *te = strstr(hdr, "Transfer-Encoding:");
+        if (!te) te = strstr(hdr, "transfer-encoding:");
+        if (te) {
+            char *end = strpbrk(te, "\r\n");
+            size_t n = end ? (size_t)(end - te) : strlen(te);
+            for (size_t i = 0; i + 7 <= n; i++)
+                if (strncasecmp(te + i, "chunked", 7) == 0) { c->chunked = 1; break; }
+        }
+    }
     /* Location, for a redirect the caller may choose to follow. */
     c->location[0] = 0;
     char *loc = strstr(hdr, "Location:");
@@ -236,6 +289,38 @@ int64_t esp_http_client_fetch_headers(esp_http_client_handle_t c) {
     return bodylen;
 }
 
+/* Read exactly one byte through the stash, so chunk framing can be consumed by the
+ * same path that serves body bytes. */
+static int chunk_getc(esp_http_client_handle_t c) {
+    char ch;
+    if (c->stash_off < c->stash_len) { ch = c->stash[c->stash_off++]; return (unsigned char)ch; }
+    int r = raw_read(c, &ch, 1);
+    return (r == 1) ? (unsigned char)ch : -1;
+}
+
+/* Consume "<hex>[;ext]\r\n" and return the chunk size, or -1 at end of body. */
+static int chunk_next(esp_http_client_handle_t c) {
+    int ch, size = 0, digits = 0;
+    for (;;) {
+        ch = chunk_getc(c);
+        if (ch < 0) return -1;
+        if (ch == '\r') { if (chunk_getc(c) < 0) return -1; break; }   /* eat the \n */
+        if (ch == ';') {                                                /* extensions: skip */
+            while ((ch = chunk_getc(c)) >= 0 && ch != '\r') { }
+            if (ch < 0 || chunk_getc(c) < 0) return -1;
+            break;
+        }
+        int v = (ch >= '0' && ch <= '9') ? ch - '0'
+              : (ch >= 'a' && ch <= 'f') ? ch - 'a' + 10
+              : (ch >= 'A' && ch <= 'F') ? ch - 'A' + 10 : -1;
+        if (v < 0) return -1;
+        size = size * 16 + v; digits++;
+        if (digits > 8) return -1;
+    }
+    if (digits == 0) return -1;
+    return size;
+}
+
 int esp_http_client_get_status_code(esp_http_client_handle_t c) {
     return c ? c->status : 0;
 }
@@ -251,33 +336,60 @@ esp_err_t esp_http_client_set_url(esp_http_client_handle_t c, const char *url) {
 
 int esp_http_client_read(esp_http_client_handle_t c, char *buf, int len) {
     if (!c) return -1;
-    if (c->stash_off < c->stash_len) {
-        int n = c->stash_len - c->stash_off;
-        if (n > len) n = len;
-        memcpy(buf, c->stash + c->stash_off, n);
-        c->stash_off += n;
-        return n;
+    if (!c->chunked) {
+        if (c->stash_off < c->stash_len) {
+            int n = c->stash_len - c->stash_off;
+            if (n > len) n = len;
+            memcpy(buf, c->stash + c->stash_off, n);
+            c->stash_off += n;
+            return n;
+        }
+        return raw_read(c, buf, len);
     }
-    return raw_read(c, buf, len);
+    /* Chunked: hand back body bytes only, never the framing. */
+    if (c->chunk_left == 0) {
+        int sz = chunk_next(c);
+        if (sz <= 0) return 0;              /* terminator (or malformed) -> EOF */
+        c->chunk_left = sz;
+    }
+    int want = (len < c->chunk_left) ? len : c->chunk_left;
+    int got = 0;
+    if (c->stash_off < c->stash_len) {
+        got = c->stash_len - c->stash_off;
+        if (got > want) got = want;
+        memcpy(buf, c->stash + c->stash_off, got);
+        c->stash_off += got;
+    } else {
+        got = raw_read(c, buf, want);
+        if (got <= 0) return got;
+    }
+    c->chunk_left -= got;
+    if (c->chunk_left == 0) { chunk_getc(c); chunk_getc(c); }   /* trailing CRLF */
+    return got;
 }
 
 esp_err_t esp_http_client_close(esp_http_client_handle_t c) {
     if (!c) return ESP_OK;
     if (c->tls_up) { mbedtls_ssl_close_notify(&c->ssl); c->tls_up = 0; }
     if (c->fd >= 0) { close(c->fd); c->fd = -1; }
-    return ESP_OK;
-}
-
-esp_err_t esp_http_client_cleanup(esp_http_client_handle_t c) {
-    if (!c) return ESP_OK;
-    esp_http_client_close(c);
-    if (c->https) {
+    /* Free here, not just in cleanup(): the redirect-follow loop in nv_ota_t3.c
+       closes and reopens the same handle per hop, and open() re-inits these
+       unconditionally, so leaving the free to cleanup() (called once, at the very
+       end) leaked a full ssl/config/drbg/entropy/cert context per hop. */
+    if (c->tls_inited) {
         mbedtls_ssl_free(&c->ssl);
         mbedtls_ssl_config_free(&c->conf);
         mbedtls_ctr_drbg_free(&c->drbg);
         mbedtls_entropy_free(&c->entropy);
         mbedtls_x509_crt_free(&c->cacert);
+        c->tls_inited = 0;
     }
+    return ESP_OK;
+}
+
+esp_err_t esp_http_client_cleanup(esp_http_client_handle_t c) {
+    if (!c) return ESP_OK;
+    esp_http_client_close(c);   // also frees any live tls_inited state
     free(c);
     return ESP_OK;
 }
