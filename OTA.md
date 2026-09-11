@@ -48,12 +48,17 @@ cd ../firmware-linux-t3/lvgl-app && make && cd .. && make bundle
 gh release create v$VER --repo nuvoxel/MMKeypad --target main \
   mmk-s3-$VER.bin mmk-poe-$VER.bin mmk-nano-$VER.bin mmk-ws43-$VER.bin \
   mmk-t3-$VER.tar
+
+tools/verify-release.sh v$VER   # mandatory -- fails loudly if any SKU is missing
 ```
 
 **Every SKU, every release.** All five share `firmware-idf/version.txt`, so a
 partial release leaves some panels unable to see the version their siblings are
 reporting — and with the remote trigger below, a project-wide `Update Firmware`
-becomes a no-op on exactly the boards you forgot.
+becomes a no-op on exactly the boards you forgot. `tools/verify-release.sh` is
+what catches this before someone finds out from a panel instead of the release
+log — v2026.09.06.001 shipped without the T3 asset and nothing failed until a
+T3 in the field reported "no builds published."
 
 Version scheme is the shared date-based `YYYY.MM.DD.NNN` + `FW`
 (`tools/nvversion.sh`); `firmware-idf/version.txt` is what the build stamps as
