@@ -132,3 +132,12 @@ void net_group_room(const char *id, bool join);   // multiroom join/leave a room
 void net_request_favorites(void);                 // ask for this room's favorites (-> on_favorites)
 void net_play_favorite(const char *id);           // play the favorite tile with this id
 void net_ping(void);
+
+// Report the device's current halo settings (g_settings) up to the driver, so
+// Composer's Halo properties can mirror whatever is actually on the LED --
+// the device is authoritative, so this is what keeps them from drifting after
+// a local edit, a fresh device that's never talked to Composer, or the driver
+// having missed a change while offline. Call after ANY change to the halo
+// fields in g_settings, from whichever side made it. No-op if not connected
+// or the board has no halo hardware.
+void net_report_halo(void);

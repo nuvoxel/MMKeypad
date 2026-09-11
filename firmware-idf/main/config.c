@@ -27,6 +27,13 @@ settings_t g_settings = {
     .ringer_volume = 80,     // panel chime/announcement loudness
     .muted = 0,              // not muted
     .net_transport = 0,      // Auto: wired first, WiFi fallback
+    // Matches driver-keypad/driver.xml's Halo Idle/Call Color + Brightness defaults
+    // (index 3 = "Blue" in HALO_PALETTE) so a never-connected panel and a freshly
+    // added Composer property agree, instead of the device quietly starting dimmer
+    // than what Composer says it's set to.
+    .halo_idle_color = 3,    // Blue
+    .halo_ring_color = 3,    // Blue
+    .halo_brightness = 25,
 };
 
 static const char *NS = "mmkeypad";
@@ -47,6 +54,9 @@ void settings_load(void)
     if (nvs_get_u8(h, "ringvol", &u8) == ESP_OK) g_settings.ringer_volume = u8;
     if (nvs_get_u8(h, "muted", &u8) == ESP_OK) g_settings.muted = u8;
     if (nvs_get_u8(h, "nettr", &u8) == ESP_OK) g_settings.net_transport = u8;
+    if (nvs_get_u8(h, "haloic", &u8) == ESP_OK) g_settings.halo_idle_color = u8;
+    if (nvs_get_u8(h, "halorc", &u8) == ESP_OK) g_settings.halo_ring_color = u8;
+    if (nvs_get_u8(h, "halobr", &u8) == ESP_OK) g_settings.halo_brightness = u8;
     nvs_close(h);
 }
 
@@ -64,6 +74,9 @@ void settings_save(void)
     nvs_set_u8(h, "ringvol", g_settings.ringer_volume);
     nvs_set_u8(h, "muted", g_settings.muted);
     nvs_set_u8(h, "nettr", g_settings.net_transport);
+    nvs_set_u8(h, "haloic", g_settings.halo_idle_color);
+    nvs_set_u8(h, "halorc", g_settings.halo_ring_color);
+    nvs_set_u8(h, "halobr", g_settings.halo_brightness);
     nvs_commit(h);
     nvs_close(h);
 }

@@ -213,6 +213,18 @@ static void send_hello(void)
     send_obj(o);
 }
 
+void net_report_halo(void)
+{
+#ifdef PIN_RGB_LED
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "t", "halostate");
+    cJSON_AddNumberToObject(o, "idle", g_settings.halo_idle_color);
+    cJSON_AddNumberToObject(o, "ring", g_settings.halo_ring_color);
+    cJSON_AddNumberToObject(o, "bright", g_settings.halo_brightness);
+    send_obj(o);
+#endif
+}
+
 bool net_connected(void) { return s_conn >= 0; }
 int  net_driver_proto(void) { return s_driver_proto; }
 const char *net_peer_ip(void) { return s_peer_ip; }
@@ -575,21 +587,34 @@ static void handle_line(const char *line)
                  cJSON_IsNumber(rg) ? rg->valueint : -1, micpct);
 #endif
     } else if (!strcmp(ts, "halo")) {
-        // Driver-configured halo RGB LED: idle color (r,g,b), pulse/ring color
-        // (pr,pg,pb), brightness 0..100. Any subset may be present.
+        // Driver-pushed halo: palette indices (see halo.h HALO_PALETTE), not raw RGB --
+        // the device persists these in g_settings/NVS exactly like orientation/layout/bg
+        // (net.c ~356) so it stays right across a reboot with no driver ever attached,
+        // then reports back (net_report_halo) so Composer converges on what's now real
+        // whether or not it matches what Composer asked for (an out-of-range index is
+        // ignored, not clamped, so a stale/mismatched driver can't corrupt NVS with junk).
 #ifdef PIN_RGB_LED
-        const cJSON *r = cJSON_GetObjectItem(d, "r");
-        const cJSON *g = cJSON_GetObjectItem(d, "g");
-        const cJSON *b = cJSON_GetObjectItem(d, "b");
-        if (cJSON_IsNumber(r) && cJSON_IsNumber(g) && cJSON_IsNumber(b))
-            halo_set_color(r->valueint, g->valueint, b->valueint);
-        const cJSON *pr = cJSON_GetObjectItem(d, "pr");
-        const cJSON *pg = cJSON_GetObjectItem(d, "pg");
-        const cJSON *pb = cJSON_GetObjectItem(d, "pb");
-        if (cJSON_IsNumber(pr) && cJSON_IsNumber(pg) && cJSON_IsNumber(pb))
-            halo_set_pulse_color(pr->valueint, pg->valueint, pb->valueint);
-        const cJSON *br = cJSON_GetObjectItem(d, "bright");
-        if (cJSON_IsNumber(br)) halo_set_brightness(br->valueint);
+        const cJSON *idle = cJSON_GetObjectItem(d, "idle");
+        const cJSON *ring = cJSON_GetObjectItem(d, "ring");
+        const cJSON *br   = cJSON_GetObjectItem(d, "bright");
+        bool halo_changed = false;
+        if (cJSON_IsNumber(idle) && idle->valueint >= 0 && idle->valueint < HALO_PALETTE_COUNT
+            && (uint8_t)idle->valueint != g_settings.halo_idle_color) {
+            g_settings.halo_idle_color = (uint8_t)idle->valueint; halo_changed = true;
+        }
+        if (cJSON_IsNumber(ring) && ring->valueint >= 0 && ring->valueint < HALO_PALETTE_COUNT
+            && (uint8_t)ring->valueint != g_settings.halo_ring_color) {
+            g_settings.halo_ring_color = (uint8_t)ring->valueint; halo_changed = true;
+        }
+        if (cJSON_IsNumber(br) && br->valueint >= 0 && br->valueint <= 100
+            && (uint8_t)br->valueint != g_settings.halo_brightness) {
+            g_settings.halo_brightness = (uint8_t)br->valueint; halo_changed = true;
+        }
+        if (halo_changed) {
+            settings_save();
+            halo_apply_settings();
+        }
+        net_report_halo();   // always -- a driver that just reconnected needs the reply even when nothing changed
 #endif
     } else if (!strcmp(ts, "audiotest")) {
         // Bring-up/field diagnostic: run the audio self-test (chime + tone, mic
@@ -628,6 +653,7 @@ static void serve_client(int c)
     }
 
     send_hello();
+    net_report_halo();   // device is authoritative -- tell a freshly (re)connected driver what it actually has
     if (s_cb.on_connect) s_cb.on_connect();
 
     char rx[1024];

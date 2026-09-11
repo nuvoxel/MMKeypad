@@ -19,7 +19,9 @@ Every message has a `t` (type) field. Unknown types MUST be ignored (forward-com
 
 1. Device listens on TCP **6700**. The driver (once its binding is addressed)
    connects out to the device's IP:6700 and Director reports `ONLINE`.
-2. Device sends `hello` (its MAC + fw) on accept.
+2. Device sends `hello` (its MAC + fw) on accept, immediately followed by
+   `halostate` (its actual halo LED state — the device is authoritative there,
+   see `halo`/`halostate` below).
 3. Driver pushes an initial `state` for the **room the driver instance is placed
    in** (no room picker — the room is the driver's Control4 placement).
 4. Driver pushes `state` on every relevant room/media change (debounced/deduped).
@@ -44,6 +46,7 @@ the device just keeps listening.
 | `getfavorites` | —                                | Request this room's favorite tiles (device sends when the favorites grid opens) → driver replies with `favorites`. Room-level (no source id). |
 | `favorite` | `id` (str, favorite id)             | Play the favorite tile with this id. The driver resolves the play from the favorite's kind: `broadcast` → exact `SELECT_AUDIO_MEDIA`; `stream` → select the favorite's source (`DEVICE_SELECTED`, resumes that source — exact station play is navigator-gated). Legacy `mediaid` (str) instead of `id` still plays a broadcast-audio preset directly. |
 | `button` | `id` (int, programmable keypad button)  | A keypad button was tapped → driver raises the keypad-proxy action |
+| `halostate` | `idle`, `ring` (0–11 palette index), `bright` (0–100) | Device's actual halo LED state (device is authoritative — see `halo` below). Sent after every `hello`, and again on any change from any source. |
 | `ping`   | —                                       | Keepalive |
 
 `hello` also carries the device **identity** — `hwid` (hex) and `sku` — which the
@@ -323,6 +326,61 @@ the next `hello`.
 is already pinned to a single controller (see *Peer pinning*), so the trigger
 inherits that restriction. A separate HTTP endpoint would be a second,
 unauthenticated way to make any panel on the LAN reboot itself.
+
+---
+
+### `halo` — set the halo LED (driver → device); `halostate` — report it back (device → driver)
+
+The onboard/ring RGB LED (halo.h/halo.c). Unlike the rest of this file, **the
+device is authoritative** for halo, not the driver: it persists it in NVS
+(`config.h` `settings_t`) so a panel keeps working — nightlight color, ring
+color, brightness — even if it has never talked to a Control4 Director, or is
+currently offline. The device is also editable locally (on-device Settings ->
+Display), and a local edit is reported up exactly like a driver-applied one.
+
+```json
+{"t":"halo","idle":3,"ring":3,"bright":25}
+{"t":"halostate","idle":3,"ring":3,"bright":25}
+```
+
+Both carry the same three fields; `idle`/`ring` are **palette indices**, never
+raw RGB — the fixed 12-color list is shared by firmware (`HALO_PALETTE`/
+`HALO_PALETTE_NAMES` in halo.h) and the Composer driver's Halo Idle/Call Color
+property lists (driver-keypad/driver.xml), in the same order, so a color
+crossing this link is the same name/color on both ends purely by position:
+
+| index | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| name | Off | White | Warm White | Blue | Cyan | Teal | Green | Amber | Red | Purple | Pink | Magenta |
+
+| field | meaning |
+|---|---|
+| `idle` (0–11, optional) | Idle/nightlight color — shown at rest |
+| `ring` (0–11, optional) | Color of the breathing/chase pulse shown while an intercom call rings |
+| `bright` (0–100, optional) | Overall brightness. Composer's property only offers 10/25/50/75/100, but the field itself is a plain percent |
+
+**`halo` (driver → device):** any subset of fields may be present; an
+out-of-range `idle`/`ring` index or a `bright` outside 0–100 is ignored, not
+clamped — a stale/mismatched driver can't corrupt NVS with a bogus value. A
+value that actually changes something is saved and applied live, and the
+device always answers with a fresh `halostate` (even when nothing changed —
+that's still the reply a reconnecting driver is waiting for).
+
+**`halostate` (device → driver):** sent once right after every `hello`, and
+again any time `halo_idle_color`/`halo_ring_color`/`halo_brightness` changes
+for ANY reason (a driver's `halo`, or a local Settings edit). The driver
+mirrors this straight into the Halo Idle Color / Halo Call Color / Halo
+Brightness properties. It must NOT turn around and push those values back down
+as a `halo` message — that would be an infinite echo of "device says X" ->
+"driver echoes X back" -> "device says X" forever. The reference driver guards
+this with a flag (`gApplyingHaloReport`) checked in `OnPropertyChanged` before
+it reacts to a Halo property "changing".
+
+There is no bare RGB form and no way to address idle/ring color independently
+of the fixed palette — the driver's `SetButtonLEDColor` programming command
+reuses the same palette but as `"RRGGBB"` hex (`NamedHex` in driver.lua), since
+button LEDs are a different device concept (`button`, not `halo`) with no
+on-device persistence of their own.
 
 ---
 

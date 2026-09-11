@@ -106,6 +106,7 @@ local ROOM_VAR = {
 -- Runtime state -------------------------------------------------------------
 local gPollMs    = 1000
 local gConnected = false
+local gApplyingHaloReport = false  -- see HandleMessage "halostate" / OnPropertyChanged
 local gRoom      = nil            -- the room this instance is placed in
 local gRoomSessionDev = nil       -- our room's current media-session device id (the
                                   -- <deviceid> in room var 1031). "" = idle/no session,
@@ -420,7 +421,9 @@ function OnPropertyChanged(prop)
       or prop == "Active Brightness" or prop == "Idle Timeout" or prop == "Idle Brightness" then
     if gConnected then pcall(PushState, true) end   -- device persists + applies live
   elseif prop == "Halo Idle Color" or prop == "Halo Call Color" or prop == "Halo Brightness" then
-    if gConnected then pcall(PushHalo) end
+    -- Skip when WE just set this property from the device's own report (gApplyingHaloReport) --
+    -- that is the device telling us what it already has, not a dealer asking to change it.
+    if gConnected and not gApplyingHaloReport then pcall(PushHalo) end
   end
 end
 
@@ -745,7 +748,8 @@ function OnConnectionStatusChanged(idBinding, nPort, strStatus)
     local ok, addr = pcall(function() return C4:GetBindingAddress(BINDING_NET) end)
     setStatus("Connected " .. (ok and tostring(addr) or ""))
     PushState(true)
-    PushHalo()                   -- push the configured halo LED color/brightness
+    -- No PushHalo here: the device is authoritative for halo now, and reports its
+    -- real state (`halostate`, right after `hello`) rather than waiting to be told.
     if not was then
       pcall(function() C4:FireEvent("Device Connected") end)
       -- Auto firmware check on the first connect this session: tell the device to run
@@ -822,8 +826,14 @@ function SendIdentify()
   dbg("sent identify (connected=" .. tostring(gConnected) .. ")")
 end
 
--- "Halo" RGB LED config. Named colors -> RGB; pushed to the device as a `halo`
--- message (idle color + ring/pulse color + brightness). See firmware halo.c.
+-- "Halo" RGB LED palette. Order is the wire contract with the firmware (halo.h
+-- HALO_PALETTE/HALO_PALETTE_NAMES) -- a `halo`/`halostate` message carries an
+-- INDEX into this list, never RGB, so neither side ever has to guess a name back
+-- from an arbitrary color. Keep this list and firmware's in lockstep.
+local HALO_ORDER = {
+  "Off", "White", "Warm White", "Blue", "Cyan", "Teal",
+  "Green", "Amber", "Red", "Purple", "Pink", "Magenta",
+}
 local HALO_COLORS = {
   ["Off"]        = {0, 0, 0},     ["White"]   = {255, 255, 255},
   ["Warm White"] = {255, 170, 80},["Blue"]    = {0, 0, 255},
@@ -832,15 +842,23 @@ local HALO_COLORS = {
   ["Red"]        = {255, 0, 0},   ["Purple"]  = {150, 0, 255},
   ["Pink"]       = {255, 40, 120},["Magenta"] = {255, 0, 180},
 }
+local HALO_INDEX = {}
+for i, name in ipairs(HALO_ORDER) do HALO_INDEX[name] = i - 1 end   -- 0-based, matches the device
+
+local function haloIndexFor(name) return HALO_INDEX[tostring(name or "")] or HALO_INDEX["Off"] end
+local function haloNameFor(idx) return HALO_ORDER[(tonumber(idx) or 0) + 1] or "Off" end
+
+-- The device is authoritative for halo state (config.h/NVS) -- this pushes an
+-- override, which the device applies, persists, and immediately reports back
+-- (see HandleMessage "halostate"); it does not itself update Properties.
 function PushHalo()
-  local function rgb(name) return HALO_COLORS[name or "Off"] or HALO_COLORS["Off"] end
-  local idle   = rgb(Properties and Properties["Halo Idle Color"])
-  local ring   = rgb(Properties and Properties["Halo Call Color"])
-  local bright = tonumber(Properties and Properties["Halo Brightness"]) or 50
-  Send({ t = "halo", r = idle[1], g = idle[2], b = idle[3],
-         pr = ring[1], pg = ring[2], pb = ring[3], bright = bright })
+  Send({ t = "halo",
+         idle   = haloIndexFor(Properties and Properties["Halo Idle Color"]),
+         ring   = haloIndexFor(Properties and Properties["Halo Call Color"]),
+         bright = tonumber(Properties and Properties["Halo Brightness"]) or 25 })
   dbg("pushed halo: idle=" .. tostring(Properties and Properties["Halo Idle Color"]) ..
-      " ring=" .. tostring(Properties and Properties["Halo Call Color"]) .. " bright=" .. bright)
+      " ring=" .. tostring(Properties and Properties["Halo Call Color"]) ..
+      " bright=" .. tostring(Properties and Properties["Halo Brightness"]))
 end
 
 -- Named color -> "RRGGBB" hex, for the SetButtonLEDColor programming command (reuses
@@ -854,12 +872,12 @@ end
 -- Set Halo from Programming (SetHalo command). Overrides the idle color/brightness for
 -- this push; ring color stays the configured property. Blank args fall back to the props.
 function SendHalo(colorName, brightName)
-  local idle   = HALO_COLORS[tostring(colorName or "")] or HALO_COLORS[Properties and Properties["Halo Idle Color"]] or {0, 0, 0}
-  local ring   = HALO_COLORS[Properties and Properties["Halo Call Color"]] or idle
-  local bright = tonumber(brightName) or tonumber(Properties and Properties["Halo Brightness"]) or 50
-  Send({ t = "halo", r = idle[1], g = idle[2], b = idle[3],
-         pr = ring[1], pg = ring[2], pb = ring[3], bright = bright })
-  dbg("SetHalo: color=" .. tostring(colorName) .. " bright=" .. tostring(bright))
+  local idle   = colorName and HALO_INDEX[tostring(colorName)]
+  Send({ t = "halo",
+         idle   = idle or haloIndexFor(Properties and Properties["Halo Idle Color"]),
+         ring   = haloIndexFor(Properties and Properties["Halo Call Color"]),
+         bright = tonumber(brightName) or tonumber(Properties and Properties["Halo Brightness"]) or 25 })
+  dbg("SetHalo: color=" .. tostring(colorName) .. " bright=" .. tostring(brightName))
 end
 
 -- Play an announcement on the device: a chime out its speaker + the text shown
@@ -958,11 +976,11 @@ function HandleMessage(line)
     end
     -- `hello` is the real "device is ready" edge: it arrives after the device's app
     -- is up, whereas the TCP ONLINE edge only means the socket connected. So push the
-    -- FULL driver-owned config here, not just state. PushHalo used to be missing from
-    -- this path, so after a device reboot the halo LED kept whatever it had in NVS and
-    -- silently drifted from these properties until someone edited one of them.
+    -- FULL driver-owned config here, not just state. Halo is NOT pushed from this path
+    -- any more -- the device now owns that setting and reports it (`halostate`, right
+    -- after this `hello`) instead of having it handed down, so a panel that has never
+    -- talked to Composer -- or changed locally while offline -- is never overwritten.
     PushState(true)
-    PushHalo()
     RelayHello()           -- tell the bound intercom driver the device is up (it re-provisions SIP)
   elseif t == "cmd" then DoTransport(msg.cmd)
   elseif t == "vol" then
@@ -987,6 +1005,20 @@ function HandleMessage(line)
     -- of from a photograph.
     dbg("art tile", msg.slot, msg.ok and "PUBLISHED" or "ABANDONED/failed",
         tostring(msg.bytes) .. " bytes", tostring(msg.w) .. "x" .. tostring(msg.h))
+  elseif t == "halostate" then
+    -- The device reporting its ACTUAL halo state (config.h/NVS is authoritative there --
+    -- sent right after every connect, and again whenever an on-device edit or an
+    -- applied `halo` push changes it). Mirror it into Properties so Composer shows
+    -- truth even for a panel that has never been touched from here, or one that
+    -- changed locally while we were offline. gApplyingHaloReport stops this from
+    -- bouncing straight back down as a PushHalo.
+    gApplyingHaloReport = true
+    pcall(function()
+      C4:UpdateProperty("Halo Idle Color", haloNameFor(msg.idle))
+      C4:UpdateProperty("Halo Call Color", haloNameFor(msg.ring))
+      C4:UpdateProperty("Halo Brightness", tostring(tonumber(msg.bright) or 25))
+    end)
+    gApplyingHaloReport = false
   elseif t == "ping" then Send({ t = "pong" })
   elseif t == "button" then FireButton(msg.id)
   elseif t == "sipstate" or t == "callstate" or t == "callctl" then

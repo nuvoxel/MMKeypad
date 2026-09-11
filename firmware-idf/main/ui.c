@@ -3,8 +3,12 @@
 #include "fwupdate.h"
 #include "art.h"
 #include "config.h"
+#include "board.h"
 #include "bsp.h"
 #include "net.h"
+#ifdef PIN_RGB_LED
+#include "halo.h"
+#endif
 #include "sddp.h"   // sddp_host() — the name Settings shows as "Discovery name"
 #include "sip.h"
 #include "audio.h"
@@ -868,7 +872,7 @@ void ui_set_endpoints(const intercom_target_t *eps, int n)
 // ── #11 on-device Settings overlay (display settings; Wi-Fi join is a follow-up) ─────
 static lv_obj_t *s_settings;   // the overlay, NULL when closed
 typedef struct { const char *const *opts; uint8_t n; uint8_t *field; uint8_t apply; lv_obj_t *val; } cyclerow_t;
-static cyclerow_t s_cyc[8];    // apply: 1=backlight  2=orientation+rebuild  3=rebuild  (0=save only)
+static cyclerow_t s_cyc[12];   // apply: 1=backlight  2=orientation+rebuild  3=rebuild  (0=save only)
 static int s_ncyc;
 #ifdef MMK_CAN_ROTATE
 static const char *const OPT_ORIENT[] = { "Landscape", "Portrait", "Landscape flipped", "Portrait flipped" };
@@ -880,6 +884,17 @@ static const char *const OPT_IDLE[]     = { "Screen off", "5%", "10%", "25%", "5
 static const uint8_t      IDLE_VALS[]   = { 0, 5, 10, 25, 50 };
 static uint8_t            s_idleIdx;
 static const char *const OPT_MUTE[]     = { "Off", "On" };   // maps directly to g_settings.muted
+#ifdef PIN_RGB_LED
+// Halo idle/ring color cyclers store the palette INDEX directly (g_settings.halo_*
+// already IS that index -- see config.h), so unlike Idle brightness there is no
+// separate value table: HALO_PALETTE_NAMES (halo.h) doubles as the option list,
+// which also guarantees the on-screen names can never drift from the wire palette.
+// Brightness stays a small discrete list (matches the Composer property) rather
+// than a slider, same reasoning as Idle brightness: index -> value in onCycle.
+static const char *const OPT_HALO_BRIGHT[] = { "10%", "25%", "50%", "75%", "100%" };
+static const uint8_t      HALO_BRIGHT_VALS[] = { 10, 25, 50, 75, 100 };
+static uint8_t             s_haloBrightIdx;
+#endif
 #if MMK_NET_ETH && MMK_NET_WIFI
 // Transport override. Index order matches settings_t.net_transport, and main.c
 // reads it at boot -- hence the note the row shows when you change it. Guarded to
@@ -1112,6 +1127,18 @@ static void onCycle(lv_event_t *e) {
         audio_set_ringer_volume(v);
         audio_set_user_volume(v);
     }
+#ifdef PIN_RGB_LED
+    else if (c->apply == 7 || c->apply == 8) {   // halo idle/ring color -- field IS the palette index
+        halo_apply_settings();
+        net_report_halo();   // device changed it locally; tell the driver so Composer stays truthful
+    }
+    else if (c->apply == 9) {   // halo brightness -- index -> the discrete % Composer offers
+        g_settings.halo_brightness = HALO_BRIGHT_VALS[*c->field];
+        settings_save();
+        halo_apply_settings();
+        net_report_halo();
+    }
+#endif
 }
 
 static void onBrightness(lv_event_t *e) {
@@ -1537,6 +1564,22 @@ static void ui_show_settings(void) {
         settingsCycler(card, "Orientation",  OPT_ORIENT, 4, &g_settings.orientation, 2);
 #endif
         // Walk-up mode: keypad as the resting view (Listen/Intercom become tiles).
+
+#ifdef PIN_RGB_LED
+        // Halo: the onboard/ring RGB LED, same three settings as the Composer
+        // Halo Idle/Call Color + Brightness properties (driver-keypad/driver.xml).
+        // These live on-device just like the rows above -- an edit here persists
+        // immediately and reports up (net_report_halo) so Composer converges on
+        // it whether or not a driver happens to be connected right now.
+        settingsCycler(card, "Halo color", HALO_PALETTE_NAMES, HALO_PALETTE_COUNT,
+                        &g_settings.halo_idle_color, 7);
+        settingsCycler(card, "Halo call color", HALO_PALETTE_NAMES, HALO_PALETTE_COUNT,
+                        &g_settings.halo_ring_color, 8);
+        s_haloBrightIdx = 1;   // 25% -- matches the compiled-in/driver default if nothing matches
+        for (uint8_t i = 0; i < 5; i++)
+            if (HALO_BRIGHT_VALS[i] == g_settings.halo_brightness) { s_haloBrightIdx = i; break; }
+        settingsCycler(card, "Halo brightness", OPT_HALO_BRIGHT, 5, &s_haloBrightIdx, 9);
+#endif
     }
 
     // ── Sound card: ringer/announcement/chime volume + mute for the panel's own

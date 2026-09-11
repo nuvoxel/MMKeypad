@@ -2,18 +2,13 @@
 // See halo.h. RMT-driven via espressif/led_strip. No-op on boards with no LED.
 #include "halo.h"
 #include "board.h"
+#include "config.h"
 
 // HALO_COUNT lets a board drive a whole ring instead of one onboard pixel
 // (backbox-poe carrier = 24). Defaults to 1 so every other board is unchanged.
 #ifndef HALO_COUNT
 #define HALO_COUNT 1
 #endif
-
-// Idle "nightlight" level. This sits on a wall, often in a dark room, and a ring
-// of even dim blue is a lot of emitted light — keep it a suggestion of colour,
-// not illumination. 8/255 is ~3%. Applies to every board, so it must live
-// outside the ring-only block below.
-#define HALO_IDLE_BLUE 8
 
 // Board-level ceiling on halo output, percent. Boards with a ring set this well
 // below 100 (see board.h); single-LED boards leave it at 100 and are unchanged.
@@ -22,12 +17,31 @@
 #endif
 #define HALO_EFFECTIVE(br) (((br) * HALO_BRIGHT_SCALE) / 100)
 
+// Order MUST match driver-keypad/driver.xml's Halo Idle/Call Color <items> and
+// driver.lua's HALO_COLORS -- an index crossing the wire means the same color on
+// both ends only because both tables agree on position.
+const uint8_t HALO_PALETTE[HALO_PALETTE_COUNT][3] = {
+    {0, 0, 0},       {255, 255, 255}, {255, 170, 80},  {0, 0, 255},
+    {0, 200, 255},   {0, 180, 150},   {0, 255, 40},    {255, 130, 0},
+    {255, 0, 0},     {150, 0, 255},   {255, 40, 120},  {255, 0, 180},
+};
+const char *const HALO_PALETTE_NAMES[HALO_PALETTE_COUNT] = {
+    "Off", "White", "Warm White", "Blue", "Cyan", "Teal",
+    "Green", "Amber", "Red", "Purple", "Pink", "Magenta",
+};
+void halo_palette_rgb(uint8_t idx, uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    if (idx >= HALO_PALETTE_COUNT) idx = 0;
+    *r = HALO_PALETTE[idx][0]; *g = HALO_PALETTE[idx][1]; *b = HALO_PALETTE[idx][2];
+}
+
 #ifndef PIN_RGB_LED   // board has no onboard RGB LED -> everything is a no-op
 void halo_init(void) {}
 void halo_set_color(uint8_t r, uint8_t g, uint8_t b) { (void)r; (void)g; (void)b; }
 void halo_set_pulse_color(uint8_t r, uint8_t g, uint8_t b) { (void)r; (void)g; (void)b; }
 void halo_set_brightness(uint8_t pct) { (void)pct; }
 void halo_pulse(bool on) { (void)on; }
+void halo_apply_settings(void) {}
 #else
 
 #include <math.h>
@@ -145,7 +159,7 @@ void halo_init(void)
     show(0,0,40); vTaskDelay(pdMS_TO_TICKS(180));
 #endif
     led_strip_clear(s_strip);
-    halo_set_color(0, 0, HALO_IDLE_BLUE);     // default: a very dim blue nightlight
+    halo_apply_settings();   // g_settings (NVS) is authoritative -- see config.h
     xTaskCreate(halo_task, "halo", 2560, NULL, 3, NULL);
     ESP_LOGI(TAG, "halo ready: %d px on GPIO%d", HALO_COUNT, PIN_RGB_LED);
 }
@@ -154,5 +168,15 @@ void halo_set_color(uint8_t r, uint8_t g, uint8_t b) { s_ir = r; s_ig = g; s_ib 
 void halo_set_pulse_color(uint8_t r, uint8_t g, uint8_t b) { s_pr = r; s_pg = g; s_pb = b; }
 void halo_set_brightness(uint8_t pct) { s_bright = pct > 100 ? 100 : pct; }
 void halo_pulse(bool on) { s_pulsing = on; }
+
+void halo_apply_settings(void)
+{
+    uint8_t r, g, b;
+    halo_palette_rgb(g_settings.halo_idle_color, &r, &g, &b);
+    halo_set_color(r, g, b);
+    halo_palette_rgb(g_settings.halo_ring_color, &r, &g, &b);
+    halo_set_pulse_color(r, g, b);
+    halo_set_brightness(g_settings.halo_brightness);
+}
 
 #endif // PIN_RGB_LED

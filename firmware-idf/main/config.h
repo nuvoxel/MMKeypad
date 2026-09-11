@@ -27,6 +27,13 @@ typedef struct {
     // blocked links but passes nothing, and Auto then burns 8 s on a DHCP lease
     // that will never arrive before falling back anyway.
     uint8_t  net_transport;    // 0=Auto (wired first)  1=Wi-Fi only  2=Ethernet only
+    // Halo (onboard/ring RGB LED) — indices into the fixed 12-color palette shared
+    // with the Composer driver's Halo Idle/Call Color LISTs (see halo.h HALO_PALETTE),
+    // not raw RGB: the driver only ever needs to show/echo a name, never guess one
+    // back from an arbitrary color. No-op on boards with no halo hardware.
+    uint8_t  halo_idle_color;  // palette index, default Blue — see halo.h
+    uint8_t  halo_ring_color;  // palette index shown while an intercom call rings
+    uint8_t  halo_brightness;  // 0..100 (Composer only offers 10/25/50/75/100)
 } settings_t;
 
 extern settings_t g_settings;
