@@ -891,8 +891,8 @@ static const char *const OPT_MUTE[]     = { "Off", "On" };   // maps directly to
 // which also guarantees the on-screen names can never drift from the wire palette.
 // Brightness stays a small discrete list (matches the Composer property) rather
 // than a slider, same reasoning as Idle brightness: index -> value in onCycle.
-static const char *const OPT_HALO_BRIGHT[] = { "10%", "25%", "50%", "75%", "100%" };
-static const uint8_t      HALO_BRIGHT_VALS[] = { 10, 25, 50, 75, 100 };
+static const char *const OPT_HALO_BRIGHT[] = { "Off", "10%", "25%", "50%", "75%", "100%" };
+static const uint8_t      HALO_BRIGHT_VALS[] = { 0, 10, 25, 50, 75, 100 };
 static uint8_t             s_haloBrightIdx;
 #endif
 #if MMK_NET_ETH && MMK_NET_WIFI
@@ -1575,10 +1575,10 @@ static void ui_show_settings(void) {
                         &g_settings.halo_idle_color, 7);
         settingsCycler(card, "Halo call color", HALO_PALETTE_NAMES, HALO_PALETTE_COUNT,
                         &g_settings.halo_ring_color, 8);
-        s_haloBrightIdx = 1;   // 25% -- matches the compiled-in/driver default if nothing matches
-        for (uint8_t i = 0; i < 5; i++)
+        s_haloBrightIdx = 2;   // 25% -- matches the compiled-in/driver default if nothing matches
+        for (uint8_t i = 0; i < 6; i++)
             if (HALO_BRIGHT_VALS[i] == g_settings.halo_brightness) { s_haloBrightIdx = i; break; }
-        settingsCycler(card, "Halo brightness", OPT_HALO_BRIGHT, 5, &s_haloBrightIdx, 9);
+        settingsCycler(card, "Halo brightness", OPT_HALO_BRIGHT, 6, &s_haloBrightIdx, 9);
 #endif
     }
 

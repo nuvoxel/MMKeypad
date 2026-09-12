@@ -848,6 +848,17 @@ for i, name in ipairs(HALO_ORDER) do HALO_INDEX[name] = i - 1 end   -- 0-based, 
 local function haloIndexFor(name) return HALO_INDEX[tostring(name or "")] or HALO_INDEX["Off"] end
 local function haloNameFor(idx) return HALO_ORDER[(tonumber(idx) or 0) + 1] or "Off" end
 
+-- "Halo Brightness" is a LIST like the color properties, but its values are numeric
+-- percents except for "Off" (0) -- same off/on shape as "Idle Brightness"/DIMLVL_MAP.
+local function haloBrightFor(name)
+  name = tostring(name or "")
+  return name == "Off" and 0 or (tonumber(name) or 25)
+end
+local function haloBrightNameFor(pct)
+  pct = tonumber(pct) or 25
+  return pct <= 0 and "Off" or tostring(pct)
+end
+
 -- The device is authoritative for halo state (config.h/NVS) -- this pushes an
 -- override, which the device applies, persists, and immediately reports back
 -- (see HandleMessage "halostate"); it does not itself update Properties.
@@ -855,7 +866,7 @@ function PushHalo()
   Send({ t = "halo",
          idle   = haloIndexFor(Properties and Properties["Halo Idle Color"]),
          ring   = haloIndexFor(Properties and Properties["Halo Call Color"]),
-         bright = tonumber(Properties and Properties["Halo Brightness"]) or 25 })
+         bright = haloBrightFor(Properties and Properties["Halo Brightness"]) })
   dbg("pushed halo: idle=" .. tostring(Properties and Properties["Halo Idle Color"]) ..
       " ring=" .. tostring(Properties and Properties["Halo Call Color"]) ..
       " bright=" .. tostring(Properties and Properties["Halo Brightness"]))
@@ -876,7 +887,8 @@ function SendHalo(colorName, brightName)
   Send({ t = "halo",
          idle   = idle or haloIndexFor(Properties and Properties["Halo Idle Color"]),
          ring   = haloIndexFor(Properties and Properties["Halo Call Color"]),
-         bright = tonumber(brightName) or tonumber(Properties and Properties["Halo Brightness"]) or 25 })
+         bright = brightName and haloBrightFor(brightName)
+                  or haloBrightFor(Properties and Properties["Halo Brightness"]) })
   dbg("SetHalo: color=" .. tostring(colorName) .. " bright=" .. tostring(brightName))
 end
 
@@ -1016,7 +1028,7 @@ function HandleMessage(line)
     pcall(function()
       C4:UpdateProperty("Halo Idle Color", haloNameFor(msg.idle))
       C4:UpdateProperty("Halo Call Color", haloNameFor(msg.ring))
-      C4:UpdateProperty("Halo Brightness", tostring(tonumber(msg.bright) or 25))
+      C4:UpdateProperty("Halo Brightness", haloBrightNameFor(msg.bright))
     end)
     gApplyingHaloReport = false
   elseif t == "ping" then Send({ t = "pong" })

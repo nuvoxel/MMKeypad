@@ -268,10 +268,10 @@
       <property>
         <name>Halo Brightness</name>
         <type>LIST</type>
-        <items><item>10</item><item>25</item><item>50</item><item>75</item><item>100</item></items>
+        <items><item>Off</item><item>10</item><item>25</item><item>50</item><item>75</item><item>100</item></items>
         <default>25</default>
         <readonly>false</readonly>
-      <tooltip>Overall halo LED brightness (percent).</tooltip></property>
+      <tooltip>Overall halo LED brightness (percent). Off disables the halo entirely.</tooltip></property>
       <!-- Now-playing element visibility (dealer-configurable look). -->
       <property><name>Now-Playing</name><type>LABEL</type><default>Now-Playing</default></property>
       <property><name>Show Title</name><type>LIST</type><items><item>Show</item><item>Hide</item></items><default>Show</default><readonly>false</readonly><tooltip>Show or hide the track title.</tooltip></property>
@@ -358,7 +358,7 @@
         <description>Set the halo LED: PARAM1 at PARAM2%</description>
         <params>
           <param><name>Color</name><type>LIST</type><items><item>Off</item><item>White</item><item>Warm White</item><item>Blue</item><item>Cyan</item><item>Teal</item><item>Green</item><item>Amber</item><item>Red</item><item>Purple</item><item>Pink</item><item>Magenta</item></items></param>
-          <param><name>Brightness</name><type>LIST</type><items><item>10</item><item>25</item><item>50</item><item>75</item><item>100</item></items></param>
+          <param><name>Brightness</name><type>LIST</type><items><item>Off</item><item>10</item><item>25</item><item>50</item><item>75</item><item>100</item></items></param>
         </params>
       </command>
       <command>
