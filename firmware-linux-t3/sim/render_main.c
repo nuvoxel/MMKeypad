@@ -31,7 +31,9 @@
 #include <time.h>
 
 #include "lvgl.h"
-#include "others/snapshot/lv_snapshot.h"
+// lvgl/lvgl bumped to ~9.5.0 (main/idf_component.yml) after this path was
+// written against 9.3's layout -- snapshot moved others/ -> draw/.
+#include "draw/snapshot/lv_snapshot.h"
 #include "ui.h"
 #include "config.h"   /* g_settings */
 #include "net.h"      /* media_state_t */

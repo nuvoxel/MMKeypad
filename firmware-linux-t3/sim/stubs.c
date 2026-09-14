@@ -46,6 +46,7 @@ void  net_get_ip(char *buf, size_t n)  { if (buf && n) { strncpy(buf, "192.168.1
 void  net_cmd(const char *c)           { (void)c; }
 void  net_set_volume(int level)        { (void)level; }
 void  net_send_button(int id)          { (void)id; }
+void  net_send_diag(const char *msg)   { (void)msg; }
 void  net_request_rooms(void)          { }
 void  net_request_favorites(void)      { }
 void  net_group_room(const char *id, bool join) { (void)id; (void)join; }
