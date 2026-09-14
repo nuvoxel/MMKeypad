@@ -158,6 +158,21 @@ static const char *iconGlyph(const char *n)
     return NULL;
 }
 
+// Favorite `kind` (net.h favorite_t / PROTOCOL.md) -> the icon-table glyph name for a
+// device-tile favorite (one with no artwork, rendered as a glyph instead). NULL for
+// media kinds (stream/broadcast), which keep the old artwork-or-bare-title tile.
+// "relay" reuses the existing "Garage" glyph (no dedicated gate glyph yet -- gates and
+// garage-door controllers share the same relay mechanism, see driver.lua
+// DoFireRelayFavorite).
+static const char *favDeviceGlyph(const char *kind)
+{
+    if (!strcmp(kind, "light"))   return "Lights";
+    if (!strcmp(kind, "shade"))   return "Shade";
+    if (!strcmp(kind, "comfort")) return "Climate";
+    if (!strcmp(kind, "relay"))   return "Garage";
+    return NULL;
+}
+
 // ── Theme tokens ─────────────────────────────────────────────────────────────
 // The layout is theme-agnostic: it reads all colors from the ACTIVE theme, so a
 // non-Control4 skin (e.g. Home Assistant colors) is just a second theme_t with the
@@ -828,9 +843,12 @@ static void rebuildFavGrid(void)
 
         // Artwork square, centred at the top of the tile; the title sits under it.
         // Sized so art + one line of text fit the tile without reflowing it.
-        bool isLight = !strcmp(s_favs[i].kind, "light");
+        const char *devGlyph = favDeviceGlyph(s_favs[i].kind);
+        // Only light/shade carry a meaningful `on` (see net.h favorite_t) -- comfort/
+        // relay tiles never get the amber "active" accent.
+        bool hasOnState = devGlyph && (!strcmp(s_favs[i].kind, "light") || !strcmp(s_favs[i].kind, "shade"));
         int artsz = 0;
-        if (s_favs[i].art_url[0] || isLight) {
+        if (s_favs[i].art_url[0] || devGlyph) {
             artsz = th - (small ? 34 : (int)(38 * s));
             int maxw = tw - (int)(24 * s);
             if (artsz > maxw) artsz = maxw;
@@ -840,14 +858,14 @@ static void rebuildFavGrid(void)
             if (!art_thumb_add(tile, (tw - artsz) / 2, (int)(8 * s), artsz, artsz,
                                s_favs[i].art_url))
                 artsz = 0;      // pool full / alloc failed -> fall back to a text tile
-        } else if (artsz > 0 && isLight) {
-            // No artwork for a device tile -- a bulb glyph in the same slot, amber
-            // (accent) when the light is on so the grid reads at a glance like the
-            // home page's keypad-button tiles.
+        } else if (artsz > 0 && devGlyph) {
+            // No artwork for a device tile -- a glyph in the same slot, amber (accent)
+            // when the device has an "on"/open state and it's active, so the grid
+            // reads at a glance like the home page's keypad-button tiles.
             lv_obj_t *ic = lv_label_create(tile);
             lv_obj_set_style_text_font(ic, FICON, 0);
-            lv_label_set_text(ic, iconGlyph("Lights"));
-            lv_obj_set_style_text_color(ic, lv_color_hex(s_favs[i].on ? 0xFFD166 : C_TEXT), 0);
+            lv_label_set_text(ic, iconGlyph(devGlyph));
+            lv_obj_set_style_text_color(ic, lv_color_hex((hasOnState && s_favs[i].on) ? 0xFFD166 : C_TEXT), 0);
             lv_obj_set_width(ic, artsz);
             lv_obj_set_style_text_align(ic, LV_TEXT_ALIGN_CENTER, 0);
             lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, (int)(8 * s));
@@ -2602,20 +2620,25 @@ static void build_home_tiles(int W, int H, bool smallP)
     for (int i = 0; i < nfav; i++) {
         lv_obj_t *ficon = NULL;
         int fx = 0, fsz = 0;
-        // kind:"light" tiles have no artwork and no source to resume -- they ARE a
-        // device, so they get the same on/off anatomy as a keypad button (bulb glyph,
-        // amber accent, "On" sub-line) instead of the media glyph. Everything else
-        // (stream/broadcast) keeps the old bare-title tile: the C4 app puts the
-        // PROVIDER on the sub-line ("Apple Music"), which we do not have, and echoing
-        // the raw kind there put "stream" under every favourite -- noise, not info.
-        bool isLight = !strcmp(s_favs[i].kind, "light");
-        const char *glyph = isLight ? "Lights" : NULL;
-        lv_obj_t *c = tileCard(grid, ICON_MEDIA, glyph, s_favs[i].title,
-                               (isLight && s_favs[i].on) ? "On" : NULL,
-                               isLight && s_favs[i].on, isLight ? 0xFFD166 : 0x4CC9F0,
+        // Device-kind tiles (light/shade/comfort/relay) have no artwork and no source
+        // to resume -- they ARE a device, so they get the same on/off anatomy as a
+        // keypad button (glyph, accent, sub-line) instead of the media glyph.
+        // Everything else (stream/broadcast) keeps the old bare-title tile: the C4 app
+        // puts the PROVIDER on the sub-line ("Apple Music"), which we do not have, and
+        // echoing the raw kind there put "stream" under every favourite -- noise, not
+        // info. Only light/shade have a meaningful `on` (net.h favorite_t); comfort is
+        // read-only and relay is a single fire-and-forget action, so neither gets a
+        // sub-line or amber accent -- they'd be lying about a state we don't track.
+        const char *kind = s_favs[i].kind;
+        const char *glyph = favDeviceGlyph(kind);
+        bool hasOnState = glyph && (!strcmp(kind, "light") || !strcmp(kind, "shade"));
+        bool active = hasOnState && s_favs[i].on;
+        const char *sub = !hasOnState ? NULL : (active ? (!strcmp(kind, "shade") ? "Open" : "On") : NULL);
+        lv_obj_t *c = tileCard(grid, ICON_MEDIA, glyph, s_favs[i].title, sub,
+                               active, active ? 0xFFD166 : 0x4CC9F0,
                                onHomeFav, (void *)(intptr_t)i, cw, ch, &ficon, &fx, &fsz);
         lv_obj_set_user_data(c, (void *)(intptr_t)i);
-        favArt(c, ficon, i, fx, fsz);   // art lands on the icon's own slot (no-op: lights carry no art_url)
+        favArt(c, ficon, i, fx, fsz);   // art lands on the icon's own slot (no-op: device tiles carry no art_url)
     }
 
     for (int i = 0; i < nbtn; i++) {

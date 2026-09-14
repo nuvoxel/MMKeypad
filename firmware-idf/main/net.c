@@ -561,8 +561,9 @@ static void handle_line(const char *line)
         if (s_cb.on_rooms) s_cb.on_rooms(rooms, n);
     } else if (!strcmp(ts, "favorites")) {
         // Driver reply to `getfavorites`: this room's favorite tiles (PROTOCOL.md).
-        // Each entry: id / title / image (-> art_url) / kind (stream|broadcast|light) /
-        // on (light state, absent-or-false for everything else).
+        // Each entry: id / title / image (-> art_url) / kind (stream|broadcast|light|
+        // shade|comfort|relay) / on (light/shade state, absent-or-false for everything
+        // else -- see net.h favorite_t).
         const cJSON *arr = cJSON_GetObjectItem(d, "list");
         static favorite_t favs[NET_MAX_FAVORITES];
         int n = 0;
