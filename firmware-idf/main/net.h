@@ -21,12 +21,13 @@
 
 typedef struct { char id[24]; char name[48]; } id_name_t;
 
-// A room navigator favorite tile (driver reply to `getfavorites`, PROTOCOL.md).
-// Room-level (no source id). `id` is the opaque favorite id sent back in a `favorite`
-// message to play it; `title` is the display label; `art_url` is the tile artwork URL
-// (may be empty); `kind` is `stream` | `broadcast` (informational — the driver enacts
-// the play; the device just sends the id).
-typedef struct { char id[40]; char title[96]; char art_url[300]; char kind[12]; } favorite_t;
+// A room favorite tile (driver reply to `getfavorites`, PROTOCOL.md). Room-level
+// (no source id). `id` is the opaque favorite id sent back in a `favorite` message to
+// activate it; `title` is the display label; `art_url` is the tile artwork URL (may be
+// empty); `kind` is `stream` | `broadcast` | `light` (informational — the driver
+// enacts the action; the device just sends the id back). `on` is the current on/off
+// state and is only meaningful for `kind:"light"` (always false otherwise).
+typedef struct { char id[40]; char title[96]; char art_url[300]; char kind[12]; bool on; } favorite_t;
 
 // Callable intercom target (driver-pushed): a room/door-station endpoint or a group.
 // `user` is the SIP username (endpoint) or group name; calling a group broadcasts.
