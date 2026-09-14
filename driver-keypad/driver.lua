@@ -2494,13 +2494,32 @@ function PlayItemOwner(srcId)
   return nil
 end
 
+-- Device variable carrying a light's on/off (percent) level — verified against the
+-- first-party room_control_keypad.c4z, which listens on it for its own "Any/All
+-- Lights On" tracking.
+local LIGHT_STATE_VAR = 1000
+
+-- Activate a light favorite: toggle it from its own last-known state (LIGHT_STATE_VAR),
+-- the same readback room_control_keypad.c4z uses for its physical Lights On/Off/Toggle
+-- buttons. No read-then-write race guard: worst case on a stale read is one extra tap,
+-- same as a physical switch someone else just used.
+function DoToggleLightFavorite(fav)
+  local id = tonumber(fav and fav.light); if not id then return end
+  local ok, v = pcall(function() return C4:GetDeviceVariable(id, LIGHT_STATE_VAR) end)
+  local isOn = ok and v and tostring(v) ~= "" and tostring(v) ~= "0"
+  local cmd = isOn and "OFF" or "ON"
+  dbg("favorite (light) ->", cmd, "device", id, "room", gRoom)
+  C4:SendToDevice(id, cmd, {})
+end
+
 -- Play a favorite the firmware tapped. Resolved from the gFavorites cache (built by
--- BuildFavoritesList) by favorite id. Two play paths (control4-media-commands.md):
+-- BuildFavoritesList) by favorite id. Three action paths (control4-media-commands.md):
 --   * kind "broadcast" — an exact Broadcast-Audio media item: SELECT_AUDIO_MEDIA {mediaid}
 --     into the room (fully verified, exact play).
 --   * kind "stream" — a media-service (streaming) station/playlist tile: exact play is
 --     navigator-GATED, so we fall back to selecting its SOURCE (DEVICE_SELECTED), which
 --     resumes that source's content. Honest degradation, no gray dependency.
+--   * kind "light" — a room-bound lighting device (BuildLightFavorites): toggle it.
 -- Legacy: a bare {mediaid} (no id) still plays broadcast-audio directly (Flavor-1 contract).
 function DoPlayFavorite(msg)
   if not gRoom then return end
@@ -2510,7 +2529,9 @@ function DoPlayFavorite(msg)
   local mid = (fav and fav.mediaid) or msg.mediaid
   local kind = fav and fav.kind or (mid and "broadcast") or nil
 
-  if kind == "broadcast" and mid and tostring(mid) ~= "" then
+  if kind == "light" then
+    DoToggleLightFavorite(fav)
+  elseif kind == "broadcast" and mid and tostring(mid) ~= "" then
     dbg("favorite -> SELECT_AUDIO_MEDIA BROADCAST_AUDIO mediaid", mid, "room", gRoom)
     C4:SendToDevice(tonumber(gRoom), "SELECT_AUDIO_MEDIA",
       { deselect = "0", type = "BROADCAST_AUDIO", mediaid = tostring(mid) })
@@ -2541,7 +2562,11 @@ end
 -- navigator identity. We filter to MEDIA favorites (streaming stations/playlists and any
 -- broadcast-audio presets) and cache each by id in gFavorites so DoPlayFavorite can resolve
 -- the play path. Category-launcher tiles (lights/shades/comfort/security/…) are dropped —
--- this is the media keypad's music-favorites grid.
+-- GET_ALL_ROOM_FAVORITES_STATE's non-"listen" <menu> entries point at gated
+-- Composer/Cerebellum REST paths (same gate that blocks streaming-favorite exact play),
+-- so this agent can't be turned into a generic non-media favorites source. What we DO add
+-- below (BuildLightFavorites) is a real generic mechanism, just not this one — see
+-- PROTOCOL.md "Non-media favorites" for the full reasoning.
 --
 -- Favorite XML (GET_ALL_ROOM_FAVORITES_STATE):
 --   <favorite><id>..</id><path>..</path><title>..</title><image>..artURL..</image>
@@ -2553,53 +2578,94 @@ function BuildFavoritesList()
   local ok, xml = pcall(function()
     return C4:SendUIRequest(UI_CONFIG_AGENT, "GET_ALL_ROOM_FAVORITES_STATE", {})
   end)
-  if not ok or not xml then dbg("getfavorites: agent 1609 read failed"); return {} end
-  xml = tostring(xml)
-
-  -- Narrow to our room's <favorites_state> block.
-  local block
-  for room in xml:gmatch("<room>(.-)</room>") do
-    if tonumber(room:match("<room_id>(%d+)</room_id>") or "") == rid then
-      block = room:match("<favorites_state>(.-)</favorites_state>"); break
-    end
-  end
-  if not block then dbg("getfavorites: no favorites for room", rid); return {} end
-
   local list = {}
-  for fav in block:gmatch("<favorite>(.-)</favorite>") do
-    local id    = fav:match("<id>(.-)</id>") or ""
-    local path  = fav:match("<path>(.-)</path>") or ""
-    -- Unescape: these come straight out of the agent's XML, so an ampersand in a
-    -- station name arrives as "&amp;" and was rendered literally on the panel.
-    local title = unescape(fav:match("<title>(.-)</title>") or "")
-    local image = fav:match("<image>(.-)</image>") or ""
-    local entry
-    -- Streaming (media-service) station/playlist favorite.
-    local src = path:match("/mediaservicefavorite/(%d+)")
-    if src then
-      -- The query string carries the CATALOG ITEM this tile points at, flattened as
-      --   context=href~/v1/catalog/us/stations/ra.123~id~ra.123~itemType~stations
-      -- Those three fields are what "Play Item" needs to play this exact item (see
-      -- PlayItemToken below), so keep them; without them all we can do is select the
-      -- source and hope it resumes something.
-      local ctx = path:match("[?&]context=([^&]*)") or ""
-      ctx = urldecode(ctx)
-      entry = { id = id, kind = "stream", src = tonumber(src),
-                href = ctx:match("href~([^~]+)"),
-                itemId = ctx:match("id~([^~]+)"),
-                itemType = ctx:match("itemType~([^~]+)") }
-    -- Broadcast-audio favorite (exact play by mediaid), if the tile carries one.
-    elseif fav:match("<mediaid>(%d+)</mediaid>") then
-      entry = { id = id, kind = "broadcast", mediaid = fav:match("<mediaid>(%d+)</mediaid>") }
+  if not ok or not xml then
+    dbg("getfavorites: agent 1609 read failed")
+  else
+    xml = tostring(xml)
+
+    -- Narrow to our room's <favorites_state> block.
+    local block
+    for room in xml:gmatch("<room>(.-)</room>") do
+      if tonumber(room:match("<room_id>(%d+)</room_id>") or "") == rid then
+        block = room:match("<favorites_state>(.-)</favorites_state>"); break
+      end
     end
-    if entry and id ~= "" then
-      entry.title = (title ~= "") and title or "Favorite"
-      gFavorites[id] = entry
-      list[#list + 1] = { id = id, title = entry.title, image = image, kind = entry.kind }
+    if not block then
+      dbg("getfavorites: no favorites for room", rid)
+    else
+      for fav in block:gmatch("<favorite>(.-)</favorite>") do
+        local id    = fav:match("<id>(.-)</id>") or ""
+        local path  = fav:match("<path>(.-)</path>") or ""
+        -- Unescape: these come straight out of the agent's XML, so an ampersand in a
+        -- station name arrives as "&amp;" and was rendered literally on the panel.
+        local title = unescape(fav:match("<title>(.-)</title>") or "")
+        local image = fav:match("<image>(.-)</image>") or ""
+        local entry
+        -- Streaming (media-service) station/playlist favorite.
+        local src = path:match("/mediaservicefavorite/(%d+)")
+        if src then
+          -- The query string carries the CATALOG ITEM this tile points at, flattened as
+          --   context=href~/v1/catalog/us/stations/ra.123~id~ra.123~itemType~stations
+          -- Those three fields are what "Play Item" needs to play this exact item (see
+          -- PlayItemToken below), so keep them; without them all we can do is select the
+          -- source and hope it resumes something.
+          local ctx = path:match("[?&]context=([^&]*)") or ""
+          ctx = urldecode(ctx)
+          entry = { id = id, kind = "stream", src = tonumber(src),
+                    href = ctx:match("href~([^~]+)"),
+                    itemId = ctx:match("id~([^~]+)"),
+                    itemType = ctx:match("itemType~([^~]+)") }
+        -- Broadcast-audio favorite (exact play by mediaid), if the tile carries one.
+        elseif fav:match("<mediaid>(%d+)</mediaid>") then
+          entry = { id = id, kind = "broadcast", mediaid = fav:match("<mediaid>(%d+)</mediaid>") }
+        end
+        if entry and id ~= "" then
+          entry.title = (title ~= "") and title or "Favorite"
+          gFavorites[id] = entry
+          list[#list + 1] = { id = id, title = entry.title, image = image, kind = entry.kind }
+        end
+      end
     end
   end
   dbg("getfavorites: room", rid, "->", #list, "media favorites")
+
+  if ShowProp("Show Light Favorites") then
+    for _, lf in ipairs(BuildLightFavorites(rid)) do list[#list + 1] = lf end
+  end
   return list
+end
+
+-- Non-media favorites, part 2: the room's bound LIGHTING devices, exposed as
+-- kind:"light" tiles. GET_LIGHT_DEVICES is a verified, ungated ROOM command (same
+-- family as the GET_LISTEN_DEVICES/GET_WATCH_DEVICES this file already uses for
+-- source enumeration) — see PROTOCOL.md "Non-media favorites" for why this, and not
+-- the navigator-favorites agent above, is the generic mechanism for this issue.
+-- Favorite id is "light:<deviceId>" (own namespace — never collides with a
+-- navigator favorite's GUID) so DoPlayFavorite can route it without a kind lookup
+-- on the wire.
+--
+-- GET_LIGHT_DEVICES XML: <source><id>..</id></source>… (device ids only; no name/type
+-- carried — resolved via DeviceName like every other device id in this driver).
+function BuildLightFavorites(rid)
+  local out = {}
+  local ok, xml = pcall(function() return C4:SendToDevice(rid, "GET_LIGHT_DEVICES", {}) end)
+  if not ok or type(xml) ~= "string" then dbg("GET_LIGHT_DEVICES failed for room", rid); return out end
+  for src in xml:gmatch("<source>(.-)</source>") do
+    local id = tonumber(src:match("<id>(%d+)</id>") or "")
+    if id then
+      local name = DeviceName(id)
+      if name ~= "" then
+        local okv, v = pcall(function() return C4:GetDeviceVariable(id, LIGHT_STATE_VAR) end)
+        local on = okv and v and tostring(v) ~= "" and tostring(v) ~= "0"
+        local favId = "light:" .. id
+        gFavorites[favId] = { id = favId, kind = "light", light = id, title = name }
+        out[#out + 1] = { id = favId, title = Normalize(name), kind = "light", on = on }
+      end
+    end
+  end
+  dbg("getfavorites: room", rid, "->", #out, "light favorites")
+  return out
 end
 
 -- Owner room of the multiroom session our room is currently in (from var 1006,

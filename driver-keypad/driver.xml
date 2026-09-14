@@ -278,6 +278,7 @@
       <property><name>Show Artist/Album</name><type>LIST</type><items><item>Show</item><item>Hide</item></items><default>Show</default><readonly>false</readonly><tooltip>Show or hide the artist/album line.</tooltip></property>
       <property><name>Show Info Button</name><type>LIST</type><items><item>Show</item><item>Hide</item></items><default>Show</default><readonly>false</readonly><tooltip>Show or hide the info/overflow (vertical ellipsis) button.</tooltip></property>
       <property><name>Show Progress Bar</name><type>LIST</type><items><item>Show</item><item>Hide</item></items><default>Show</default><readonly>false</readonly><tooltip>Show or hide the progress bar + time (only when the source reports a duration).</tooltip></property>
+      <property><name>Show Light Favorites</name><type>LIST</type><items><item>Show</item><item>Hide</item></items><default>Show</default><readonly>false</readonly><tooltip>Show the room's bound lighting devices as quick-access tiles alongside the music favorites. Hide to keep the favorites grid music-only.</tooltip></property>
       <!-- Programmable keypad buttons. Button count/label/icon/color/LED live in the
            driver's own button state, edited from Composer's NATIVE keypad editor —
            NOT here. Count comes from the device manifest (caps.buttons). -->

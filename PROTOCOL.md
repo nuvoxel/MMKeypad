@@ -44,7 +44,7 @@ the device just keeps listening.
 | `getrooms` | —                                     | Request the multiroom list (device sends when the add-rooms panel opens) → driver replies with `rooms` |
 | `grouproom` | `id` (str, room id), `join` (bool)  | Join (`true`) or leave (`false`) that room's multiroom grouping with this room (the add-rooms panel tap). Join = `ADD_ROOMS_TO_SESSION`; leave = the room is turned off (`ROOM_OFF`). |
 | `getfavorites` | —                                | Request this room's favorite tiles (device sends when the favorites grid opens) → driver replies with `favorites`. Room-level (no source id). |
-| `favorite` | `id` (str, favorite id)             | Play the favorite tile with this id. The driver resolves the play from the favorite's kind: `broadcast` → exact `SELECT_AUDIO_MEDIA`; `stream` → select the favorite's source (`DEVICE_SELECTED`, resumes that source — exact station play is navigator-gated). Legacy `mediaid` (str) instead of `id` still plays a broadcast-audio preset directly. |
+| `favorite` | `id` (str, favorite id)             | Activate the favorite tile with this id. The driver resolves the action from the favorite's kind: `broadcast` → exact `SELECT_AUDIO_MEDIA`; `stream` → select the favorite's source (`DEVICE_SELECTED`, resumes that source — exact station play is navigator-gated); `light` → toggle the room-bound light. Legacy `mediaid` (str) instead of `id` still plays a broadcast-audio preset directly. |
 | `button` | `id` (int, programmable keypad button)  | A keypad button was tapped → driver raises the keypad-proxy action |
 | `halostate` | `idle`, `ring` (0–11 palette index), `bright` (0–100) | Device's actual halo LED state (device is authoritative — see `halo` below). Sent after every `hello`, and again on any change from any source. |
 | `ping`   | —                                       | Keepalive |
@@ -229,21 +229,56 @@ device that doesn't render it ignores it.
 Tapping a room row sends `grouproom` (join/leave). Our own room can't be un-grouped from here.
 
 ### `favorites` — this room's favorite tiles (reply to `getfavorites`)
-The room's navigator favorite tiles (the user-configured music favorites), read from the
-UI Configuration agent (verified, no navigator identity). Each entry:
-`id` (opaque favorite id — send it back in `favorite` to play), `title` (display name),
-`image` (artwork URL, may be empty), `kind` (`stream` | `broadcast`). Forward-compatible:
-a device that doesn't render it ignores it. Tapping a tile sends `favorite` with its `id`.
+The room's favorite tiles: the user-configured music favorites (read from the UI
+Configuration agent, verified, no navigator identity) plus the room's bound lighting
+devices, exposed the same way (see "Non-media favorites" below). Each entry:
+`id` (opaque favorite id — send it back in `favorite` to activate it), `title` (display
+name), `image` (artwork URL, may be empty), `kind` (`stream` | `broadcast` | `light`),
+`on` (bool, current on/off state — only meaningful for `kind:"light"`, omitted/false for
+everything else). Forward-compatible: a device that doesn't render a kind or the `on`
+field ignores it. Tapping a tile sends `favorite` with its `id`.
 ```json
 {"t":"favorites","list":[
   {"id":"70F6945B-...","title":"Mike DeLuca's Station","image":"https://.../1024x1024sr.jpg","kind":"stream"},
-  {"id":"8F0FD8C2-...","title":"Electronic Station","image":"https://.../1024x1024sr.jpg","kind":"stream"}
+  {"id":"8F0FD8C2-...","title":"Electronic Station","image":"https://.../1024x1024sr.jpg","kind":"stream"},
+  {"id":"light:2481","title":"Kitchen Pendants","kind":"light","on":true}
 ]}
 ```
 > `kind:"stream"` tiles (media-service stations/playlists) play by selecting their source
 > (exact station play is navigator-gated); `kind:"broadcast"` tiles play the exact media
-> item. Both are enacted driver-side from the tile `id` — the device just sends the id.
-> Only media favorites are returned; category-launcher tiles are filtered out.
+> item; `kind:"light"` tiles toggle the light. All are enacted driver-side from the tile
+> `id` — the device just sends the id back. Only media favorites plus room lights are
+> returned; category-launcher tiles (comfort/security/etc.) from the navigator favorites
+> agent are still filtered out — see "Non-media favorites" below for why.
+
+#### Non-media favorites (lights, gates, …) — what's actually possible
+
+`GET_ALL_ROOM_FAVORITES_STATE` (the agent the media favorites above come from) returns
+a `<menu>` tag per tile — `listen | comfort | security | …` — so Composer's favorites
+system already carries non-media categories. But every non-`listen` tile's `<path>` is,
+like the gated streaming-favorite paths, a Composer/Cerebellum REST endpoint
+(`POST` to the Director's `:443` → 404 from an unbound driver) — there is no verified way
+for a third-party driver to either read what's really on those tiles or fire them. So
+this is **not** a generic Navigator-favorites bridge.
+
+What a driver CAN do, verified against the first-party `room_control_keypad.c4z`
+(the physical room-controller keypad's own driver): the room command
+`GET_LIGHT_DEVICES` (`C4:SendToDevice(roomId, "GET_LIGHT_DEVICES", {})`, same shape as
+the already-used `GET_LISTEN_DEVICES`/`GET_WATCH_DEVICES`) enumerates the room's bound
+lighting devices, and each one takes plain `ON`/`OFF` room-command-style device commands
+with on/off state readable off device variable `1000`. That's a real, ungated, generic
+mechanism — so `kind:"light"` favorites are the room's bound lights, not navigator
+favorites tiles, toggled directly.
+
+**Gates, garage doors, and everything else "comfort/security" implies have no
+equivalent verified generic enumeration** — Control4 exposes those per-vendor (a
+relay, a lock, a specific driver's command set), not through a room command a
+third-party driver can walk the way `GET_LIGHT_DEVICES` does for lights. Extending
+`kind` to a vendor-specific device would mean hard-coding that vendor, which this
+driver doesn't do elsewhere (see the intercom door-actions design in `net.h`/
+`PROTOCOL.md` for the same call already made). This is scoped down accordingly:
+lights now, and the `kind` enum stays open for a future value if a similarly generic
+mechanism turns up for another category.
 
 #### How a favourite is played (driver-side)
 

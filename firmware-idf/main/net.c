@@ -541,8 +541,9 @@ static void handle_line(const char *line)
         }
         if (s_cb.on_rooms) s_cb.on_rooms(rooms, n);
     } else if (!strcmp(ts, "favorites")) {
-        // Driver reply to `getfavorites`: this room's navigator favorite tiles (PROTOCOL.md).
-        // Each entry: id / title / image (-> art_url) / kind (stream|broadcast).
+        // Driver reply to `getfavorites`: this room's favorite tiles (PROTOCOL.md).
+        // Each entry: id / title / image (-> art_url) / kind (stream|broadcast|light) /
+        // on (light state, absent-or-false for everything else).
         const cJSON *arr = cJSON_GetObjectItem(d, "list");
         static favorite_t favs[NET_MAX_FAVORITES];
         int n = 0;
@@ -554,6 +555,7 @@ static void handle_line(const char *line)
                 get_str(it, "title", favs[n].title,   sizeof(favs[n].title));
                 get_str(it, "image", favs[n].art_url, sizeof(favs[n].art_url));
                 get_str(it, "kind",  favs[n].kind,    sizeof(favs[n].kind));
+                favs[n].on = get_bool(it, "on", false);
                 n++;
             }
         }

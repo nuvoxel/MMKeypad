@@ -777,17 +777,31 @@ static void rebuildFavGrid(void)
 
         // Artwork square, centred at the top of the tile; the title sits under it.
         // Sized so art + one line of text fit the tile without reflowing it.
+        bool isLight = !strcmp(s_favs[i].kind, "light");
         int artsz = 0;
-        if (s_favs[i].art_url[0]) {
+        if (s_favs[i].art_url[0] || isLight) {
             artsz = th - (small ? 34 : (int)(38 * s));
             int maxw = tw - (int)(24 * s);
             if (artsz > maxw) artsz = maxw;
             if (artsz < 24) artsz = 0;
         }
-        if (artsz > 0) {
+        if (artsz > 0 && s_favs[i].art_url[0]) {
             if (!art_thumb_add(tile, (tw - artsz) / 2, (int)(8 * s), artsz, artsz,
                                s_favs[i].art_url))
                 artsz = 0;      // pool full / alloc failed -> fall back to a text tile
+        } else if (artsz > 0 && isLight) {
+            // No artwork for a device tile -- a bulb glyph in the same slot, amber
+            // (accent) when the light is on so the grid reads at a glance like the
+            // home page's keypad-button tiles.
+            lv_obj_t *ic = lv_label_create(tile);
+            lv_obj_set_style_text_font(ic, FICON, 0);
+            lv_label_set_text(ic, iconGlyph("Lights"));
+            lv_obj_set_style_text_color(ic, lv_color_hex(s_favs[i].on ? 0xFFD166 : C_TEXT), 0);
+            lv_obj_set_width(ic, artsz);
+            lv_obj_set_style_text_align(ic, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, (int)(8 * s));
+        } else {
+            artsz = 0;
         }
 
         lv_obj_t *lbl = lv_label_create(tile);
@@ -842,7 +856,8 @@ void ui_set_favorites(const favorite_t *favs, int n)
     for (int i = 0; !changed && i < n; i++) {
         if (strcmp(s_favs[i].id, favs[i].id) != 0 ||
             strcmp(s_favs[i].title, favs[i].title) != 0 ||
-            strcmp(s_favs[i].kind, favs[i].kind) != 0) changed = true;
+            strcmp(s_favs[i].kind, favs[i].kind) != 0 ||
+            s_favs[i].on != favs[i].on) changed = true;   // light on/off flips the tile
     }
     if (n > 0) memcpy(s_favs, favs, (size_t)n * sizeof(favorite_t));
     s_nFavs = n;
@@ -2101,14 +2116,20 @@ static void build_home_tiles(int W, int H, bool smallP)
     for (int i = 0; i < nfav; i++) {
         lv_obj_t *ficon = NULL;
         int fx = 0, fsz = 0;
-        // No sub-line: the C4 app puts the PROVIDER there ("Apple Music"), which we do
-        // not have -- and echoing the raw kind put "stream" under every
-        // favourite, which is noise rather than information.
-        lv_obj_t *c = tileCard(grid, ICON_MEDIA, NULL, s_favs[i].title, NULL,
-                               false, 0x4CC9F0, onHomeFav, (void *)(intptr_t)i,
-                               cw, ch, &ficon, &fx, &fsz);
+        // kind:"light" tiles have no artwork and no source to resume -- they ARE a
+        // device, so they get the same on/off anatomy as a keypad button (bulb glyph,
+        // amber accent, "On" sub-line) instead of the media glyph. Everything else
+        // (stream/broadcast) keeps the old bare-title tile: the C4 app puts the
+        // PROVIDER on the sub-line ("Apple Music"), which we do not have, and echoing
+        // the raw kind there put "stream" under every favourite -- noise, not info.
+        bool isLight = !strcmp(s_favs[i].kind, "light");
+        const char *glyph = isLight ? "Lights" : NULL;
+        lv_obj_t *c = tileCard(grid, ICON_MEDIA, glyph, s_favs[i].title,
+                               (isLight && s_favs[i].on) ? "On" : NULL,
+                               isLight && s_favs[i].on, isLight ? 0xFFD166 : 0x4CC9F0,
+                               onHomeFav, (void *)(intptr_t)i, cw, ch, &ficon, &fx, &fsz);
         lv_obj_set_user_data(c, (void *)(intptr_t)i);
-        favArt(c, ficon, i, fx, fsz);   // art lands on the icon's own slot
+        favArt(c, ficon, i, fx, fsz);   // art lands on the icon's own slot (no-op: lights carry no art_url)
     }
 
     for (int i = 0; i < nbtn; i++) {
