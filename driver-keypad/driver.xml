@@ -563,27 +563,22 @@
       <consumer>False</consumer>
       <classes><class><classname>MMKEYPAD_INTERCOM</classname></class></classes>
     </connection>
-    <!-- Security partition CONSUMER binding (Security panel page, issue #2): the
-         installer binds this to a Control4 SECURITY partition proxy elsewhere in
-         the project (a security-panel driver's partition sub-proxy, e.g. the
-         "Home"/"Office" partitions on a live IQPanel2/DSC/Honeywell integration).
-         type=2 (PROXY) mirrors the keypad connection above; consumer=True is the
-         difference — THIS driver binds outward to consume another proxy rather
-         than provide one. Left unbound, driver.lua's SECURITY_BINDING never sees
-         OnBindingChanged and the device is told `available:false`, hiding the
-         Security tile/page entirely (see ui.c sec_available()).
+    <!-- No Security Partition connection any more (security-auto-discover, issue #2
+         follow-up, 2026-09-14): the manual CONSUMER binding this driver used to
+         require (id 5010, type=2 PROXY, class SECURITY) is gone. Partitions are now
+         auto-discovered per room via C4:SendToDevice(gRoom, "GET_SECURITY_DEVICES",
+         {}) -- the same room-command family as GET_LIGHT_DEVICES/GET_BLIND_DEVICES
+         -- confirmed live to be genuinely room-scoped (room 2434 "Office" returns
+         two real partitions; every other tested room returns one). See
+         driver.lua BuildSecurityList / net.h security_state_t.
 
-         One partition per keypad instance for v1 — a multi-partition picker
-         (issue #2 "Open questions") is future work; a house with several
-         partitions needs one keypad instance's worth of Security UI bound per
-         partition, same as one room per driver instance today. -->
-    <connection>
-      <id>5010</id>
-      <type>2</type>
-      <connectionname>Security Partition</connectionname>
-      <consumer>True</consumer>
-      <classes><class><classname>SECURITY</classname></class></classes>
-    </connection>
+         This connection is safe to remove outright rather than leave
+         declared-but-unused: the proxy-set-change hazard called out at the top of
+         this file is specifically about the driver's OWN <proxies> (the keypad_proxy
+         instantiated child), not a <connection> entry -- a CONSUMER connection like
+         this one never instantiated anything of its own to begin with, so dropping
+         it does not touch that hazard. An install with 5010 already bound simply
+         loses a binding target on upgrade; driver.lua no longer reads it either way. -->
     <!-- Network binding the installer associates with the SDDP-discovered MMKeypad
          on the Connections page. The DRIVER connects OUT to the device (which is a
          TCP server on this port). auto_connect=True so Director dials it on bind. -->

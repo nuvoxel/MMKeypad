@@ -84,13 +84,6 @@ KEYPAD_MAX     = 64
 RELAY_BINDING  = 700  -- CONTROL binding the companion intercom driver consumes
 INTERCOM_C4Z   = "NuVoxelKeypadIntercom.c4z"  -- the companion intercom endpoint driver
 
--- Security panel (issue #2). CONSUMER binding to a Control4 SECURITY partition proxy
--- (see driver.xml) -- one partition per keypad instance. Unbound is the normal state
--- for most installs (no security system, or this keypad isn't the one wired to it):
--- the device is told `available:false` and hides the feature, same idea as the
--- intercom's caps-driven gate.
-SECURITY_BINDING = 5010
-
 print("NuVoxelKeypad: driver.lua loading v" .. DRIVER_VERSION)
 
 -- Robust JSON load (bundled lib, else C4 built-in fallback so the driver always loads).
@@ -135,8 +128,10 @@ local gSources   = nil            -- cached source list (reset on connect)
 local gFavorites = nil            -- cached room favorites keyed by favId -> descriptor, built in
                                   -- BuildFavoritesList, read by DoPlayFavorite (path-2 navigator favorites)
 local gButtons   = nil            -- keypad button state {id,label,color,on}, set by the proxy
-local gSecurityDev  = nil         -- Control4 device id of the bound SECURITY partition proxy
-                                  -- (nil = SECURITY_BINDING unbound -> feature hidden on the device)
+local gSecurityWatch = {}         -- Control4 device id -> true, partitions we currently
+                                  -- C4:RegisterVariableListener on (see WatchSecurityDevices;
+                                  -- replaces the old single gSecurityDev bound-proxy id --
+                                  -- a room can have more than one, see BuildSecurityList)
 local gLastSecState = nil         -- last pushed secstate JSON (dedupe, mirrors gLastState)
 local gLastComfortState = nil     -- last pushed comfortlist JSON (dedupe, mirrors gLastSecState)
 local gComfortWatch = {}          -- Control4 device id -> true, thermostats we currently
@@ -412,7 +407,7 @@ function OnDriverDestroyed(initType)
   StopPolling()
   UnwatchRoomVars()
   UnwatchAggregator()
-  UnwatchSecurityVars()
+  WatchSecurityDevices({})   -- drop every security variable listener (mirrors WatchComfortDevices({}))
   UnregisterMediaSessionEvents()          -- drop the system-event subscriptions
   cancelTimer(gEventDebounce);  gEventDebounce = nil
   cancelTimer(gEventQuiet);     gEventQuiet    = nil
@@ -447,7 +442,7 @@ function OnPropertyChanged(prop)
   elseif prop == "Show Comfort" then
     -- A dealer flipping this should reveal/hide the Comfort tile right away, not wait
     -- for the next connect/hello -- same idea as the Security tile reacting the
-    -- instant its binding changes (OnBindingChanged).
+    -- instant CheckRoomMoved re-runs BuildSecurityList after a room change.
     if gConnected then pcall(PushComfortState) end
   end
 end
@@ -760,21 +755,12 @@ function OnBindingChanged(idBinding, strClass, bIsBound, otherDeviceID, otherBin
     RelayHello()
   elseif idBinding == RELAY_BINDING then
     gIntercom = nil; RelayStatus()
-  elseif idBinding == SECURITY_BINDING then
-    if bIsBound then
-      gSecurityDev = tonumber(otherDeviceID)
-      dbg("security partition bound: device", tostring(gSecurityDev))
-      WatchSecurityVars()
-    else
-      dbg("security partition unbound")
-      UnwatchSecurityVars()
-      gSecurityDev = nil
-    end
-    -- Tell the device right away either way: a fresh bind should reveal the
-    -- feature without waiting for the next room-state push, and an unbind (or a
-    -- driver reload finding nothing bound) must hide it just as promptly.
-    if gConnected then PushSecurityState() end
   end
+  -- No SECURITY_BINDING branch any more (issue #2 follow-up, security-auto-discover):
+  -- the manual Composer binding this driver used to require is gone. Partitions are
+  -- now auto-discovered per room via GET_SECURITY_DEVICES (BuildSecurityList, same
+  -- room-command family as GET_LIGHT_DEVICES/GET_BLIND_DEVICES) -- see PushSecurityState,
+  -- called from CheckRoomMoved/OnConnectionStatusChanged instead of from here.
 end
 
 function OnConnectionStatusChanged(idBinding, nPort, strStatus)
@@ -2046,6 +2032,10 @@ function CheckRoomMoved()
   WatchRoomVars()
   pcall(RegisterMediaSessionEvents)
   pcall(PushState, true)     -- full push so the panel relabels immediately
+  -- Security IS room-scoped (unlike Comfort, see BuildSecurityList's provenance
+  -- note) -- a room change can genuinely change which partition(s) this keypad
+  -- should show, so re-discover here rather than only on connect.
+  pcall(PushSecurityState)
   -- Comfort's enumeration just needs SOME room id (GET_COMFORT_DEVICES isn't
   -- room-scoped), but it had none until gRoom first resolved -- covers a keypad
   -- whose room was still unknown at the connect-time PushComfortState() call above.
@@ -2133,63 +2123,114 @@ function UnwatchAggregator()
 end
 
 -- ============================================================================
--- Security panel (issue #2): partition state mirror + arm/disarm relay
+-- Security panel (issue #2, security-auto-discover follow-up): partition
+-- auto-discovery + state mirror + arm/disarm relay
 -- ============================================================================
--- NEEDS LIVE CONFIRMATION (flagged per the issue -- do not treat as verified):
--- these variable NAMES are read from a live Director dump of the SECURITY
--- partition proxy (2684/2685 in the research project), but every other listener
--- in this file (ROOM_VAR above, AGG_WATCH_VARS) watches a documented NUMERIC
--- variable id, and C4:RegisterVariableListener's normal contract is a numeric id
--- — passing a string name here is the best available guess (some third-party
--- DriverWorks proxies do accept a variable NAME), not a confirmed pattern for
--- SECURITY specifically. If a bound partition never fires OnWatchedVariableChanged
--- for these, this list — and whether it needs numeric ids instead — is the first
--- thing to check, against a live Composer/Director with a SPARE instance of this
--- driver bound to a test partition. Never re-probe this against the live
--- 2684/2685 partitions described in the research notes.
+-- REPLACES the old manual Composer binding (SECURITY_BINDING/gSecurityDev,
+-- OnBindingChanged's SECURITY branch, driver.xml's "Security Partition" CONSUMER
+-- connection) with the same room-command auto-discovery lights/shades already
+-- use. Confirmed live (2026-09-14, dev Director): C4:SendToDevice(rid,
+-- "GET_SECURITY_DEVICES", {}) is genuinely ROOM-SCOPED for Security -- room 2434
+-- "Office" returned TWO real partitions (2684 "Home", 2685 "Office"), while rooms
+-- 2417 "Playroom" and 2425 "Emily's Room" each returned only 2684. This is the
+-- opposite finding from Comfort (GET_COMFORT_DEVICES is NOT room-scoped, see
+-- below) -- Security genuinely needed the per-room model the original binding
+-- was trying to approximate manually.
+--
+-- The response carries two pseudo-sources alongside real partitions --
+-- <type>SPECIAL_SECURITY_CAMERAS</type> and <type>SPECIAL_SECURITY_CONTACTS</type>
+-- -- skipped exactly like BuildComfortList skips SPECIAL_COMFORT_*; only
+-- <type>Security</type> entries are real partitions.
+--
+-- Never sends PARTITION_ARM/PARTITION_DISARM/EXECUTE_EMERGENCY as part of
+-- discovery -- GET_SECURITY_DEVICES and GetDeviceVariable are read-only.
 local SECURITY_WATCH_VARS = {
   "PARTITION_STATE", "DISPLAY_TEXT", "TROUBLE_TEXT", "OPEN_ZONE_COUNT",
   "DELAY_TIME_TOTAL", "DELAY_TIME_REMAINING", "ALARM_TYPE", "ARMED_TYPE",
   "LAST_ZONE_FAULTED", "LAST_ARM_FAILED",
 }
+-- NEEDS LIVE CONFIRMATION (carried over from issue #2, still unresolved by this
+-- follow-up -- discovery was the thing confirmed this session, not the listener
+-- contract): these variable NAMES come from a live Director dump of the SECURITY
+-- partition proxy, but every other listener in this file (ROOM_VAR, AGG_WATCH_VARS,
+-- COMFORT_WATCH_VARS) watches a documented NUMERIC variable id, and
+-- C4:RegisterVariableListener's normal contract is a numeric id -- passing a
+-- string name here is the best available guess, not confirmed for SECURITY
+-- specifically. If a discovered partition never fires OnWatchedVariableChanged for
+-- these, this list -- and whether it needs numeric ids instead -- is the first
+-- thing to check. Never re-probe this against the live 2684/2685 partitions.
+local SECURITY_MAX = 4   -- sanity ceiling (net.h NET_MAX_PARTITIONS); live max seen is 2 (room 2434)
 
-function WatchSecurityVars()
-  if not gSecurityDev then return end
-  for _, v in ipairs(SECURITY_WATCH_VARS) do
-    pcall(function() C4:RegisterVariableListener(gSecurityDev, v) end)
+-- (Un)register the per-partition variable listeners so a real Control4-side
+-- change reaches this panel the instant it happens -- same idiom as
+-- WatchComfortDevices (newSet is the full set of ids that SHOULD be watched
+-- after this call; anything watched but not in newSet gets unwatched, anything
+-- in newSet but not already watched gets watched).
+function WatchSecurityDevices(newSet)
+  for id in pairs(gSecurityWatch) do
+    if not newSet[id] then
+      for _, v in ipairs(SECURITY_WATCH_VARS) do
+        pcall(function() C4:UnregisterVariableListener(id, v) end)
+      end
+    end
   end
-end
-function UnwatchSecurityVars()
-  if not gSecurityDev then return end
-  for _, v in ipairs(SECURITY_WATCH_VARS) do
-    pcall(function() C4:UnregisterVariableListener(gSecurityDev, v) end)
+  for id in pairs(newSet) do
+    if not gSecurityWatch[id] then
+      for _, v in ipairs(SECURITY_WATCH_VARS) do
+        pcall(function() C4:RegisterVariableListener(id, v) end)
+      end
+    end
   end
+  gSecurityWatch = newSet
 end
 
--- Build the `secstate` payload from the bound partition's live variables (read
--- fresh each time, same idea as getRoomVar -- no local cache of partition state
--- beyond gLastSecState's dedupe string). Returns { available = false } when no
--- partition is bound, which is what tells the device to hide the feature.
+-- Enumerate + read every real partition for gRoom (see the room-scoping note
+-- above -- unlike BuildComfortList, WHICH room asks here genuinely matters).
+-- Returns {} (and leaves listeners alone) before gRoom is known; CheckRoomMoved
+-- re-calls PushSecurityState once it resolves, same as every other room-dependent
+-- query in this file.
+function BuildSecurityList()
+  local out = {}
+  local rid = tonumber(gRoom); if not rid then return out end
+  local ok, xml = pcall(function() return C4:SendToDevice(rid, "GET_SECURITY_DEVICES", {}) end)
+  if not ok or type(xml) ~= "string" then dbg("GET_SECURITY_DEVICES failed for room", rid); return out end
+  local newWatch = {}
+  for src in xml:gmatch("<source>(.-)</source>") do
+    if src:match("<type>%s*Security%s*</type>") then
+      local id = tonumber(src:match("<id>(%d+)</id>") or "")
+      if id and #out < SECURITY_MAX then
+        local name = DeviceName(id)
+        local function v(varName)
+          local okv, val = pcall(C4.GetDeviceVariable, C4, id, varName)
+          return okv and val or nil
+        end
+        out[#out + 1] = {
+          id             = id,
+          title          = name ~= "" and Normalize(name) or "",
+          state          = tostring(v("PARTITION_STATE") or "UNKNOWN"),
+          display        = tostring(v("DISPLAY_TEXT") or ""),
+          trouble        = tostring(v("TROUBLE_TEXT") or ""),
+          openZones      = tonumber(v("OPEN_ZONE_COUNT")) or 0,
+          delayTotal     = tonumber(v("DELAY_TIME_TOTAL")) or 0,
+          delayRemaining = tonumber(v("DELAY_TIME_REMAINING")) or 0,
+          alarmType      = tostring(v("ALARM_TYPE") or ""),
+          armedType      = tostring(v("ARMED_TYPE") or ""),
+          lastFaulted    = tostring(v("LAST_ZONE_FAULTED") or ""),
+        }
+        newWatch[id] = true
+      end
+    end
+    -- <type>SPECIAL_SECURITY_CAMERAS</type> / SPECIAL_SECURITY_CONTACTS are NOT
+    -- real partitions -- skipped by the match above requiring exactly "Security".
+  end
+  WatchSecurityDevices(newWatch)
+  dbg("security:", #out, "real partition(s) for room", rid)
+  return out
+end
+
 function BuildSecurityState()
-  if not gSecurityDev then return { available = false } end
-  local function v(name)
-    local ok, val = pcall(C4.GetDeviceVariable, C4, gSecurityDev, name)
-    return ok and val or nil
-  end
-  return {
-    available = true,
-    partition = {
-      state          = tostring(v("PARTITION_STATE") or "UNKNOWN"),
-      display        = tostring(v("DISPLAY_TEXT") or ""),
-      trouble        = tostring(v("TROUBLE_TEXT") or ""),
-      openZones      = tonumber(v("OPEN_ZONE_COUNT")) or 0,
-      delayTotal     = tonumber(v("DELAY_TIME_TOTAL")) or 0,
-      delayRemaining = tonumber(v("DELAY_TIME_REMAINING")) or 0,
-      alarmType      = tostring(v("ALARM_TYPE") or ""),
-      armedType      = tostring(v("ARMED_TYPE") or ""),
-      lastFaulted    = tostring(v("LAST_ZONE_FAULTED") or ""),
-    },
-  }
+  local list = BuildSecurityList()
+  return { available = #list > 0, list = list }
 end
 
 function PushSecurityState()
@@ -2197,57 +2238,61 @@ function PushSecurityState()
   local st = BuildSecurityState()
   local ok, encoded = pcall(json.encode, st)
   if not ok then dbg("secstate encode failed:", tostring(encoded)); return end
-  if encoded == gLastSecState then return end   -- dedupe, same as PushState/gLastState
+  if encoded == gLastSecState then return end   -- dedupe, same as PushState/gLastComfortState
   gLastSecState = encoded
   st.t = "secstate"
   Send(st)
 end
 
--- Arm/disarm relay: device -> driver -> C4:SendToProxy on the bound partition.
--- The PIN (`msg.pin`) lives ONLY in this function's local `pin` for the duration
--- of one pcall — never assigned to a global, a property, or a dbg() call. Fail-
--- safe per the issue: this can only report "the command was sent" (`secresult`),
--- never "the partition armed/disarmed" — that claim is the device's job, and it
--- must make it ONLY from a subsequent `secstate` showing the requested state
--- (ui.c's fail-safe design; see PROTOCOL.md).
+-- Arm/disarm relay: device -> driver -> C4:SendToDevice on the partition the
+-- device named (`msg.id`, one of the ids the last secstate reported -- no more
+-- SendToProxy on a bound connection, since there is none any more). The PIN
+-- (`msg.pin`) lives ONLY in this function's local `pin` for the duration of one
+-- pcall — never assigned to a global, a property, or a dbg() call. Fail-safe per
+-- the issue: this can only report "the command was sent" (`secresult`), never
+-- "the partition armed/disarmed" — that claim is the device's job, and it must
+-- make it ONLY from a subsequent `secstate` showing the requested state for this
+-- id (ui.c's fail-safe design; see PROTOCOL.md).
 function DoSecurityArm(msg)
-  if not gSecurityDev then
-    Send({ t = "secresult", ok = false, action = "arm", error = "not bound" })
+  local id = tonumber(msg and msg.id)
+  if not id then
+    Send({ t = "secresult", ok = false, action = "arm", error = "no partition" })
     return
   end
   local pin = tostring(msg and msg.pin or "")
   if pin == "" then
-    Send({ t = "secresult", ok = false, action = "arm", error = "no code entered" })
+    Send({ t = "secresult", ok = false, action = "arm", id = id, error = "no code entered" })
     return
   end
   local armType = tostring(msg and msg.armType or "Away")
   local bypass  = (msg and msg.bypass == true)
   local ok = pcall(function()
-    C4:SendToProxy(SECURITY_BINDING, "PARTITION_ARM",
+    C4:SendToDevice(id, "PARTITION_ARM",
       { ArmType = armType, UserCode = pin, InterfaceID = "MMKeypad", Bypass = bypass })
   end)
   pin = nil   -- drop our only copy before returning
-  dbg("PARTITION_ARM sent (armType=" .. armType .. " bypass=" .. tostring(bypass) ..
+  dbg("PARTITION_ARM sent (id=" .. id .. " armType=" .. armType .. " bypass=" .. tostring(bypass) ..
       ") ok=" .. tostring(ok))   -- never logs the code
-  Send({ t = "secresult", ok = ok, action = "arm" })
+  Send({ t = "secresult", ok = ok, action = "arm", id = id })
 end
 
 function DoSecurityDisarm(msg)
-  if not gSecurityDev then
-    Send({ t = "secresult", ok = false, action = "disarm", error = "not bound" })
+  local id = tonumber(msg and msg.id)
+  if not id then
+    Send({ t = "secresult", ok = false, action = "disarm", error = "no partition" })
     return
   end
   local pin = tostring(msg and msg.pin or "")
   if pin == "" then
-    Send({ t = "secresult", ok = false, action = "disarm", error = "no code entered" })
+    Send({ t = "secresult", ok = false, action = "disarm", id = id, error = "no code entered" })
     return
   end
   local ok = pcall(function()
-    C4:SendToProxy(SECURITY_BINDING, "PARTITION_DISARM", { UserCode = pin, InterfaceID = "MMKeypad" })
+    C4:SendToDevice(id, "PARTITION_DISARM", { UserCode = pin, InterfaceID = "MMKeypad" })
   end)
   pin = nil
-  dbg("PARTITION_DISARM sent ok=" .. tostring(ok))   -- never logs the code
-  Send({ t = "secresult", ok = ok, action = "disarm" })
+  dbg("PARTITION_DISARM sent (id=" .. id .. ") ok=" .. tostring(ok))   -- never logs the code
+  Send({ t = "secresult", ok = ok, action = "disarm", id = id })
 end
 
 -- ============================================================================
@@ -2444,7 +2489,7 @@ end
 -- the separate intercom driver), our room/aggregator watches, the security
 -- partition, and the Comfort page's thermostats — so route on idDevice first.
 function OnWatchedVariableChanged(idDevice, idVariable, strValue)
-  if gSecurityDev and idDevice == gSecurityDev then
+  if gSecurityWatch[idDevice] then
     -- No debounce here (unlike SchedulePush for room vars): partition variables
     -- change far less often than a streaming session's, and a state change is
     -- exactly the kind of update that should reach the panel with no delay.
