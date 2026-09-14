@@ -39,6 +39,14 @@ extern const lv_image_dsc_t icon_thumb_up, icon_thumb_down, icon_shuffle;
 extern const lv_image_dsc_t icon_vol_up, icon_vol_mute, icon_dots;
 extern const lv_image_dsc_t icon_info, icon_close, icon_queue, icon_intercom, icon_call;
 extern const lv_image_dsc_t icon_group, icon_door, icon_mic, icon_settings, icon_power;
+// icon_light/fan/shade/scene/cool/heat below: extracted but never wired to anything
+// (grepped -- no consumer besides this declaration and their own definition in
+// mmk_c4icons.c, and no icon_ha_* counterpart exists for them either). Favorite/
+// button device glyphs go through iconGlyph()'s Lucide font table instead (see
+// ICONS[] and G_* below) -- confirmed correct, not a bug: light favorites already
+// render iconGlyph("Lights") at the right codepoint (U+E1C2, present in mmk_icons_24's
+// generated glyph set) with the amber on-state accent. Leaving these bitmaps in place
+// rather than deleting them -- not touching partner-licensed assets without a reason.
 extern const lv_image_dsc_t icon_light, icon_fan, icon_shade, icon_scene, icon_cool, icon_heat;
 extern const lv_image_dsc_t icon_security, icon_camera, icon_speaker, icon_tv, icon_home;
 extern const lv_image_dsc_t icon_garage, icon_stop, icon_bell, icon_wifi, icon_heart;

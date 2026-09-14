@@ -2801,6 +2801,13 @@ end
 -- family as the GET_LISTEN_DEVICES/GET_WATCH_DEVICES this file already uses for
 -- source enumeration) — see PROTOCOL.md "Non-media favorites" for why this, and not
 -- the navigator-favorites agent above, is the generic mechanism for this issue.
+--
+-- No BuildShadeFavorites/BuildComfortFavorites here: there is no GET_SHADE_DEVICES
+-- or GET_COMFORT_DEVICES to call. Checked every shade/thermostat driver in this
+-- project's local Control4 library plus a web search -- nothing references such a
+-- command, and room-level enumeration only exists for the three categories
+-- (Lighting/Listen/Watch) Composer's Room object natively binds. See PROTOCOL.md
+-- "Non-media favorites" for the full investigation before re-attempting this.
 -- Favorite id is "light:<deviceId>" (own namespace — never collides with a
 -- navigator favorite's GUID) so DoPlayFavorite can route it without a kind lookup
 -- on the wire.
