@@ -169,7 +169,6 @@ static const char *favDeviceGlyph(const char *kind)
     if (!strcmp(kind, "light"))   return "Lights";
     if (!strcmp(kind, "fan"))     return "Fan";
     if (!strcmp(kind, "shade"))   return "Shade";
-    if (!strcmp(kind, "comfort")) return "Climate";
     if (!strcmp(kind, "relay"))   return "Garage";
     return NULL;
 }
@@ -322,6 +321,38 @@ static inline bool ic_available(void)
 {
     return MMK_HAS_SIP != 0;
 }
+
+// ── Comfort page ─────────────────────────────────────────────────────────────
+// Same architecture/idiom as the Security page above: a full-screen page reachable
+// from a home tile, driver pushes state (`comfortlist`), taps relay back
+// (`comfortcmd`). REPLACES the old per-room kind:"comfort" favorite tile -- comfort
+// is a fixed, NOT-room-scoped house-wide thermostat list (confirmed live, see
+// driver.lua BuildComfortList), so a global menu (like Security) is the correct
+// model, not a per-room tile. List page: one row per thermostat (name + current
+// temp + mode). Detail page: heat/cool setpoint +/- and a mode picker for one
+// tapped thermostat.
+static comfort_state_t s_cmf;
+static bool      s_cmfAvailable;   // s_cmf.available, mirrored so a rebuild can gate before any comfortlist ever arrives
+static bool      s_cmfHomeShown;   // home Comfort card is currently shown (ic_available()-style rebuild gate)
+static lv_obj_t *s_cmfPanel, *s_cmfList;             // list page (thermostat rows)
+static lv_obj_t *s_cmfDetail;                        // detail page (one thermostat)
+static lv_obj_t *s_cmfDetailTitle, *s_cmfDetailTemp, *s_cmfDetailFan;
+static lv_obj_t *s_cmfHeatRow, *s_cmfHeatLbl, *s_cmfCoolRow, *s_cmfCoolLbl;
+static lv_obj_t *s_cmfModeBtns[4], *s_cmfModeLbls[4];   // off/heat/cool/auto
+static int       s_cmfDetailId = -1;   // comfort_t.id currently shown on the detail page, -1 = none
+// A tapped +/-/mode button shows "..." in place of the number/highlight until the
+// NEXT comfortlist push confirms it (or a short timeout gives up and just shows
+// whatever the last confirmed value was) -- not a fail-safe requirement the way
+// Security's PIN flow is (a thermostat bump is not a security action), but the same
+// "never claim a change happened before the driver confirms it" spirit as the
+// light/shade favorites' optimistic-guess caveats, applied honestly here: this
+// shows PENDING, not a guessed new value.
+static bool      s_cmfPending;         // some comfortcmd is in flight for s_cmfDetailId
+static uint32_t  s_cmfPendingSinceMs;
+#define CMF_PENDING_TIMEOUT_MS 8000   // no confirming comfortlist in time -> drop the "..." silently
+
+static inline bool cmf_available(void) { return s_cmfAvailable; }
+
 // X4-inspired home/main screen (modern, not a C4 clone): room name + a few big
 // glass cards (Listen/Intercom/Keypad) + a mini-player bar. Shown by default;
 // tapping Listen / the mini-player expands into the now-playing screen.
@@ -845,8 +876,8 @@ static void rebuildFavGrid(void)
         // Artwork square, centred at the top of the tile; the title sits under it.
         // Sized so art + one line of text fit the tile without reflowing it.
         const char *devGlyph = favDeviceGlyph(s_favs[i].kind);
-        // Only light/shade carry a meaningful `on` (see net.h favorite_t) -- comfort/
-        // relay tiles never get the amber "active" accent.
+        // Only light/shade carry a meaningful `on` (see net.h favorite_t) -- relay
+        // tiles never get the amber "active" accent.
         bool hasOnState = devGlyph && (!strcmp(s_favs[i].kind, "light") || !strcmp(s_favs[i].kind, "fan") || !strcmp(s_favs[i].kind, "shade"));
         int artsz = 0;
         if (s_favs[i].art_url[0] || devGlyph) {
@@ -1897,6 +1928,35 @@ static void homeSecurity(lv_event_t *e)
 }
 void ui_show_security_panel(void) { homeSecurity(NULL); }
 
+// ── Comfort page (home tile) ────────────────────────────────────────────────
+// Same idiom as homeSecurity just above: reveal the full-screen list page over
+// home. cmfRebuildList (defined with the rest of the Comfort page, after the
+// Security page below) repopulates the thermostat rows from s_cmf.
+static void cmfRebuildList(void);   // fwd
+static void cmfDetailRebuild(void); // fwd
+static void onCmfHome(lv_event_t *e) { (void)e; goHomeFrom(s_cmfPanel); }
+static void homeComfort(lv_event_t *e)
+{
+    (void)e;
+    if (!s_cmfPanel) return;
+    if (s_x4 && s_home) { s_homeAtHome = false; lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); }
+    cmfRebuildList();
+    lv_obj_clear_flag(s_cmfPanel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_cmfPanel);
+}
+void ui_show_comfort_panel(void) { homeComfort(NULL); }
+// Sim/preview only: jump straight to one thermostat's detail page (bypassing the
+// list-row tap), so the sim can render it without simulating a touch event.
+void ui_show_comfort_detail(int id)
+{
+    homeComfort(NULL);
+    s_cmfDetailId = id;
+    s_cmfPending = false;
+    cmfDetailRebuild();
+    if (s_cmfPanel)  lv_obj_add_flag(s_cmfPanel, LV_OBJ_FLAG_HIDDEN);
+    if (s_cmfDetail) { lv_obj_clear_flag(s_cmfDetail, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(s_cmfDetail); }
+}
+
 // Humanize the driver's raw PARTITION_STATE for display ("DISARMED_READY" ->
 // "Disarmed"). The mapped values below are the ones named in the issue's live
 // research; anything else falls back to a readable "Some state" rendering of the
@@ -2301,6 +2361,333 @@ void ui_set_security_result(const security_result_t *res)
     // (ui_tick_progress) -- never flips to a success message on its own.
 }
 
+// ── Comfort page: list + detail ─────────────────────────────────────────────
+static comfort_t *cmfFind(int id)
+{
+    for (int i = 0; i < s_cmf.n; i++) if (s_cmf.list[i].id == id) return &s_cmf.list[i];
+    return NULL;
+}
+static void onCmfDetailBack(lv_event_t *e)
+{
+    (void)e;
+    if (s_cmfDetail) lv_obj_add_flag(s_cmfDetail, LV_OBJ_FLAG_HIDDEN);
+    if (s_cmfPanel) { lv_obj_clear_flag(s_cmfPanel, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(s_cmfPanel); }
+}
+
+// Refresh the detail page from s_cmf + s_cmfPending. Bails back to the list if the
+// tapped thermostat is no longer in a fresh list (dropped from the house, or the
+// dealer just hid Comfort) rather than showing stale/garbage state for a device id
+// that no longer resolves to anything.
+static void cmfDetailRebuild(void)
+{
+    if (!s_cmfDetail || s_cmfDetailId < 0) return;
+    comfort_t *c = cmfFind(s_cmfDetailId);
+    if (!c) { onCmfDetailBack(NULL); return; }
+
+    if (s_cmfDetailTitle) lv_label_set_text(s_cmfDetailTitle, c->title);
+    if (s_cmfDetailTemp) {
+        char buf[24]; snprintf(buf, sizeof(buf), "%d\xC2\xB0%s", c->temp, c->scale);
+        lv_label_set_text(s_cmfDetailTemp, buf);
+    }
+    if (s_cmfDetailFan) {
+        char buf[40]; snprintf(buf, sizeof(buf), "Fan: %s", c->fan[0] ? c->fan : "auto");
+        lv_label_set_text(s_cmfDetailFan, buf);
+    }
+    // PENDING (a comfortcmd is in flight for THIS thermostat): show "..." rather
+    // than the last-confirmed number, and don't highlight any mode pill as current
+    // -- the honest "we don't know yet" state, not an optimistic guess (see the
+    // s_cmfPending declaration comment above).
+    if (s_cmfHeatRow) setVis(s_cmfHeatRow, c->has_heat);
+    if (s_cmfHeatLbl) {
+        if (s_cmfPending) lv_label_set_text(s_cmfHeatLbl, "...");
+        else { char b[16]; snprintf(b, sizeof(b), "%d\xC2\xB0%s", c->heat, c->scale); lv_label_set_text(s_cmfHeatLbl, b); }
+    }
+    if (s_cmfCoolRow) setVis(s_cmfCoolRow, c->has_cool);
+    if (s_cmfCoolLbl) {
+        if (s_cmfPending) lv_label_set_text(s_cmfCoolLbl, "...");
+        else { char b[16]; snprintf(b, sizeof(b), "%d\xC2\xB0%s", c->cool, c->scale); lv_label_set_text(s_cmfCoolLbl, b); }
+    }
+    static const char *modeNames[4] = { "off", "heat", "cool", "auto" };
+    for (int i = 0; i < 4; i++) {
+        if (!s_cmfModeBtns[i]) continue;
+        bool active = !s_cmfPending && !strcmp(c->mode, modeNames[i]);
+        lv_obj_set_style_bg_opa(s_cmfModeBtns[i], active ? LV_OPA_60 : LV_OPA_20, 0);
+        lv_obj_set_style_bg_color(s_cmfModeBtns[i], lv_color_hex(active ? C_ACCENT : 0xFFFFFF), 0);
+    }
+}
+
+// Setpoint/mode taps: mark pending + repaint "..." immediately (so the tap feels
+// acknowledged), then relay to the driver. The confirming repaint comes from
+// ui_set_comfort on the next comfortlist push, same as the security PIN flow's
+// s_secPending -- just without a PIN or a fail-safe result message, since a
+// thermostat bump isn't a security action (see net.h net_comfort_cmd).
+static void cmfBeginPending(void)
+{
+    s_cmfPending = true;
+    s_cmfPendingSinceMs = millis();
+    cmfDetailRebuild();
+}
+static void onCmfHeatDec(lv_event_t *e) { (void)e; if (s_cmfDetailId < 0) return; cmfBeginPending(); net_comfort_cmd(s_cmfDetailId, "heat_dec", NULL); }
+static void onCmfHeatInc(lv_event_t *e) { (void)e; if (s_cmfDetailId < 0) return; cmfBeginPending(); net_comfort_cmd(s_cmfDetailId, "heat_inc", NULL); }
+static void onCmfCoolDec(lv_event_t *e) { (void)e; if (s_cmfDetailId < 0) return; cmfBeginPending(); net_comfort_cmd(s_cmfDetailId, "cool_dec", NULL); }
+static void onCmfCoolInc(lv_event_t *e) { (void)e; if (s_cmfDetailId < 0) return; cmfBeginPending(); net_comfort_cmd(s_cmfDetailId, "cool_inc", NULL); }
+static void onCmfMode(lv_event_t *e)
+{
+    static const char *modeNames[4] = { "off", "heat", "cool", "auto" };
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (s_cmfDetailId < 0 || i < 0 || i >= 4) return;
+    cmfBeginPending();
+    net_comfort_cmd(s_cmfDetailId, "mode", modeNames[i]);
+}
+
+static void onCmfRow(lv_event_t *e)
+{
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (i < 0 || i >= s_cmf.n) return;
+    s_cmfDetailId = s_cmf.list[i].id;
+    s_cmfPending = false;
+    cmfDetailRebuild();
+    if (s_cmfPanel)  lv_obj_add_flag(s_cmfPanel, LV_OBJ_FLAG_HIDDEN);
+    if (s_cmfDetail) { lv_obj_clear_flag(s_cmfDetail, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(s_cmfDetail); }
+}
+
+// (Re)build the thermostat list: one tileCard row per real thermostat, same tile
+// language as the intercom picker / favorites grid. Sub-line is "72F - Cool" (temp +
+// capitalized mode) -- there's no per-tile artwork or on/off state the way a
+// light/shade favorite has, so the glyph is always the "Climate" mark.
+static void cmfRebuildList(void)
+{
+    if (!s_cmfList) return;
+    lv_obj_clean(s_cmfList);
+    const float s = s_uiscale;
+    const int gap = (int)(14 * s);
+    const int dispW = lv_display_get_horizontal_resolution(NULL);
+    const bool portrait = (lv_display_get_vertical_resolution(NULL) > dispW);
+    const int pad = (s < 0.99f) ? 12 : (int)(28 * s);
+    const int W = dispW - 2 * pad;
+    int cols = portrait ? ((W + gap) / (190 + gap)) : ((W + gap) / (340 + gap));
+    if (cols < 1) cols = 1;
+    if (cols > 3) cols = 3;
+    if (portrait && cols > 2) cols = 2;
+    const int cw = (W - (cols - 1) * gap) / cols;
+    const int ch = (int)(76 * s);
+
+    lv_obj_set_flex_flow(s_cmfList, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_column(s_cmfList, gap, 0);
+    lv_obj_set_style_pad_row(s_cmfList, gap, 0);
+
+    for (int i = 0; i < s_cmf.n; i++) {
+        const comfort_t *c = &s_cmf.list[i];
+        char modeCap[8];
+        snprintf(modeCap, sizeof(modeCap), "%s", c->mode);
+        if (modeCap[0]) modeCap[0] = (char)toupper((unsigned char)modeCap[0]);
+        char sub[40];
+        snprintf(sub, sizeof(sub), "%d\xC2\xB0%s \xC2\xB7 %s", c->temp, c->scale, modeCap);
+        tileCard(s_cmfList, ICON_MEDIA, "Climate", c->title, sub, false, C_ACCENT,
+                 onCmfRow, (void *)(intptr_t)i, cw, ch, NULL, NULL, NULL);
+    }
+    if (s_cmf.n == 0) {
+        lv_obj_t *l = lv_label_create(s_cmfList);
+        lv_obj_set_style_text_font(l, F16, 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(0x9AA5B1), 0);
+        lv_label_set_text(l, "No thermostats");
+        lv_obj_set_style_pad_top(l, (int)(20 * s_uiscale), 0);
+    }
+}
+
+// One round +/- button, same visual language as the Security PIN pad's pinKey.
+// Plain ASCII "-"/"+" rather than LV_SYMBOL_MINUS/PLUS: those codepoints live in
+// LVGL's built-in symbol font, which this codebase's generated F24 (Roboto subset)
+// does not include -- confirmed via the sim (rendered as tofu boxes) rather than
+// assumed, same "verify, don't guess" standard as the rest of this feature.
+static lv_obj_t *cmfRoundBtn(lv_obj_t *p, const char *label, lv_event_cb_t cb, int sz)
+{
+    lv_obj_t *b = lv_button_create(p);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_size(b, sz, sz);
+    lv_obj_set_style_radius(b, sz / 2, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_10, 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_30, LV_STATE_PRESSED);
+    lv_obj_t *l = lv_label_create(b);
+    lv_obj_set_style_text_font(l, F24, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
+    lv_label_set_text(l, label);
+    lv_obj_center(l);
+    if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
+    return b;
+}
+
+static void buildComfortPage(lv_obj_t *scr, int W, int H, bool smallP)
+{
+    const float s = s_uiscale;
+
+    // ── List page: thermostat rows ──
+    s_cmfPanel = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_cmfPanel);
+    lv_obj_set_size(s_cmfPanel, W, H);
+    lv_obj_set_pos(s_cmfPanel, 0, 0);
+    lv_obj_add_flag(s_cmfPanel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(s_cmfPanel, lv_color_hex(HOME_BG_TOP), 0);
+    lv_obj_set_style_bg_grad_color(s_cmfPanel, lv_color_hex(HOME_BG_BOT), 0);
+    lv_obj_set_style_bg_grad_dir(s_cmfPanel, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(s_cmfPanel, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(s_cmfPanel, LV_OBJ_FLAG_SCROLLABLE);
+    if (smallP) {
+        lv_obj_t *back = iconBtnImg(s_cmfPanel, ICON_BACK, 30, 0, LV_OPA_TRANSP, 0xFFFFFF, onCmfHome, NULL);
+        lv_obj_align(back, LV_ALIGN_TOP_LEFT, 8, 8);
+    } else {
+        x4PageHeader(s_cmfPanel, "Comfort", onCmfHome);
+    }
+    const int lPad = smallP ? 12 : (int)(28 * s);
+    const int lTop = smallP ? 44 : (int)(118 * s);
+    s_cmfList = lv_obj_create(s_cmfPanel);
+    lv_obj_remove_style_all(s_cmfList);
+    lv_obj_set_size(s_cmfList, W - 2 * lPad, H - lTop - (int)(24 * s));
+    lv_obj_set_pos(s_cmfList, lPad, lTop);
+    lv_obj_set_style_pad_all(s_cmfList, 0, 0);
+    lv_obj_set_flex_flow(s_cmfList, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_scroll_dir(s_cmfList, LV_DIR_VER);
+
+    // ── Detail page: one thermostat's setpoints + mode ──
+    s_cmfDetail = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_cmfDetail);
+    lv_obj_set_size(s_cmfDetail, W, H);
+    lv_obj_set_pos(s_cmfDetail, 0, 0);
+    lv_obj_add_flag(s_cmfDetail, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(s_cmfDetail, lv_color_hex(HOME_BG_TOP), 0);
+    lv_obj_set_style_bg_grad_color(s_cmfDetail, lv_color_hex(HOME_BG_BOT), 0);
+    lv_obj_set_style_bg_grad_dir(s_cmfDetail, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(s_cmfDetail, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(s_cmfDetail, LV_OBJ_FLAG_SCROLLABLE);
+    if (smallP) {
+        lv_obj_t *back = iconBtnImg(s_cmfDetail, ICON_BACK, 30, 0, LV_OPA_TRANSP, 0xFFFFFF, onCmfDetailBack, NULL);
+        lv_obj_align(back, LV_ALIGN_TOP_LEFT, 8, 8);
+    } else {
+        x4PageHeader(s_cmfDetail, "Thermostat", onCmfDetailBack);
+    }
+    const int dTop = smallP ? 50 : (int)(120 * s);
+    s_cmfDetailTitle = lv_label_create(s_cmfDetail);
+    lv_obj_set_style_text_font(s_cmfDetailTitle, F24, 0);
+    lv_obj_set_style_text_color(s_cmfDetailTitle, lv_color_hex(C_SUBTLE), 0);
+    lv_label_set_text(s_cmfDetailTitle, "");
+    lv_obj_align(s_cmfDetailTitle, LV_ALIGN_TOP_MID, 0, dTop);
+
+    s_cmfDetailTemp = lv_label_create(s_cmfDetail);
+    lv_obj_set_style_text_font(s_cmfDetailTemp, F32, 0);
+    lv_obj_set_style_text_color(s_cmfDetailTemp, lv_color_hex(C_TEXT), 0);
+    lv_label_set_text(s_cmfDetailTemp, "--");
+    lv_obj_align_to(s_cmfDetailTemp, s_cmfDetailTitle, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(8 * s));
+
+    s_cmfDetailFan = lv_label_create(s_cmfDetail);
+    lv_obj_set_style_text_font(s_cmfDetailFan, F14, 0);
+    lv_obj_set_style_text_color(s_cmfDetailFan, lv_color_hex(C_SUBTLE), 0);
+    lv_label_set_text(s_cmfDetailFan, "");
+    lv_obj_align_to(s_cmfDetailFan, s_cmfDetailTemp, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(4 * s));
+
+    // Heat/cool setpoint rows: [-] value [+]. cmfDetailRebuild hides whichever of
+    // the two the thermostat doesn't report a setpoint for at all (has_heat/has_cool
+    // -- confirmed live that an "off"-mode thermostat reports neither).
+    //
+    // Chained via align_to off the PREVIOUS element's actual rendered box, not a
+    // fixed offset from the top -- confirmed live in the sim that a fixed offset
+    // overlapped on a small panel (240x320, smallP): text there stays at the
+    // bitmap-font floor size (ui_apply_font_scale) while s_uiscale keeps shrinking,
+    // so a `dTop + K*s` offset undershoots the title+temp+fan block's real height.
+    // Chaining sidesteps the mismatch entirely: each row starts where the block
+    // above it actually ends, on any panel.
+    const int gap    = (int)(28 * s) > 12 ? (int)(28 * s) : 12;   // floor so small panels don't crowd
+    // Floored, not just scaled: at s=0.5 (240x320) a bare 48*s=24px row is shorter
+    // than the F24 setpoint label it has to hold (confirmed live in the sim -- the
+    // label overflowed its row and clashed with the "Heat"/"Cool" tag above it), and
+    // 24px is under any reasonable touch target besides.
+    const int btnSz  = (int)(48 * s) > 44 ? (int)(48 * s) : 44;
+    const int rowW   = (int)(260 * s) > 200 ? (int)(260 * s) : 200;
+    const int tagY   = (int)(20 * s) > 16 ? (int)(20 * s) : 16;   // "Heat"/"Cool" tag's rise above its row
+
+    s_cmfHeatRow = lv_obj_create(s_cmfDetail);
+    lv_obj_remove_style_all(s_cmfHeatRow);
+    lv_obj_set_size(s_cmfHeatRow, rowW, btnSz);
+    lv_obj_align_to(s_cmfHeatRow, s_cmfDetailFan, LV_ALIGN_OUT_BOTTOM_MID, 0, gap + (int)(20 * s));
+    lv_obj_clear_flag(s_cmfHeatRow, LV_OBJ_FLAG_SCROLLABLE);
+    {
+        lv_obj_t *tag = lv_label_create(s_cmfHeatRow);
+        lv_obj_set_style_text_font(tag, F14, 0);
+        lv_obj_set_style_text_color(tag, lv_color_hex(C_SUBTLE), 0);
+        lv_label_set_text(tag, "Heat");
+        lv_obj_align(tag, LV_ALIGN_TOP_MID, 0, -tagY);
+        lv_obj_t *dec = cmfRoundBtn(s_cmfHeatRow, "-", onCmfHeatDec, btnSz);
+        lv_obj_align(dec, LV_ALIGN_LEFT_MID, 0, 0);
+        s_cmfHeatLbl = lv_label_create(s_cmfHeatRow);
+        lv_obj_set_style_text_font(s_cmfHeatLbl, F24, 0);
+        lv_obj_set_style_text_color(s_cmfHeatLbl, lv_color_hex(C_TEXT), 0);
+        lv_label_set_text(s_cmfHeatLbl, "--");
+        lv_obj_center(s_cmfHeatLbl);
+        lv_obj_t *inc = cmfRoundBtn(s_cmfHeatRow, "+", onCmfHeatInc, btnSz);
+        lv_obj_align(inc, LV_ALIGN_RIGHT_MID, 0, 0);
+    }
+
+    s_cmfCoolRow = lv_obj_create(s_cmfDetail);
+    lv_obj_remove_style_all(s_cmfCoolRow);
+    lv_obj_set_size(s_cmfCoolRow, rowW, btnSz);
+    lv_obj_align_to(s_cmfCoolRow, s_cmfHeatRow, LV_ALIGN_OUT_BOTTOM_MID, 0, gap);
+    lv_obj_clear_flag(s_cmfCoolRow, LV_OBJ_FLAG_SCROLLABLE);
+    {
+        lv_obj_t *tag = lv_label_create(s_cmfCoolRow);
+        lv_obj_set_style_text_font(tag, F14, 0);
+        lv_obj_set_style_text_color(tag, lv_color_hex(C_SUBTLE), 0);
+        lv_label_set_text(tag, "Cool");
+        lv_obj_align(tag, LV_ALIGN_TOP_MID, 0, -tagY);
+        lv_obj_t *dec = cmfRoundBtn(s_cmfCoolRow, "-", onCmfCoolDec, btnSz);
+        lv_obj_align(dec, LV_ALIGN_LEFT_MID, 0, 0);
+        s_cmfCoolLbl = lv_label_create(s_cmfCoolRow);
+        lv_obj_set_style_text_font(s_cmfCoolLbl, F24, 0);
+        lv_obj_set_style_text_color(s_cmfCoolLbl, lv_color_hex(C_TEXT), 0);
+        lv_label_set_text(s_cmfCoolLbl, "--");
+        lv_obj_center(s_cmfCoolLbl);
+        lv_obj_t *inc = cmfRoundBtn(s_cmfCoolRow, "+", onCmfCoolInc, btnSz);
+        lv_obj_align(inc, LV_ALIGN_RIGHT_MID, 0, 0);
+    }
+
+    // Mode picker: 4 pill buttons (off/heat/cool/auto), the active one highlighted
+    // by cmfDetailRebuild. Each is aligned off coolRow's own bottom edge (same
+    // chaining reasoning as the setpoint rows above) with a per-button x offset.
+    static const char *modeLabels[4] = { "Off", "Heat", "Cool", "Auto" };
+    const int mBw = (int)(90 * s), mBh = (int)(44 * s), mGap = (int)(10 * s);
+    const int mX0 = -((4 * mBw + 3 * mGap) / 2) + mBw / 2;
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *b = lv_button_create(s_cmfDetail);
+        lv_obj_set_size(b, mBw, mBh);
+        lv_obj_set_style_radius(b, mBh / 2, 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_bg_opa(b, LV_OPA_20, 0);
+        lv_obj_align_to(b, s_cmfCoolRow, LV_ALIGN_OUT_BOTTOM_MID, mX0 + i * (mBw + mGap), gap);
+        lv_obj_add_event_cb(b, onCmfMode, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        lv_obj_t *l = lv_label_create(b);
+        lv_obj_set_style_text_font(l, F16, 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
+        lv_label_set_text(l, modeLabels[i]);
+        lv_obj_center(l);
+        s_cmfModeBtns[i] = b;
+        s_cmfModeLbls[i] = l;
+    }
+}
+
+// Driver-pushed Comfort thermostat list (`comfortlist`, PROTOCOL.md). Repaints
+// whichever of the list/detail pages is currently open (a rebuild while hidden is
+// wasted work -- the visible page's Rebuild fn is called again the moment it opens,
+// homeComfort/onCmfRow) and clears any in-flight pending marker, same "any fresh
+// push is authoritative again" idea as ui_set_security.
+void ui_set_comfort(const comfort_state_t *cmf)
+{
+    if (!cmf) return;
+    s_cmf = *cmf;
+    s_cmfAvailable = cmf->available;
+    s_cmfPending = false;
+    if (s_cmfDetail && !lv_obj_has_flag(s_cmfDetail, LV_OBJ_FLAG_HIDDEN)) cmfDetailRebuild();
+    if (s_cmfPanel  && !lv_obj_has_flag(s_cmfPanel,  LV_OBJ_FLAG_HIDDEN)) cmfRebuildList();
+    if (s_home && cmf_available() != s_cmfHomeShown) ui_request_rebuild();
+}
 
 // ── Compact-bar text rotation ───────────────────────────────────────────────
 // The compact bar has room for ONE text line, but title / artist / album are all
@@ -2505,6 +2892,8 @@ static void build_home_tiles(int W, int H, bool smallP)
     s_homeIcShown = icAvail;
     const bool secAvail = sec_available();
     s_secHomeShown = secAvail;
+    const bool cmfAvail = cmf_available();
+    s_cmfHomeShown = cmfAvail;
 
     int nfav = s_nFavs; if (nfav > HOME_MAX_FAV) nfav = HOME_MAX_FAV;
     int nbtn = s_haveButtons ? s_lastState.n_buttons : 0;
@@ -2529,7 +2918,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     // space on tile size instead of on gaps. tileCard sizes from cw/ch below, so
     // this is the only lever needed.
     {
-        int ntiles = (icAvail ? 1 : 0) + (secAvail ? 1 : 0) + nfav + nbtn;
+        int ntiles = (icAvail ? 1 : 0) + (secAvail ? 1 : 0) + (cmfAvail ? 1 : 0) + nfav + nbtn;
         if (ntiles > 0 && cols > ntiles) cols = ntiles;
         if (ntiles <= 2) cols = 1;
         else if (ntiles <= 4 && cols > 2) cols = 2;
@@ -2545,7 +2934,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     // take as many as fit (within touch limits), and stretch the tiles into the
     // remainder. It still snaps because a part-height row reads as broken rather
     // than as "there is more below".
-    const int ntot  = (icAvail ? 1 : 0) + (secAvail ? 1 : 0) + nfav + nbtn;
+    const int ntot  = (icAvail ? 1 : 0) + (secAvail ? 1 : 0) + (cmfAvail ? 1 : 0) + nfav + nbtn;
     const int need  = (ntot + cols - 1) / cols;
     // Prefer MORE ROWS over taller tiles: a proportional floor scaled to ~96px on
     // the 10", which rejected three 93px rows in favour of two 150px ones --
@@ -2558,7 +2947,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     // as small as on a crowded page -- the opposite of what a short list wants.
     // Raise the ceiling as the count falls, so the space goes into the tiles.
     {
-        int ntiles = (icAvail ? 1 : 0) + (secAvail ? 1 : 0) + nfav + nbtn;
+        int ntiles = (icAvail ? 1 : 0) + (secAvail ? 1 : 0) + (cmfAvail ? 1 : 0) + nfav + nbtn;
         if (ntiles <= 2)      chMax = (int)(180 * s);
         else if (ntiles <= 4) chMax = (int)(140 * s);
         else if (ntiles <= 6) chMax = (int)(110 * s);
@@ -2616,20 +3005,29 @@ static void build_home_tiles(int W, int H, bool smallP)
                  alarm ? C_RED : 0x4CC9F0, homeSecurity, NULL, cw, ch, NULL, NULL, NULL);
     }
 
+    // "Climate" is the same Lucide glyph the old per-room kind:"comfort" favorite
+    // used (see favDeviceGlyph, now light/shade/relay only) -- reused here rather
+    // than adding a new one, per the issue brief. No sub-line/on-state: unlike
+    // Security there's no single aggregate "armed" fact for N thermostats to show.
+    if (cmfAvail)
+        tileCard(grid, ICON_MEDIA, "Climate", "Comfort", NULL, false, 0x4CC9F0,
+                 homeComfort, NULL, cw, ch, NULL, NULL, NULL);
+
     // Favourites lead the content: with no browse on the panel they are the only
     // way to start music here.
     for (int i = 0; i < nfav; i++) {
         lv_obj_t *ficon = NULL;
         int fx = 0, fsz = 0;
-        // Device-kind tiles (light/shade/comfort/relay) have no artwork and no source
-        // to resume -- they ARE a device, so they get the same on/off anatomy as a
+        // Device-kind tiles (light/shade/relay) have no artwork and no source to
+        // resume -- they ARE a device, so they get the same on/off anatomy as a
         // keypad button (glyph, accent, sub-line) instead of the media glyph.
         // Everything else (stream/broadcast) keeps the old bare-title tile: the C4 app
         // puts the PROVIDER on the sub-line ("Apple Music"), which we do not have, and
         // echoing the raw kind there put "stream" under every favourite -- noise, not
-        // info. Only light/shade have a meaningful `on` (net.h favorite_t); comfort is
-        // read-only and relay is a single fire-and-forget action, so neither gets a
-        // sub-line or amber accent -- they'd be lying about a state we don't track.
+        // info. Only light/shade have a meaningful `on` (net.h favorite_t); relay is a
+        // single fire-and-forget action, so it gets no sub-line or amber accent -- that
+        // would be lying about a state we don't track. (Thermostats used to be a
+        // read-only kind:"comfort" favorite here -- see the Comfort page instead.)
         const char *kind = s_favs[i].kind;
         const char *glyph = favDeviceGlyph(kind);
         bool hasOnState = glyph && (!strcmp(kind, "light") || !strcmp(kind, "fan") || !strcmp(kind, "shade"));
@@ -3583,6 +3981,11 @@ void ui_begin(void)
     // secstate says a partition is actually bound.
     buildSecurityPage(scr, W, H, smallP);
 
+    // Comfort page (list + detail). Built unconditionally, same reasoning as
+    // Security just above -- ShowProp("Show Comfort")/cmf_available() just keeps
+    // its home tile from ever appearing until a comfortlist says it's on.
+    buildComfortPage(scr, W, H, smallP);
+
     // X4-inspired home screen on top of the now-playing (shown by default). Its
     // own rich indigo->blue gradient (not the charcoal now-playing bg) so the
     // dark glass cards stand out.
@@ -3865,6 +4268,16 @@ void ui_tick_screensaver(void)
     // for a flip that happened with no accompanying push, mirroring the intercom's).
     if (s_home && ic_available() != s_homeIcShown) { ui_request_rebuild(); return; }
     if (s_home && sec_available() != s_secHomeShown) { ui_request_rebuild(); return; }
+    if (s_home && cmf_available() != s_cmfHomeShown) { ui_request_rebuild(); return; }
+
+    // Comfort pending taps aren't a fail-safe requirement (see s_cmfPending's
+    // declaration comment) but should still stop showing "..." forever if a
+    // comfortlist never arrives to confirm the tap -- silently, not an error line,
+    // since a missed setpoint bump isn't worth alarming over.
+    if (s_cmfPending && (millis() - s_cmfPendingSinceMs) > CMF_PENDING_TIMEOUT_MS) {
+        s_cmfPending = false;
+        if (s_cmfDetail && !lv_obj_has_flag(s_cmfDetail, LV_OBJ_FLAG_HIDDEN)) cmfDetailRebuild();
+    }
 
     // Fail-safe timeout: a secarm/secdisarm that never gets a confirming secstate
     // (or a secresult at all) must not sit showing "Sending..." forever, but it

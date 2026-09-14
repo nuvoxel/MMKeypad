@@ -209,6 +209,18 @@ void net_security_disarm(const char *pin)
     send_obj(o);
 }
 
+void net_comfort_cmd(int id, const char *action, const char *mode)
+{
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "t", "comfortcmd");
+    cJSON_AddNumberToObject(o, "id", id);
+    cJSON_AddStringToObject(o, "action", action ? action : "");
+    // "mode" is only meaningful for action=="mode"; sending it unconditionally when
+    // present is harmless (driver.lua ignores an extra field on every other action).
+    if (mode && mode[0]) cJSON_AddStringToObject(o, "mode", mode);
+    send_obj(o);
+}
+
 // ── Offline relay client ────────────────────────────────────────────────────
 // A panel on an isolated network can be licensed (the driver fetches that for it)
 static void send_hello(void)
@@ -680,6 +692,39 @@ static void handle_line(const char *line)
         get_str(d, "action", res.action, sizeof(res.action));
         get_str(d, "error",  res.error,  sizeof(res.error));
         if (s_cb.on_security_result) s_cb.on_security_result(&res);
+    } else if (!strcmp(ts, "comfortlist")) {
+        // Driver-pushed Comfort page snapshot (PROTOCOL.md). `available` false means
+        // the "Show Comfort" dealer property is Hidden -- the UI feature-detects on
+        // this and hides the Comfort tile/page entirely, same idea as `secstate`.
+        // `list` entries carry already-converted whole-degree temps in `scale`'s
+        // units (see comfort_t in net.h) -- nothing here does unit math.
+        comfort_state_t cmf;
+        memset(&cmf, 0, sizeof(cmf));
+        cmf.available = get_bool(d, "available", false);
+        const cJSON *arr = cJSON_GetObjectItem(d, "list");
+        if (cmf.available && cJSON_IsArray(arr)) {
+            const cJSON *it;
+            cJSON_ArrayForEach(it, arr) {
+                if (cmf.n >= NET_MAX_COMFORT) break;
+                comfort_t *c = &cmf.list[cmf.n];
+                c->id = get_int(it, "id", 0);
+                get_str(it, "title", c->title, sizeof(c->title));
+                c->temp = get_int(it, "temp", 0);
+                const cJSON *hp = cJSON_GetObjectItem(it, "heat");
+                c->has_heat = cJSON_IsNumber(hp);
+                if (c->has_heat) c->heat = hp->valueint;
+                const cJSON *cp = cJSON_GetObjectItem(it, "cool");
+                c->has_cool = cJSON_IsNumber(cp);
+                if (c->has_cool) c->cool = cp->valueint;
+                get_str(it, "mode",  c->mode,  sizeof(c->mode));
+                get_str(it, "fan",   c->fan,   sizeof(c->fan));
+                get_str(it, "scale", c->scale, sizeof(c->scale));
+                cmf.n++;
+            }
+        } else {
+            cmf.available = false;
+        }
+        if (s_cb.on_comfort) s_cb.on_comfort(&cmf);
     } else if (!strcmp(ts, "audiotest")) {
         // Bring-up/field diagnostic: run the audio self-test (chime + tone, mic
         // capture w/ level report, mic->speaker loopback). See audio_selftest_async.

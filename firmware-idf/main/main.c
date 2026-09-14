@@ -144,6 +144,16 @@ static void on_net_security_result(const security_result_t *res)
     (void)res;
 #endif
 }
+// Driver-pushed Comfort page thermostat list -> on-screen Comfort page (LVGL task).
+static void on_net_comfort(const comfort_state_t *cmf)
+{
+    ESP_LOGI(TAG, "comfort: %d thermostat(s)", cmf ? cmf->n : 0);
+#if MMK_HAS_DISPLAY
+    if (lvgl_port_lock(0)) { ui_set_comfort(cmf); lvgl_port_unlock(); }
+#else
+    (void)cmf;
+#endif
+}
 
 #if MMK_HAS_AUDIO && MMK_HAS_DISPLAY
 // SIP call state (esp_rtc task) -> on-screen call UI (marshalled onto LVGL task).
@@ -383,6 +393,7 @@ void app_main(void)
         .on_favorites = on_net_favorites,
         .on_security = on_net_security,
         .on_security_result = on_net_security_result,
+        .on_comfort = on_net_comfort,
     };
     net_start(6700, &cb);
     sddp_start(6700);
