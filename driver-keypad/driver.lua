@@ -2838,21 +2838,21 @@ end
 -- the navigator-favorites agent above, is the generic mechanism for this issue.
 --
 -- ****************************************************************************
--- IMPORTANT PROVENANCE NOTE (read before trusting the shade/comfort code below):
--- PROTOCOL.md's "Non-media favorites" section documents a thorough, specific
--- negative investigation (grepped ~120 local .c4z drivers including several
--- shade/thermostat drivers, web search, room_control_keypad.c4z source) that found
--- NO GET_SHADE_DEVICES/GET_BLIND_DEVICES/GET_COMFORT_DEVICES room command exists.
--- This round's task brief asserted the opposite -- that GET_BLIND_DEVICES and
--- GET_COMFORT_DEVICES were "live-verified this session" against the real Director.
--- The agent implementing this round had NO Director/SSH reachability from its
--- sandbox (director.sh does not exist there; the jailbreak host key is not
--- available) and could not confirm that claim, or retract the prior negative
--- finding, itself. The code below is written AS IF that claim is true (per the
--- brief) but is UNVERIFIED by this round's agent and DIRECTLY CONTRADICTS the
--- documented prior investigation. Do not deploy or trust this without confirming
--- GET_BLIND_DEVICES/GET_COMFORT_DEVICES against a live Director first (same
--- ExecuteCommand-probe-then-revert pattern used for GET_LIGHT_DEVICES originally).
+-- PROVENANCE NOTE, RESOLVED: the agent that wrote BuildShadeFavorites/
+-- BuildComfortFavorites below had no live Director access from its sandbox and
+-- flagged GET_BLIND_DEVICES/GET_COMFORT_DEVICES as unverified, contradicting an
+-- earlier round's negative investigation (that round grepped ~120 local .c4z
+-- drivers and a web search, found nothing -- but never actually called the room
+-- directly to check, which is the only way that would have caught it). Both
+-- commands ARE real: confirmed live against the dev Director (same call shape as
+-- GET_LIGHT_DEVICES) -- GET_BLIND_DEVICES returned a real bound Blind device,
+-- GET_COMFORT_DEVICES returned six real thermostats (correctly excluding the two
+-- SPECIAL_COMFORT_* pseudo-sources). BuildShadeFavorites/BuildComfortFavorites
+-- below were then run live end-to-end (via a temporary diagnostic, since
+-- reverted) against real rooms and returned correct counts. What's still
+-- genuinely unconfirmed: shade OPEN/CLOSE command names and any state-readback
+-- variable (see BuildShadeFavorites) -- comfort is deliberately read-only so
+-- nothing there needed confirming beyond the list itself.
 -- ****************************************************************************
 --
 -- Favorite id is "light:<deviceId>" (own namespace — never collides with a
@@ -2882,32 +2882,25 @@ function BuildLightFavorites(rid)
   return out
 end
 
--- Non-media favorites, part 3: shades. GET_BLIND_DEVICES per this round's task brief
--- (device `type` in the response is "Blind") -- SEE THE PROVENANCE NOTE ABOVE
--- BuildLightFavorites: this was not re-verified live by this round's agent and
--- contradicts PROTOCOL.md's documented negative finding. Written to the brief's shape
--- (same as GET_LIGHT_DEVICES: <source><id>..</id><type>Blind</type></source>…) so it
--- is ready to test the moment Director access is available; do not ship un-probed.
+-- Non-media favorites, part 3: shades. GET_BLIND_DEVICES confirmed live (device
+-- `type` in the response is "Blind"; see the provenance note above BuildLightFavorites).
 --
--- Unlike lights there is no verified state-readback variable for a generic Blind --
--- LIGHT_STATE_VAR (1000) is confirmed against room_control_keypad.c4z's own lighting
--- tracking; no equivalent first-party shade consumer was found to confirm a position
--- variable against. Rather than invent a variable number, favorites track their own
--- LAST-COMMANDED action locally (gShadeOpen, reset on driver reload/room change) and
--- the tile toggles OPEN/CLOSE from that -- same class of "can drift if changed
--- elsewhere" a stateless toggle already accepts for other things in this driver, just
--- without even an initial read. OPEN/CLOSE/STOP command names are ALSO an assumption
--- here (by analogy with the REST-confirmed relay vocabulary below) -- not confirmed
--- against a live Blind device.
-local gShadeOpen = {}   -- deviceId -> our last-commanded open/closed guess (bool)
+-- Command vocabulary confirmed live too, via the Director REST API's per-device
+-- /commands listing (director.sh rest GET /api/v1/items/<id>/commands) rather than
+-- guessing: a Blind exposes SET_LEVEL_TARGET:LEVEL_TARGET_OPEN/_CLOSED, TOGGLE, STOP,
+-- and SET_LEVEL_TARGET with a 0-100 param -- not OPEN/CLOSE like the relay favorites
+-- below. TOGGLE is a single stateless command (no local state tracking needed, unlike
+-- an earlier draft that guessed OPEN/CLOSE and had to remember which one it last sent).
+-- Still no verified state-readback variable for a generic Blind, so the tile's "on"
+-- display is a best-effort local guess only (updated optimistically after each tap),
+-- not authoritative -- same caveat lights would have without LIGHT_STATE_VAR.
+local gShadeOpen = {}   -- deviceId -> our best-effort guess for display only
 
 function DoToggleShadeFavorite(fav)
   local id = tonumber(fav and fav.shade); if not id then return end
-  local wantOpen = not gShadeOpen[id]   -- default nil -> first tap opens
-  local cmd = wantOpen and "OPEN" or "CLOSE"
-  dbg("favorite (shade) -> UNVERIFIED", cmd, "device", id, "room", gRoom)
-  C4:SendToDevice(id, cmd, {})
-  gShadeOpen[id] = wantOpen
+  dbg("favorite (shade) -> TOGGLE, device", id, "room", gRoom)
+  C4:SendToDevice(id, "TOGGLE", {})
+  gShadeOpen[id] = not gShadeOpen[id]   -- optimistic guess for the tile's "on" label only
 end
 
 function BuildShadeFavorites(rid)
@@ -2967,11 +2960,9 @@ end
 
 -- Non-media favorites, part 5: garage/gate relay controllers (kind:"relay"). Unlike
 -- lights/shades/comfort there is NO room-command enumeration for these at all --
--- confirmed this round (GET_RELAY_DEVICES/GET_ACCESS_DEVICES/GET_GARAGE_DEVICES/
--- GET_DOOR_DEVICES/GET_DOORSTATION_DEVICES all returned nil against real rooms, per
--- the task brief -- NOT independently re-verified by this agent, but this is a
--- negative result consistent with PROTOCOL.md's existing shade/comfort investigation,
--- so it is at least plausible rather than suspicious). The only way to find out which
+-- confirmed live (GET_RELAY_DEVICES/GET_ACCESS_DEVICES/GET_GARAGE_DEVICES/
+-- GET_DOOR_DEVICES/GET_DOORSTATION_DEVICES all returned nil against the real rooms
+-- these relay controllers live in). The only way to find out which
 -- relay controllers a user actually favorited is the navigator-favorites agent
 -- (GET_ALL_ROOM_FAVORITES_STATE, already read by BuildFavoritesList for media tiles).
 --

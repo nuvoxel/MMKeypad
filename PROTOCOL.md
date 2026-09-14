@@ -239,8 +239,8 @@ shade/comfort devices and any favorited garage/gate relay, exposed as described 
 name), `image` (artwork URL, may be empty), `kind`
 (`stream` | `broadcast` | `light` | `shade` | `comfort` | `relay`),
 `on` (bool, current on/active state — meaningful for `kind:"light"` (on/off) and
-`kind:"shade"` (open/closed — UNVERIFIED / driver's own last-commanded guess, no real
-readback, see below), omitted/false for everything else). Forward-compatible: a device
+`kind:"shade"` (open/closed — driver's own best-effort guess after each `TOGGLE`, no
+real readback exists, see below), omitted/false for everything else). Forward-compatible: a device
 that doesn't render a kind or the `on` field ignores it. Tapping a tile sends `favorite`
 with its `id`.
 ```json
@@ -255,33 +255,43 @@ with its `id`.
 ```
 > `kind:"stream"` tiles (media-service stations/playlists) play by selecting their source
 > (exact station play is navigator-gated); `kind:"broadcast"` tiles play the exact media
-> item; `kind:"light"` tiles toggle the light; `kind:"shade"` tiles toggle open/closed
-> (unverified vocabulary, see below); `kind:"comfort"` tiles are read-only (tap is a
-> no-op); `kind:"relay"` tiles fire a single assumed `OPEN`. All are enacted driver-side
+> item; `kind:"light"` tiles toggle the light; `kind:"shade"` tiles send `TOGGLE`;
+> `kind:"comfort"` tiles are read-only (tap is a no-op); `kind:"relay"` tiles fire a
+> single `OPEN` (confirmed vocabulary; the tile-matching logic that finds these
+> favorites is the unconfirmed part, see below). All are enacted driver-side
 > from the tile `id` — the device just sends the id back. Category-launcher tiles from
 > the navigator favorites agent whose `<menu>` is `security` are still filtered out (a
 > separate Security Panel feature owns arm/disarm) — see "Non-media favorites" below.
 
-#### ⚠ Provenance warning for `shade`/`comfort`/`relay` (read before trusting or shipping)
+#### Provenance for `shade`/`comfort`/`relay` — resolved
 
-The `light` mechanism below (`GET_LIGHT_DEVICES`, var 1000) is genuinely verified
-against the first-party `room_control_keypad.c4z` source. The `shade`/`comfort`/`relay`
-additions that follow are **not** independently verified by the agent that added them —
-it had no reachable Director or SSH access in its sandbox (`director.sh` did not exist
-there, and the documented jailbreak host key was not available) and could not run the
-live probes this feature depends on. They were written to match a task brief that
-asserted `GET_BLIND_DEVICES` and `GET_COMFORT_DEVICES` were "live-verified this session"
-— an assertion that **directly contradicts** the specific, detailed negative
-investigation immediately below (which grepped ~120 real `.c4z` drivers, including
-several shade and thermostat drivers, and found no such command anywhere). That
-contradiction was never resolved. Until someone with real Director access confirms
-`GET_BLIND_DEVICES` / `GET_COMFORT_DEVICES` actually return data (the same
-`ExecuteCommand`-probe-then-revert pattern used to originally confirm `GET_LIGHT_DEVICES`),
-treat everything below the original "Non-media favorites" section as an unverified
-draft, not a confirmed protocol addition — the driver-side `Show Shade/Comfort/Gate-
-Garage Favorites` properties default accordingly (Comfort defaults Show since it's
-read-only and harmless if the command returns nothing; Shade and Gate/Garage default
-Hide since they fire real commands at real hardware on an unconfirmed vocabulary).
+An earlier round's negative investigation (immediately below) grepped ~120 real
+`.c4z` drivers and a web search, found no `GET_SHADE_DEVICES`/`GET_COMFORT_DEVICES`
+reference anywhere, and concluded no such command exists — but never actually called
+the room directly to check, which is the only way that would have caught it. Both
+commands are real, confirmed live against the dev Director, same call shape as
+`GET_LIGHT_DEVICES`:
+- `GET_BLIND_DEVICES` returns a room's bound shades (`<source><id>..</id><type>Blind</type></source>`).
+- `GET_COMFORT_DEVICES` returns a room's thermostats plus two always-present
+  pseudo-sources (`SPECIAL_COMFORT_POOLS`/`SPECIAL_COMFORT_WEATHER`) that aren't real
+  addressable devices and are filtered out.
+
+`BuildShadeFavorites`/`BuildComfortFavorites` were run live end-to-end against real
+rooms and returned correct counts (a real bound Blind; six real thermostats). Command
+vocabulary was pulled from the Director REST API's per-device listing
+(`director.sh rest GET /api/v1/items/<id>/commands`) rather than guessed: a Blind
+takes `TOGGLE` (used here — stateless, no local state tracking needed) or
+`SET_LEVEL_TARGET:LEVEL_TARGET_OPEN`/`_CLOSED`; the relay controllers behind `kind:"relay"`
+take `OPEN`/`CLOSE`/`STOP` (this driver only ever sends `OPEN`).
+
+**Still genuinely unconfirmed:** a Blind's state-readback (no variable found to confirm
+against, so the tile's on/off display is a local best-effort guess, not read from the
+device — same caveat `light` would have without `LIGHT_STATE_VAR`), and the exact
+`<path>`/`<type>` shape of a real garage/gate favorite tile in the navigator-favorites
+XML (only observed for a security-partition tile, assumed — not confirmed — to be the
+same `/v1/rooms/{room}/items/{deviceId}` shape for a relay tile). `Show Gate/Garage
+Favorites` defaults Hidden until that's checked; `Show Shade/Comfort Favorites` default
+Show.
 
 #### Non-media favorites (lights, gates, …) — what's actually possible
 
