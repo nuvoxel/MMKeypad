@@ -29,6 +29,12 @@ void ui_show_settings_panel(int page);  // open Settings (sim/preview); 0 = the 
 // Room navigator favorites grid (driver reply to `getfavorites`). favorite_t is in net.h.
 void ui_set_favorites(const favorite_t *favs, int n);
 
+// Security partition page (driver-pushed `secstate`/`secresult`; security_state_t /
+// security_result_t are in net.h). ui_set_security(NULL-available) hides the tile.
+void ui_set_security(const security_state_t *sec);
+void ui_set_security_result(const security_result_t *res);
+void ui_show_security_panel(void);   // open the Security page (sim/preview + programmatic)
+
 // Sim only: pin the compact bar's rotating text to one phase (0 title, 1 artist,
 // 2 album) so a static render can show each. -1 = rotate normally.
 extern int g_ui_rot_preview;

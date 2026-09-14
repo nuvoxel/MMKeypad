@@ -124,6 +124,26 @@ static void on_net_endpoints(const intercom_target_t *eps, int n)
     (void)eps; (void)n;
 #endif
 }
+// Driver-pushed security partition state -> on-screen Security page (LVGL task).
+// No log of the fields here on purpose -- state/display/trouble text can end up
+// echoing zone names ("Master Bedroom Window"), which is more detail about the
+// house than belongs in a firmware log the same way as everything else here.
+static void on_net_security(const security_state_t *sec)
+{
+#if MMK_HAS_DISPLAY
+    if (lvgl_port_lock(0)) { ui_set_security(sec); lvgl_port_unlock(); }
+#else
+    (void)sec;
+#endif
+}
+static void on_net_security_result(const security_result_t *res)
+{
+#if MMK_HAS_DISPLAY
+    if (lvgl_port_lock(0)) { ui_set_security_result(res); lvgl_port_unlock(); }
+#else
+    (void)res;
+#endif
+}
 
 #if MMK_HAS_AUDIO && MMK_HAS_DISPLAY
 // SIP call state (esp_rtc task) -> on-screen call UI (marshalled onto LVGL task).
@@ -361,6 +381,8 @@ void app_main(void)
         .on_endpoints = on_net_endpoints,
         .on_rooms = on_net_rooms,
         .on_favorites = on_net_favorites,
+        .on_security = on_net_security,
+        .on_security_result = on_net_security_result,
     };
     net_start(6700, &cb);
     sddp_start(6700);

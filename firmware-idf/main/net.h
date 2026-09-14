@@ -50,6 +50,45 @@ typedef struct {
 // `playing` = that room's queue is playing; `active` = it's in some session.
 typedef struct { char id[24]; char name[48]; bool grouped, playing, active; } room_t;
 
+// Security partition snapshot (driver-pushed `secstate`, PROTOCOL.md). `available`
+// is false when this keypad's SECURITY connection isn't bound to a partition —
+// the UI hides the Security tile/page entirely in that case rather than showing
+// a broken one. Everything else is only meaningful when `available` is true.
+//
+// `state` mirrors the Control4 partition proxy's PARTITION_STATE string verbatim
+// (e.g. "DISARMED_READY", "ARMED_HOME", "EXIT_DELAY", "ALARM") rather than a
+// firmware-defined enum, so a value this build doesn't recognize still displays
+// (falls back to showing the raw string) instead of silently going blank.
+//
+// Per-zone open/closed/bypassed status is NOT modeled here: the driver-side
+// SECURITY_PANEL proxy exposes no polled zone list, only a push notify whose
+// exact payload shape is unconfirmed against a live Director (see driver.lua
+// WatchSecurityVars and PROTOCOL.md) — `open_zones`/`last_faulted` are the only
+// zone-shaped fields wired end-to-end today.
+typedef struct {
+    bool available;
+    char state[24];            // PARTITION_STATE, e.g. "DISARMED_READY"
+    char display[64];          // DISPLAY_TEXT
+    char trouble[64];          // TROUBLE_TEXT
+    int  open_zones;           // OPEN_ZONE_COUNT
+    int  delay_total;          // DELAY_TIME_TOTAL (seconds)
+    int  delay_remaining;      // DELAY_TIME_REMAINING (seconds), counts down during entry/exit delay
+    char alarm_type[16];       // ALARM_TYPE
+    char armed_type[16];       // ARMED_TYPE
+    char last_faulted[48];     // LAST_ZONE_FAULTED, e.g. "Pool Bath Door"
+} security_state_t;
+
+// Outcome of a `secarm`/`secdisarm` request (driver-pushed `secresult`). This is
+// delivery confirmation ONLY — "the driver called C4:SendToProxy" — never proof
+// the partition actually armed/disarmed. That proof, if it comes, is the next
+// `secstate` showing the requested PARTITION_STATE; the UI must not report
+// success from `ok` alone (fail-safe requirement, see ui.c).
+typedef struct {
+    bool ok;
+    char action[12];   // "arm" | "disarm"
+    char error[48];    // set when ok == false, e.g. "not bound"
+} security_result_t;
+
 typedef struct {
     int  id;
     char label[32];
@@ -93,6 +132,8 @@ typedef struct {
     void (*on_endpoints)(const intercom_target_t *eps, int n);  // intercom picker targets
     void (*on_rooms)(const room_t *rooms, int n);               // multiroom add-rooms list
     void (*on_favorites)(const favorite_t *favs, int n);        // room navigator favorites
+    void (*on_security)(const security_state_t *sec);           // security partition state
+    void (*on_security_result)(const security_result_t *res);   // arm/disarm delivery outcome
 } net_callbacks_t;
 
 // Start the TCP server (the DEVICE listens; the Control4 driver dials in).
@@ -133,6 +174,15 @@ void net_group_room(const char *id, bool join);   // multiroom join/leave a room
 void net_request_favorites(void);                 // ask for this room's favorites (-> on_favorites)
 void net_play_favorite(const char *id);           // play the favorite tile with this id
 void net_ping(void);
+
+// Security partition arm/disarm (see PROTOCOL.md `secarm`/`secdisarm`). `pin` rides
+// this one call — never persisted, logged, or echoed by net.c or the UI; the driver
+// forwards it straight to Control4's UserCode and drops it. `arm_type` is one of
+// "Stay" | "Away" | "Stay Instant" | "Away Instant" (the partition proxy's own
+// vocabulary — passed through verbatim). `bypass` asks the driver to arm with any
+// currently-faulted zones bypassed rather than refusing to arm.
+void net_security_arm(const char *arm_type, const char *pin, bool bypass);
+void net_security_disarm(const char *pin);
 
 // Report the device's current halo settings (g_settings) up to the driver, so
 // Composer's Halo properties can mirror whatever is actually on the LED --

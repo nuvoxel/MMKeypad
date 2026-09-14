@@ -12,6 +12,12 @@
     5002 keypad (PRIMARY)  — programmable on-screen buttons + LEDs
     5003 intercomproxy     — SIP intercom endpoint (see intercom.lua)
 
+  Plus one CONSUMER connection (5010, SECURITY) this driver binds OUT to, rather
+  than provides: an installer-bound Control4 security partition proxy, mirrored
+  to the device as `secstate` and commanded from device-originated `secarm`/
+  `secdisarm` (see the "Security panel" section below and PROTOCOL.md). Optional —
+  unbound is the normal state for most installs.
+
   Settings are owned by the driver's Composer properties (local; there is no
   online service). An edit is applied straight to the device over the :6700
   protocol.
@@ -78,6 +84,13 @@ KEYPAD_MAX     = 64
 RELAY_BINDING  = 700  -- CONTROL binding the companion intercom driver consumes
 INTERCOM_C4Z   = "NuVoxelKeypadIntercom.c4z"  -- the companion intercom endpoint driver
 
+-- Security panel (issue #2). CONSUMER binding to a Control4 SECURITY partition proxy
+-- (see driver.xml) -- one partition per keypad instance. Unbound is the normal state
+-- for most installs (no security system, or this keypad isn't the one wired to it):
+-- the device is told `available:false` and hides the feature, same idea as the
+-- intercom's caps-driven gate.
+SECURITY_BINDING = 5010
+
 print("NuVoxelKeypad: driver.lua loading v" .. DRIVER_VERSION)
 
 -- Robust JSON load (bundled lib, else C4 built-in fallback so the driver always loads).
@@ -122,6 +135,9 @@ local gSources   = nil            -- cached source list (reset on connect)
 local gFavorites = nil            -- cached room favorites keyed by favId -> descriptor, built in
                                   -- BuildFavoritesList, read by DoPlayFavorite (path-2 navigator favorites)
 local gButtons   = nil            -- keypad button state {id,label,color,on}, set by the proxy
+local gSecurityDev  = nil         -- Control4 device id of the bound SECURITY partition proxy
+                                  -- (nil = SECURITY_BINDING unbound -> feature hidden on the device)
+local gLastSecState = nil         -- last pushed secstate JSON (dedupe, mirrors gLastState)
 gLastPlaying     = false          -- last resolved play state (BuildState -> playpause)
 local gKpTimer   = nil            -- debounce timer for keypad re-init (L2)
 local gThumbUp   = nil            -- {dev,cmd} for the source's thumbs-up PROTOCOL command
@@ -393,6 +409,7 @@ function OnDriverDestroyed(initType)
   StopPolling()
   UnwatchRoomVars()
   UnwatchAggregator()
+  UnwatchSecurityVars()
   UnregisterMediaSessionEvents()          -- drop the system-event subscriptions
   cancelTimer(gEventDebounce);  gEventDebounce = nil
   cancelTimer(gEventQuiet);     gEventQuiet    = nil
@@ -735,6 +752,20 @@ function OnBindingChanged(idBinding, strClass, bIsBound, otherDeviceID, otherBin
     RelayHello()
   elseif idBinding == RELAY_BINDING then
     gIntercom = nil; RelayStatus()
+  elseif idBinding == SECURITY_BINDING then
+    if bIsBound then
+      gSecurityDev = tonumber(otherDeviceID)
+      dbg("security partition bound: device", tostring(gSecurityDev))
+      WatchSecurityVars()
+    else
+      dbg("security partition unbound")
+      UnwatchSecurityVars()
+      gSecurityDev = nil
+    end
+    -- Tell the device right away either way: a fresh bind should reveal the
+    -- feature without waiting for the next room-state push, and an unbind (or a
+    -- driver reload finding nothing bound) must hide it just as promptly.
+    if gConnected then PushSecurityState() end
   end
 end
 
@@ -748,6 +779,7 @@ function OnConnectionStatusChanged(idBinding, nPort, strStatus)
     local ok, addr = pcall(function() return C4:GetBindingAddress(BINDING_NET) end)
     setStatus("Connected " .. (ok and tostring(addr) or ""))
     PushState(true)
+    PushSecurityState()
     -- No PushHalo here: the device is authoritative for halo now, and reports its
     -- real state (`halostate`, right after `hello`) rather than waiting to be told.
     if not was then
@@ -993,6 +1025,7 @@ function HandleMessage(line)
     -- after this `hello`) instead of having it handed down, so a panel that has never
     -- talked to Composer -- or changed locally while offline -- is never overwritten.
     PushState(true)
+    PushSecurityState()     -- likewise: (re)send Security availability/state on every real "device is ready" edge
     RelayHello()           -- tell the bound intercom driver the device is up (it re-provisions SIP)
   elseif t == "cmd" then DoTransport(msg.cmd)
   elseif t == "vol" then
@@ -1038,6 +1071,8 @@ function HandleMessage(line)
     gApplyingHaloReport = false
   elseif t == "ping" then Send({ t = "pong" })
   elseif t == "button" then FireButton(msg.id)
+  elseif t == "secarm" then DoSecurityArm(msg)
+  elseif t == "secdisarm" then DoSecurityDisarm(msg)
   elseif t == "sipstate" or t == "callstate" or t == "callctl" then
     -- Intercom traffic → relay the line to the companion intercom driver (it owns the
     -- intercomproxy + SIP/call logic). Re-encode the decoded msg; the intercom driver
@@ -2082,11 +2117,136 @@ function UnwatchAggregator()
   gAggWatchId = nil
 end
 
--- C4 callback: any watched variable changed. Two subscribers share this one entry
--- point now — the intercom's proxy level vars (ringer/speaker/mic sliders) and our
--- room/aggregator watches — so offer it to the intercom first and only do the room
--- refresh if it wasn't one of its variables.
+-- ============================================================================
+-- Security panel (issue #2): partition state mirror + arm/disarm relay
+-- ============================================================================
+-- NEEDS LIVE CONFIRMATION (flagged per the issue -- do not treat as verified):
+-- these variable NAMES are read from a live Director dump of the SECURITY
+-- partition proxy (2684/2685 in the research project), but every other listener
+-- in this file (ROOM_VAR above, AGG_WATCH_VARS) watches a documented NUMERIC
+-- variable id, and C4:RegisterVariableListener's normal contract is a numeric id
+-- — passing a string name here is the best available guess (some third-party
+-- DriverWorks proxies do accept a variable NAME), not a confirmed pattern for
+-- SECURITY specifically. If a bound partition never fires OnWatchedVariableChanged
+-- for these, this list — and whether it needs numeric ids instead — is the first
+-- thing to check, against a live Composer/Director with a SPARE instance of this
+-- driver bound to a test partition. Never re-probe this against the live
+-- 2684/2685 partitions described in the research notes.
+local SECURITY_WATCH_VARS = {
+  "PARTITION_STATE", "DISPLAY_TEXT", "TROUBLE_TEXT", "OPEN_ZONE_COUNT",
+  "DELAY_TIME_TOTAL", "DELAY_TIME_REMAINING", "ALARM_TYPE", "ARMED_TYPE",
+  "LAST_ZONE_FAULTED", "LAST_ARM_FAILED",
+}
+
+function WatchSecurityVars()
+  if not gSecurityDev then return end
+  for _, v in ipairs(SECURITY_WATCH_VARS) do
+    pcall(function() C4:RegisterVariableListener(gSecurityDev, v) end)
+  end
+end
+function UnwatchSecurityVars()
+  if not gSecurityDev then return end
+  for _, v in ipairs(SECURITY_WATCH_VARS) do
+    pcall(function() C4:UnregisterVariableListener(gSecurityDev, v) end)
+  end
+end
+
+-- Build the `secstate` payload from the bound partition's live variables (read
+-- fresh each time, same idea as getRoomVar -- no local cache of partition state
+-- beyond gLastSecState's dedupe string). Returns { available = false } when no
+-- partition is bound, which is what tells the device to hide the feature.
+function BuildSecurityState()
+  if not gSecurityDev then return { available = false } end
+  local function v(name)
+    local ok, val = pcall(C4.GetDeviceVariable, C4, gSecurityDev, name)
+    return ok and val or nil
+  end
+  return {
+    available = true,
+    partition = {
+      state          = tostring(v("PARTITION_STATE") or "UNKNOWN"),
+      display        = tostring(v("DISPLAY_TEXT") or ""),
+      trouble        = tostring(v("TROUBLE_TEXT") or ""),
+      openZones      = tonumber(v("OPEN_ZONE_COUNT")) or 0,
+      delayTotal     = tonumber(v("DELAY_TIME_TOTAL")) or 0,
+      delayRemaining = tonumber(v("DELAY_TIME_REMAINING")) or 0,
+      alarmType      = tostring(v("ALARM_TYPE") or ""),
+      armedType      = tostring(v("ARMED_TYPE") or ""),
+      lastFaulted    = tostring(v("LAST_ZONE_FAULTED") or ""),
+    },
+  }
+end
+
+function PushSecurityState()
+  if not gConnected then return end
+  local st = BuildSecurityState()
+  local ok, encoded = pcall(json.encode, st)
+  if not ok then dbg("secstate encode failed:", tostring(encoded)); return end
+  if encoded == gLastSecState then return end   -- dedupe, same as PushState/gLastState
+  gLastSecState = encoded
+  st.t = "secstate"
+  Send(st)
+end
+
+-- Arm/disarm relay: device -> driver -> C4:SendToProxy on the bound partition.
+-- The PIN (`msg.pin`) lives ONLY in this function's local `pin` for the duration
+-- of one pcall — never assigned to a global, a property, or a dbg() call. Fail-
+-- safe per the issue: this can only report "the command was sent" (`secresult`),
+-- never "the partition armed/disarmed" — that claim is the device's job, and it
+-- must make it ONLY from a subsequent `secstate` showing the requested state
+-- (ui.c's fail-safe design; see PROTOCOL.md).
+function DoSecurityArm(msg)
+  if not gSecurityDev then
+    Send({ t = "secresult", ok = false, action = "arm", error = "not bound" })
+    return
+  end
+  local pin = tostring(msg and msg.pin or "")
+  if pin == "" then
+    Send({ t = "secresult", ok = false, action = "arm", error = "no code entered" })
+    return
+  end
+  local armType = tostring(msg and msg.armType or "Away")
+  local bypass  = (msg and msg.bypass == true)
+  local ok = pcall(function()
+    C4:SendToProxy(SECURITY_BINDING, "PARTITION_ARM",
+      { ArmType = armType, UserCode = pin, InterfaceID = "MMKeypad", Bypass = bypass })
+  end)
+  pin = nil   -- drop our only copy before returning
+  dbg("PARTITION_ARM sent (armType=" .. armType .. " bypass=" .. tostring(bypass) ..
+      ") ok=" .. tostring(ok))   -- never logs the code
+  Send({ t = "secresult", ok = ok, action = "arm" })
+end
+
+function DoSecurityDisarm(msg)
+  if not gSecurityDev then
+    Send({ t = "secresult", ok = false, action = "disarm", error = "not bound" })
+    return
+  end
+  local pin = tostring(msg and msg.pin or "")
+  if pin == "" then
+    Send({ t = "secresult", ok = false, action = "disarm", error = "no code entered" })
+    return
+  end
+  local ok = pcall(function()
+    C4:SendToProxy(SECURITY_BINDING, "PARTITION_DISARM", { UserCode = pin, InterfaceID = "MMKeypad" })
+  end)
+  pin = nil
+  dbg("PARTITION_DISARM sent ok=" .. tostring(ok))   -- never logs the code
+  Send({ t = "secresult", ok = ok, action = "disarm" })
+end
+
+-- C4 callback: any watched variable changed. Three subscribers share this one entry
+-- point now — the intercom's proxy level vars (ringer/speaker/mic sliders, watched by
+-- the separate intercom driver), our room/aggregator watches, and the security
+-- partition — so route on idDevice first.
 function OnWatchedVariableChanged(idDevice, idVariable, strValue)
+  if gSecurityDev and idDevice == gSecurityDev then
+    -- No debounce here (unlike SchedulePush for room vars): partition variables
+    -- change far less often than a streaming session's, and a state change is
+    -- exactly the kind of update that should reach the panel with no delay.
+    PushSecurityState()
+    return
+  end
   -- Intercom level vars are watched by the separate intercom driver now; we only
   -- watch our own room/aggregator vars. Coalesce: streaming makes these vars tick
   -- rapidly, and a synchronous BuildState per tick pegged the Director thread.

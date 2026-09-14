@@ -47,6 +47,8 @@ the device just keeps listening.
 | `favorite` | `id` (str, favorite id)             | Activate the favorite tile with this id. The driver resolves the action from the favorite's kind: `broadcast` → exact `SELECT_AUDIO_MEDIA`; `stream` → select the favorite's source (`DEVICE_SELECTED`, resumes that source — exact station play is navigator-gated); `light` → toggle the room-bound light. Legacy `mediaid` (str) instead of `id` still plays a broadcast-audio preset directly. |
 | `button` | `id` (int, programmable keypad button)  | A keypad button was tapped → driver raises the keypad-proxy action |
 | `halostate` | `idle`, `ring` (0–11 palette index), `bright` (0–100) | Device's actual halo LED state (device is authoritative — see `halo` below). Sent after every `hello`, and again on any change from any source. |
+| `secarm` | `armType` ∈ `Stay\|Away\|Stay Instant\|Away Instant`, `pin` (str), `bypass` (bool) | Arm the bound security partition → driver calls `PARTITION_ARM`. See [Security panel](#security-panel-issue-2) below. |
+| `secdisarm` | `pin` (str)                          | Disarm the bound security partition → driver calls `PARTITION_DISARM`. |
 | `ping`   | —                                       | Keepalive |
 
 `hello` also carries the device **identity** — `hwid` (hex) and `sku` — which the
@@ -416,6 +418,85 @@ of the fixed palette — the driver's `SetButtonLEDColor` programming command
 reuses the same palette but as `"RRGGBB"` hex (`NamedHex` in driver.lua), since
 button LEDs are a different device concept (`button`, not `halo`) with no
 on-device persistence of their own.
+
+---
+
+## Security panel (issue #2)
+
+The device can arm/disarm and show the state of **one** Control4 SECURITY
+partition proxy, if the driver instance's `Security Partition` connection
+(driver.xml, binding `5010`, class `SECURITY`) is bound to one. This is a
+CONSUMER binding — unlike every other proxy in this driver, the security
+partition is provided by a *different* driver (the house's alarm-panel
+integration) and this driver only binds to it. Most installs will leave it
+unbound, which is the normal/default state, not an error.
+
+> **NEEDS LIVE CONFIRMATION.** The partition proxy's command vocabulary
+> (`PARTITION_ARM`/`PARTITION_DISARM`/`EXECUTE_EMERGENCY` and their params) was
+> read from a live Director's proxy dump and is high-confidence. The exact
+> mechanism for receiving partition **variable-changed** notifications
+> (`C4:RegisterVariableListener` with a variable *name* vs. a numeric id — see
+> `driver.lua` `SECURITY_WATCH_VARS`) is **not** confirmed the way the room
+> variables above are, and per-zone open/closed/bypassed status is not modeled
+> on the wire at all — the `SECURITY_PANEL` proxy exposes no polled zone list,
+> only an unconfirmed notify push. Treat both as needing verification against a
+> live Composer/Director with a **spare/test** partition binding before this
+> ships to a real panel — never against a production security system.
+
+### `secstate` (driver → device) — partition snapshot, sent on bind/unbind, connect, and every real change
+
+```json
+{"t":"secstate","available":true,"partition":{
+  "state":"DISARMED_READY","display":"","trouble":"",
+  "openZones":0,"delayTotal":0,"delayRemaining":0,
+  "alarmType":"","armedType":"","lastFaulted":""
+}}
+{"t":"secstate","available":false}
+```
+
+| field | meaning |
+|---|---|
+| `available` | `false` when this keypad's `SECURITY` connection isn't bound to a partition — the device hides the Security tile/page entirely (feature-detect, matches `intercom`/`ic_available()`). `partition` is omitted/ignored when `available` is `false`. |
+| `partition.state` | The partition proxy's `PARTITION_STATE` string, passed through **verbatim** (e.g. `DISARMED_READY`, `ARMED_HOME`, `EXIT_DELAY`, `ALARM`) — not a firmware enum, so an unrecognized value still displays (humanized) rather than going blank. |
+| `partition.display` / `.trouble` | `DISPLAY_TEXT` / `TROUBLE_TEXT`, shown as-is. |
+| `partition.openZones` / `.lastFaulted` | `OPEN_ZONE_COUNT` / `LAST_ZONE_FAULTED` — the only zone-shaped fields wired end-to-end (see the confirmation note above; there is no per-zone list). |
+| `partition.delayTotal` / `.delayRemaining` | `DELAY_TIME_TOTAL` / `DELAY_TIME_REMAINING`, seconds. The device counts `delayRemaining` down locally between pushes and resyncs on every fresh `secstate`. |
+| `partition.alarmType` / `.armedType` | `ALARM_TYPE` / `ARMED_TYPE`, passed through. |
+
+### `secarm` / `secdisarm` (device → driver) — arm/disarm request
+
+```json
+{"t":"secarm","armType":"Away","pin":"1234","bypass":false}
+{"t":"secdisarm","pin":"1234"}
+```
+
+The PIN comes from the on-device PIN pad, rides this one message, and is
+forwarded straight to Control4's `UserCode` param — **never** stored, logged,
+or echoed by either side (see `net.c`/`driver.lua`, neither has an `ESP_LOGx`
+or `dbg()` call that touches the pin). `armType` is the partition proxy's own
+vocabulary (`Stay`/`Away`/`Stay Instant`/`Away Instant`), passed through
+unmodified. `bypass` maps to `PARTITION_ARM`'s own `Bypass` flag — there is no
+separate bypass command; "bypass & arm" (issue's optional affordance) **is**
+this flag set to `true`.
+
+### `secresult` (driver → device) — delivery confirmation ONLY
+
+```json
+{"t":"secresult","ok":true,"action":"arm"}
+{"t":"secresult","ok":false,"action":"arm","error":"not bound"}
+```
+
+**Fail-safe requirement (issue #2):** `ok:true` means only "the driver called
+`C4:SendToProxy`" — it is **not** proof the partition actually armed/disarmed.
+`PARTITION_ARM`/`PARTITION_DISARM` are fire-and-forget from the driver's side;
+the only real confirmation is the **next** `secstate` showing the requested
+`PARTITION_STATE`. The device must never render "Armed"/"Disarmed" from a
+`secresult` alone — only from `secstate`. A `secresult` with `ok:false` (not
+bound, empty code, or the `SendToProxy` call itself erroring) is shown
+immediately as a definitive failure, since no confirming `secstate` is coming
+for it. If neither a `secresult` nor a confirming `secstate` arrives within a
+device-side timeout, the device shows "no confirmation received" — still never
+a success state.
 
 ---
 
