@@ -2654,6 +2654,26 @@ function PlayItemOwner(srcId)
   return nil
 end
 
+-- A device-favorite tap (light/fan/shade) fires the command and returns immediately --
+-- the tile's own on/off label is read at BUILD time, so it only reflects the truth on
+-- the NEXT favorites push. Without this a tapped tile just sits showing its pre-tap
+-- state until something else happens to trigger a refresh (the periodic FAV_REFRESH_SEC
+-- tick, or a reconnect), which reads as "nothing happened" for as long as tens of
+-- seconds. Re-push shortly after every tap instead. QUERY_MIN_GAP_S (2s) throttles
+-- BuildFavoritesList calls that come in close together, so wait past that AND clear
+-- the throttle's own clock (gLastQueryAt) rather than just waiting -- otherwise a tap
+-- that lands inside another recent refresh's throttle window would still serve the
+-- stale cached list.
+local gFavRefreshTimer = nil
+function RefreshFavoritesSoon()
+  cancelTimer(gFavRefreshTimer)
+  gFavRefreshTimer = C4:SetTimer(2500, function()
+    gFavRefreshTimer = nil
+    gLastQueryAt["favorites"] = 0
+    Send({ t = "favorites", list = QueryResult("favorites", BuildFavoritesList) })
+  end)
+end
+
 -- Device variable carrying a light's on/off (percent) level — verified against the
 -- first-party room_control_keypad.c4z, which listens on it for its own "Any/All
 -- Lights On" tracking.
@@ -2670,6 +2690,7 @@ function DoToggleLightFavorite(fav)
   local cmd = isOn and "OFF" or "ON"
   dbg("favorite (light) ->", cmd, "device", id, "room", gRoom)
   C4:SendToDevice(id, cmd, {})
+  RefreshFavoritesSoon()
 end
 
 -- Ceiling fans confirmed live via GetDeviceData(id)'s <control> tag (see
@@ -2685,6 +2706,7 @@ function DoToggleFanFavorite(fav)
   local cmd = isOn and "OFF" or "ON"
   dbg("favorite (fan) ->", cmd, "device", id, "room", gRoom)
   C4:SendToDevice(id, cmd, {})
+  RefreshFavoritesSoon()
 end
 
 -- Play a favorite the firmware tapped. Resolved from the gFavorites cache (built by
@@ -2921,16 +2943,22 @@ end
 -- and SET_LEVEL_TARGET with a 0-100 param -- not OPEN/CLOSE like the relay favorites
 -- below. TOGGLE is a single stateless command (no local state tracking needed, unlike
 -- an earlier draft that guessed OPEN/CLOSE and had to remember which one it last sent).
--- Still no verified state-readback variable for a generic Blind, so the tile's "on"
--- display is a best-effort local guess only (updated optimistically after each tap),
--- not authoritative -- same caveat lights would have without LIGHT_STATE_VAR.
-local gShadeOpen = {}   -- deviceId -> our best-effort guess for display only
+--
+-- State readback IS real and confirmed live via /variables on a real Blind (id 2456):
+-- a plain Boolean "Open" variable, id 1000 -- same variable-1000 convention as
+-- LIGHT_STATE_VAR, just a different meaning per proxy type. Deliberately NOT using
+-- the Level/Target Level percentage variables (1004/1005): their 0-100 direction is
+-- NOT a fixed convention across devices -- id 2456 itself reads Level=100 with
+-- Fully Open=1 (100 == open on this device), contradicting a same-session field
+-- report that 100 means closed on a different shade. The Open boolean sidesteps
+-- that ambiguity entirely.
+local SHADE_OPEN_VAR = 1000
 
 function DoToggleShadeFavorite(fav)
   local id = tonumber(fav and fav.shade); if not id then return end
   dbg("favorite (shade) -> TOGGLE, device", id, "room", gRoom)
   C4:SendToDevice(id, "TOGGLE", {})
-  gShadeOpen[id] = not gShadeOpen[id]   -- optimistic guess for the tile's "on" label only
+  RefreshFavoritesSoon()
 end
 
 function BuildShadeFavorites(rid)
@@ -2942,9 +2970,11 @@ function BuildShadeFavorites(rid)
     if id then
       local name = DeviceName(id)
       if name ~= "" then
+        local okv, v = pcall(function() return C4:GetDeviceVariable(id, SHADE_OPEN_VAR) end)
+        local on = okv and v and tostring(v) ~= "" and tostring(v) ~= "0"
         local favId = "shade:" .. id
         gFavorites[favId] = { id = favId, kind = "shade", shade = id, title = name }
-        out[#out + 1] = { id = favId, title = Normalize(name), kind = "shade", on = gShadeOpen[id] == true }
+        out[#out + 1] = { id = favId, title = Normalize(name), kind = "shade", on = on }
       end
     end
   end
