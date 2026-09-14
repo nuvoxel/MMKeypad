@@ -167,6 +167,7 @@ static const char *iconGlyph(const char *n)
 static const char *favDeviceGlyph(const char *kind)
 {
     if (!strcmp(kind, "light"))   return "Lights";
+    if (!strcmp(kind, "fan"))     return "Fan";
     if (!strcmp(kind, "shade"))   return "Shade";
     if (!strcmp(kind, "comfort")) return "Climate";
     if (!strcmp(kind, "relay"))   return "Garage";
@@ -846,7 +847,7 @@ static void rebuildFavGrid(void)
         const char *devGlyph = favDeviceGlyph(s_favs[i].kind);
         // Only light/shade carry a meaningful `on` (see net.h favorite_t) -- comfort/
         // relay tiles never get the amber "active" accent.
-        bool hasOnState = devGlyph && (!strcmp(s_favs[i].kind, "light") || !strcmp(s_favs[i].kind, "shade"));
+        bool hasOnState = devGlyph && (!strcmp(s_favs[i].kind, "light") || !strcmp(s_favs[i].kind, "fan") || !strcmp(s_favs[i].kind, "shade"));
         int artsz = 0;
         if (s_favs[i].art_url[0] || devGlyph) {
             artsz = th - (small ? 34 : (int)(38 * s));
@@ -2631,7 +2632,7 @@ static void build_home_tiles(int W, int H, bool smallP)
         // sub-line or amber accent -- they'd be lying about a state we don't track.
         const char *kind = s_favs[i].kind;
         const char *glyph = favDeviceGlyph(kind);
-        bool hasOnState = glyph && (!strcmp(kind, "light") || !strcmp(kind, "shade"));
+        bool hasOnState = glyph && (!strcmp(kind, "light") || !strcmp(kind, "fan") || !strcmp(kind, "shade"));
         bool active = hasOnState && s_favs[i].on;
         const char *sub = !hasOnState ? NULL : (active ? (!strcmp(kind, "shade") ? "Open" : "On") : NULL);
         lv_obj_t *c = tileCard(grid, ICON_MEDIA, glyph, s_favs[i].title, sub,

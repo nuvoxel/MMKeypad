@@ -2672,6 +2672,21 @@ function DoToggleLightFavorite(fav)
   C4:SendToDevice(id, cmd, {})
 end
 
+-- Ceiling fans confirmed live via GetDeviceData(id)'s <control> tag (see
+-- BuildLightFavorites) support the same ON/OFF/TOGGLE vocabulary and are read via
+-- the same LIGHT_STATE_VAR readback as a light (per the REST /commands listing) --
+-- reusing the light on/off toggle mechanism rather than a parallel implementation.
+-- Speed control (CYCLE_SPEED_UP/DOWN, SET_SPEED) is a real richer surface a fan
+-- favorite doesn't use yet -- on/off only, matching a light favorite's scope.
+function DoToggleFanFavorite(fav)
+  local id = tonumber(fav and fav.fan); if not id then return end
+  local ok, v = pcall(function() return C4:GetDeviceVariable(id, LIGHT_STATE_VAR) end)
+  local isOn = ok and v and tostring(v) ~= "" and tostring(v) ~= "0"
+  local cmd = isOn and "OFF" or "ON"
+  dbg("favorite (fan) ->", cmd, "device", id, "room", gRoom)
+  C4:SendToDevice(id, cmd, {})
+end
+
 -- Play a favorite the firmware tapped. Resolved from the gFavorites cache (built by
 -- BuildFavoritesList) by favorite id. Action paths (control4-media-commands.md, plus
 -- this round's non-media additions -- see the provenance note above
@@ -2700,6 +2715,8 @@ function DoPlayFavorite(msg)
 
   if kind == "light" then
     DoToggleLightFavorite(fav)
+  elseif kind == "fan" then
+    DoToggleFanFavorite(fav)
   elseif kind == "shade" then
     DoToggleShadeFavorite(fav)
   elseif kind == "comfort" then
@@ -2861,6 +2878,18 @@ end
 --
 -- GET_LIGHT_DEVICES XML: <source><id>..</id></source>… (device ids only; no name/type
 -- carried — resolved via DeviceName like every other device id in this driver).
+-- GET_LIGHT_DEVICES's own <type> tag says "light" for EVERY entry, including fan
+-- controllers (confirmed live: Control4's Room object groups Fan into the same
+-- Lighting category GET_LIGHT_DEVICES enumerates, for Navigator-screen history
+-- reasons -- it is not a bug in this room command). The only way to tell a fan
+-- apart from an actual light is GetDeviceData(id)'s own <control> tag
+-- ("light_v2"/"light"/... vs "fan", confirmed live against a real Office ceiling
+-- fan), which CachedDeviceData already fetches for other purposes in this file.
+local function isFanControl(id)
+  local data = CachedDeviceData(id)
+  return data ~= nil and data:match("<control>%s*fan%s*</control>") ~= nil
+end
+
 function BuildLightFavorites(rid)
   local out = {}
   local ok, xml = pcall(function() return C4:SendToDevice(rid, "GET_LIGHT_DEVICES", {}) end)
@@ -2872,13 +2901,14 @@ function BuildLightFavorites(rid)
       if name ~= "" then
         local okv, v = pcall(function() return C4:GetDeviceVariable(id, LIGHT_STATE_VAR) end)
         local on = okv and v and tostring(v) ~= "" and tostring(v) ~= "0"
-        local favId = "light:" .. id
-        gFavorites[favId] = { id = favId, kind = "light", light = id, title = name }
-        out[#out + 1] = { id = favId, title = Normalize(name), kind = "light", on = on }
+        local kind = isFanControl(id) and "fan" or "light"
+        local favId = kind .. ":" .. id
+        gFavorites[favId] = { id = favId, kind = kind, [kind] = id, title = name }
+        out[#out + 1] = { id = favId, title = Normalize(name), kind = kind, on = on }
       end
     end
   end
-  dbg("getfavorites: room", rid, "->", #out, "light favorites")
+  dbg("getfavorites: room", rid, "->", #out, "light/fan favorites")
   return out
 end
 
