@@ -549,82 +549,115 @@ on-device persistence of their own.
 
 ---
 
-## Security panel (issue #2)
+## Security panel (issue #2, security-auto-discover follow-up)
 
-The device can arm/disarm and show the state of **one** Control4 SECURITY
-partition proxy, if the driver instance's `Security Partition` connection
-(driver.xml, binding `5010`, class `SECURITY`) is bound to one. This is a
-CONSUMER binding — unlike every other proxy in this driver, the security
-partition is provided by a *different* driver (the house's alarm-panel
-integration) and this driver only binds to it. Most installs will leave it
-unbound, which is the normal/default state, not an error.
+The device can arm/disarm and show the state of every Control4 SECURITY
+partition auto-discovered for the room this keypad instance lives in. This
+**replaces** the original issue #2 design's manual Composer binding (a
+`Security Partition` CONSUMER connection, `driver.xml` id `5010`, class
+`SECURITY`) — that mechanism is gone entirely, from both `driver.xml` and
+`driver.lua`.
 
-> **NEEDS LIVE CONFIRMATION.** The partition proxy's command vocabulary
-> (`PARTITION_ARM`/`PARTITION_DISARM`/`EXECUTE_EMERGENCY` and their params) was
-> read from a live Director's proxy dump and is high-confidence. The exact
-> mechanism for receiving partition **variable-changed** notifications
-> (`C4:RegisterVariableListener` with a variable *name* vs. a numeric id — see
-> `driver.lua` `SECURITY_WATCH_VARS`) is **not** confirmed the way the room
-> variables above are, and per-zone open/closed/bypassed status is not modeled
-> on the wire at all — the `SECURITY_PANEL` proxy exposes no polled zone list,
-> only an unconfirmed notify push. Treat both as needing verification against a
-> live Composer/Director with a **spare/test** partition binding before this
-> ships to a real panel — never against a production security system.
+**Discovery mechanism (confirmed live, 2026-09-14, dev Director):**
+`C4:SendToDevice(gRoom, "GET_SECURITY_DEVICES", {})` — the same room-command
+family this driver already uses for lights (`GET_LIGHT_DEVICES`) and shades
+(`GET_BLIND_DEVICES`) — is genuinely **room-scoped** for Security. Tested
+against 4 rooms: room 2434 ("Office") returned **two** real partitions (2684
+"Home", 2685 "Office"); rooms 2417 ("Playroom") and 2425 ("Emily's Room") each
+returned only 2684. The response also carries two pseudo-sources,
+`SPECIAL_SECURITY_CAMERAS` and `SPECIAL_SECURITY_CONTACTS`, which are **not**
+real partitions and are skipped — same pattern as `SPECIAL_COMFORT_*` in the
+Comfort page below; only `<type>Security</type>` entries are kept. See
+`driver.lua` `BuildSecurityList`. (This is the opposite finding from Comfort,
+which turned out to NOT be room-scoped — Security genuinely needed the
+per-room model the old manual binding was trying to approximate.)
 
-### `secstate` (driver → device) — partition snapshot, sent on bind/unbind, connect, and every real change
+**Multi-partition handling:** a room's partition list can have more than one
+entry (Office, live-confirmed). The device shows a **picker** (one card per
+partition, same list-then-detail idiom as the Comfort page) when there is more
+than one, and skips straight to the single partition's detail page when there
+is exactly one — the common case, and the original issue #2 UX intent.
+
+> **NEEDS LIVE CONFIRMATION** (carried over from issue #2 — discovery is what
+> this follow-up confirmed, not the listener contract below). The partition
+> proxy's command vocabulary (`PARTITION_ARM`/`PARTITION_DISARM`/
+> `EXECUTE_EMERGENCY` and their params) was read from a live Director's proxy
+> dump and is high-confidence. The exact mechanism for receiving partition
+> **variable-changed** notifications (`C4:RegisterVariableListener` with a
+> variable *name* vs. a numeric id — see `driver.lua` `SECURITY_WATCH_VARS`) is
+> **not** confirmed the way the room variables above are, and per-zone
+> open/closed/bypassed status is not modeled on the wire at all — the
+> `SECURITY_PANEL` proxy exposes no polled zone list, only an unconfirmed
+> notify push. Treat both as needing verification against a live
+> Composer/Director with a **spare/test** partition before this ships to a
+> real panel — never against a production security system.
+
+### `secstate` (driver → device) — partition list snapshot, sent on connect, on every room change, and on every real variable change
 
 ```json
-{"t":"secstate","available":true,"partition":{
-  "state":"DISARMED_READY","display":"","trouble":"",
-  "openZones":0,"delayTotal":0,"delayRemaining":0,
-  "alarmType":"","armedType":"","lastFaulted":""
-}}
+{"t":"secstate","available":true,"list":[
+  {"id":2684,"title":"Home","state":"DISARMED_READY","display":"","trouble":"",
+   "openZones":0,"delayTotal":0,"delayRemaining":0,
+   "alarmType":"","armedType":"","lastFaulted":""},
+  {"id":2685,"title":"Office","state":"ARMED_AWAY","display":"","trouble":"",
+   "openZones":0,"delayTotal":0,"delayRemaining":0,
+   "alarmType":"","armedType":"Away","lastFaulted":""}
+]}
 {"t":"secstate","available":false}
 ```
 
 | field | meaning |
 |---|---|
-| `available` | `false` when this keypad's `SECURITY` connection isn't bound to a partition — the device hides the Security tile/page entirely (feature-detect, matches `intercom`/`ic_available()`). `partition` is omitted/ignored when `available` is `false`. |
-| `partition.state` | The partition proxy's `PARTITION_STATE` string, passed through **verbatim** (e.g. `DISARMED_READY`, `ARMED_HOME`, `EXIT_DELAY`, `ALARM`) — not a firmware enum, so an unrecognized value still displays (humanized) rather than going blank. |
-| `partition.display` / `.trouble` | `DISPLAY_TEXT` / `TROUBLE_TEXT`, shown as-is. |
-| `partition.openZones` / `.lastFaulted` | `OPEN_ZONE_COUNT` / `LAST_ZONE_FAULTED` — the only zone-shaped fields wired end-to-end (see the confirmation note above; there is no per-zone list). |
-| `partition.delayTotal` / `.delayRemaining` | `DELAY_TIME_TOTAL` / `DELAY_TIME_REMAINING`, seconds. The device counts `delayRemaining` down locally between pushes and resyncs on every fresh `secstate`. |
-| `partition.alarmType` / `.armedType` | `ALARM_TYPE` / `ARMED_TYPE`, passed through. |
+| `available` | `false` when this room's `GET_SECURITY_DEVICES` auto-discovered zero real partitions — the device hides the Security tile/page entirely (feature-detect, matches `intercom`/`ic_available()`). `list` is omitted/ignored when `available` is `false`. |
+| `list[].id` | The partition's Control4 device id — sent back verbatim in `secarm`/`secdisarm` to address this exact partition (there is no more single implicit bound partition). |
+| `list[].title` | The partition's device name (e.g. "Home", "Office") — shown on the picker, and above the state on the detail page when the room has more than one partition. |
+| `list[].state` | The partition's `PARTITION_STATE` string, passed through **verbatim** (e.g. `DISARMED_READY`, `ARMED_HOME`, `EXIT_DELAY`, `ALARM`) — not a firmware enum, so an unrecognized value still displays (humanized) rather than going blank. |
+| `list[].display` / `.trouble` | `DISPLAY_TEXT` / `TROUBLE_TEXT`, shown as-is. |
+| `list[].openZones` / `.lastFaulted` | `OPEN_ZONE_COUNT` / `LAST_ZONE_FAULTED` — the only zone-shaped fields wired end-to-end (see the confirmation note above; there is no per-zone list). |
+| `list[].delayTotal` / `.delayRemaining` | `DELAY_TIME_TOTAL` / `DELAY_TIME_REMAINING`, seconds. The device counts `delayRemaining` down locally between pushes and resyncs on every fresh `secstate`, for whichever partition's detail page is open. |
+| `list[].alarmType` / `.armedType` | `ALARM_TYPE` / `ARMED_TYPE`, passed through. |
 
 ### `secarm` / `secdisarm` (device → driver) — arm/disarm request
 
 ```json
-{"t":"secarm","armType":"Away","pin":"1234","bypass":false}
-{"t":"secdisarm","pin":"1234"}
+{"t":"secarm","id":2684,"armType":"Away","pin":"1234","bypass":false}
+{"t":"secdisarm","id":2684,"pin":"1234"}
 ```
 
-The PIN comes from the on-device PIN pad, rides this one message, and is
-forwarded straight to Control4's `UserCode` param — **never** stored, logged,
-or echoed by either side (see `net.c`/`driver.lua`, neither has an `ESP_LOGx`
-or `dbg()` call that touches the pin). `armType` is the partition proxy's own
-vocabulary (`Stay`/`Away`/`Stay Instant`/`Away Instant`), passed through
-unmodified. `bypass` maps to `PARTITION_ARM`'s own `Bypass` flag — there is no
-separate bypass command; "bypass & arm" (issue's optional affordance) **is**
-this flag set to `true`.
+`id` is the `list[].id` of the partition to act on — required now that a room
+can auto-discover more than one. The PIN comes from the on-device PIN pad,
+rides this one message, and is forwarded straight to Control4's `UserCode`
+param — **never** stored, logged, or echoed by either side (see
+`net.c`/`driver.lua`, neither has an `ESP_LOGx` or `dbg()` call that touches
+the pin). `armType` is the partition's own vocabulary (`Stay`/`Away`/`Stay
+Instant`/`Away Instant`), passed through unmodified. `bypass` maps to
+`PARTITION_ARM`'s own `Bypass` flag — there is no separate bypass command;
+"bypass & arm" (issue's optional affordance) **is** this flag set to `true`.
+The driver relays with `C4:SendToDevice(id, ...)` now, not `C4:SendToProxy` on
+a bound connection — there is no connection to send to any more.
 
 ### `secresult` (driver → device) — delivery confirmation ONLY
 
 ```json
-{"t":"secresult","ok":true,"action":"arm"}
-{"t":"secresult","ok":false,"action":"arm","error":"not bound"}
+{"t":"secresult","ok":true,"action":"arm","id":2684}
+{"t":"secresult","ok":false,"action":"arm","id":2684,"error":"no code entered"}
 ```
 
+`id` echoes back the partition the request targeted, so a device viewing a
+different partition's detail page (or the picker) ignores a stray result —
+see `ui.c` `ui_set_security_result`.
+
 **Fail-safe requirement (issue #2):** `ok:true` means only "the driver called
-`C4:SendToProxy`" — it is **not** proof the partition actually armed/disarmed.
+`C4:SendToDevice`" — it is **not** proof the partition actually armed/disarmed.
 `PARTITION_ARM`/`PARTITION_DISARM` are fire-and-forget from the driver's side;
 the only real confirmation is the **next** `secstate` showing the requested
-`PARTITION_STATE`. The device must never render "Armed"/"Disarmed" from a
-`secresult` alone — only from `secstate`. A `secresult` with `ok:false` (not
-bound, empty code, or the `SendToProxy` call itself erroring) is shown
-immediately as a definitive failure, since no confirming `secstate` is coming
-for it. If neither a `secresult` nor a confirming `secstate` arrives within a
-device-side timeout, the device shows "no confirmation received" — still never
-a success state.
+`PARTITION_STATE` for this `id`. The device must never render "Armed"/
+"Disarmed" from a `secresult` alone — only from `secstate`. A `secresult` with
+`ok:false` (empty code, no partition id, or the `SendToDevice` call itself
+erroring) is shown immediately as a definitive failure, since no confirming
+`secstate` is coming for it. If neither a `secresult` nor a confirming
+`secstate` arrives within a device-side timeout, the device shows "no
+confirmation received" — still never a success state.
 
 ---
 

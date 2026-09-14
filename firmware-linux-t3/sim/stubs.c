@@ -51,8 +51,8 @@ void  net_request_rooms(void)          { }
 void  net_request_favorites(void)      { }
 void  net_group_room(const char *id, bool join) { (void)id; (void)join; }
 void  net_play_favorite(const char *id)         { (void)id; }
-void  net_security_arm(const char *arm_type, const char *pin, bool bypass) { (void)arm_type; (void)pin; (void)bypass; }
-void  net_security_disarm(const char *pin)      { (void)pin; }
+void  net_security_arm(int partition_id, const char *arm_type, const char *pin, bool bypass) { (void)partition_id; (void)arm_type; (void)pin; (void)bypass; }
+void  net_security_disarm(int partition_id, const char *pin)      { (void)partition_id; (void)pin; }
 void  net_comfort_cmd(int id, const char *action, const char *mode) { (void)id; (void)action; (void)mode; }
 void  mmk_read_mac(uint8_t mac[6])     { static const uint8_t m[6] = {0x02,0x00,0x00,0x0C,0x0F,0xEE}; memcpy(mac, m, 6); }
 

@@ -26,6 +26,13 @@
  *     MMK_COMFORT_ID=<id> which sample thermostat "detail" opens (default 2931
  *                         "heat"; 2929 "off" has no setpoint rows, 2933 "cool"
  *                         has only the cool row)
+ *     MMK_SEC=0|1|2       auto-discovered partitions to seed (default 1): 0 hides
+ *                         the Security tile/page entirely, 1 seeds one partition
+ *                         (2684 "Home", disarmed), 2 seeds two (adds 2685
+ *                         "Office", armed away) -- mirrors the live-confirmed
+ *                         room 2434 "Office" shape (2026-09-14)
+ *     MMK_SEC_PANEL=1     open the Security page instead of home (picker if
+ *                         MMK_SEC=2, else straight to the single partition)
  *     MMK_SETPAGE=<n>     which Settings page (0 grid, 1 display, 2 sound,
  *                         3 network, 4 diagnostics, 5 about)
  *     MMK_CALLPEER=<name> who is calling (default "Front Door")
@@ -230,6 +237,23 @@ int main(int argc, char **argv)
         memcpy(cmf.list, cmf_list, sizeof(cmf_list));
         ui_set_comfort(&cmf);
     }
+    /* Sample Security partitions -- mirrors the live-confirmed auto-discovery shape
+     * (2026-09-14, dev Director room 2434 "Office"): GET_SECURITY_DEVICES returned
+     * two real partitions, 2684 "Home" and 2685 "Office", alongside pseudo-sources
+     * BuildSecurityList skips. MMK_SEC picks how many to seed so both the single-
+     * partition "skip the picker" path and the two-partition picker can be
+     * previewed without a driver. */
+    {
+        static partition_t sec_list[] = {
+            { .id = 2684, .title = "Home",   .state = "DISARMED_READY" },
+            { .id = 2685, .title = "Office", .state = "ARMED_AWAY", .armed_type = "Away" },
+        };
+        int nsec = env_int("MMK_SEC", 1);
+        if (nsec < 0) nsec = 0; if (nsec > 2) nsec = 2;
+        security_state_t sec = { .available = nsec > 0, .n = nsec };
+        memcpy(sec.list, sec_list, sizeof(partition_t) * (size_t)nsec);
+        ui_set_security(&sec);
+    }
     /* MMK_OFFLINE=1 previews the not-connected landing page (no driver link). */
     ui_set_connected(env_int("MMK_OFFLINE", 0) ? false : true);
 
@@ -298,6 +322,11 @@ int main(int argc, char **argv)
      * "cool" (cool row only), letting all three has_heat/has_cool/neither shapes
      * be previewed without a driver. */
     if (cmf_panel && !strcmp(cmf_panel, "detail")) ui_show_comfort_detail(env_int("MMK_COMFORT_ID", 2931));
+    /* MMK_SEC_PANEL=1 opens the Security page: the picker when MMK_SEC=2 seeded two
+     * partitions, else straight to the single seeded partition's detail page --
+     * exercises the same "skip the picker for the common case" logic homeSecurity
+     * itself uses, without simulating a touch event. */
+    if (env_int("MMK_SEC_PANEL", 0)) ui_show_security_panel();
     /* Settings lives on lv_layer_top() like setup/call, so it needs the same
      * snapshot root -- off the active screen it renders invisibly. */
     const bool settings_scene = env_int("MMK_SETTINGS", 0) != 0;
