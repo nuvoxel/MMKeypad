@@ -280,6 +280,43 @@ driver doesn't do elsewhere (see the intercom door-actions design in `net.h`/
 lights now, and the `kind` enum stays open for a future value if a similarly generic
 mechanism turns up for another category.
 
+**Shades and comfort/thermostats were investigated for the same generalization
+(issue follow-up asking for `kind:"shade"`/`kind:"comfort"`) and turned up the same
+negative result as gates — scoped out for now, not built on a guess:**
+
+- Grepped every `.c4z` driver in this project's local Control4 library (~120
+  drivers, including several shade drivers — `blinds_generic_2_relay`,
+  `blinds_generic_3_relay`, `lutron_leap_shade` — and several thermostat drivers —
+  `control4_thermostat_ecobee_thermostat`, `honeywell_home_thermostat`,
+  `lutron_leap_palladiom_thermostat`) for every `GET_*_DEVICES` room command they
+  reference. Only three drivers use `GET_LIGHT_DEVICES`/`GET_LISTEN_DEVICES`/
+  `GET_WATCH_DEVICES` (this driver, `room_control_keypad.c4z`, and
+  `nowplaying-hdmiout.c4z` for the watch family) — nothing anywhere references a
+  `GET_SHADE_DEVICES`, `GET_COMFORT_DEVICES`, `GET_THERMOSTAT_DEVICES`, or
+  `GET_FAN_DEVICES`. Room-level device enumeration commands only exist for the
+  three categories (Lighting/Listen/Watch) that Composer's Room object natively
+  binds and tracks (the same "ANY LIGHTS ON"-style room state `LightsOn`/
+  `LightsOff`/`LightsToggle` in `room_control_keypad.c4z` depend on) — shades and
+  thermostats aren't part of that room-level binding model, so there's no reason to
+  expect a symmetric command exists at all, and the shade/thermostat drivers
+  themselves (which would have every reason to call a room-level shade/comfort
+  enumeration if one existed) never do.
+- The `room_control_keypad.c4z` source has zero mentions of "shade", "comfort",
+  "thermostat", or "hvac" anywhere — the physical room keypad this project's own
+  driver is modeled on doesn't do shade/comfort control at all.
+- A web search for the command names turned up nothing either — no public driver
+  source, forum post, or Control4 SDK reference documents them.
+- Reading a Navigator favorite's `<menu>comfort</menu>` tile (see above) is gated
+  the same as every non-`listen` tile — no read path either, control or display.
+
+So unlike lights, there is no verified generic mechanism for shades or comfort at
+all, and nothing to build without hard-coding a specific vendor's command set (which
+this driver doesn't do) or guessing an unverified command against a live Director
+(which risks silently doing nothing, or worse). `kind` stays open for both if a
+generic mechanism ever turns up — e.g. from a live Director spike trying
+`C4:SendToDevice(roomId, "GET_SHADE_DEVICES", {})` and inspecting what comes back,
+the same way `GET_LIGHT_DEVICES` was originally confirmed.
+
 #### How a favourite is played (driver-side)
 
 `kind:"broadcast"` tiles play exactly via `SELECT_AUDIO_MEDIA {mediaid}`.
