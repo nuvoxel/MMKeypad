@@ -141,3 +141,9 @@ void net_ping(void);
 // fields in g_settings, from whichever side made it. No-op if not connected
 // or the board has no halo hardware.
 void net_report_halo(void);
+
+// One-off diagnostic line relayed to the driver (-> director.log via dbg(),
+// gated on that device's Debug Logging like "sent ota"/"pushed halo" already
+// are). For events with no other visibility into a panel with no physical/USB
+// access -- see ui.c's wake-shield/backlight tracing. No-op if not connected.
+void net_send_diag(const char *msg);

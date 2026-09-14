@@ -213,6 +213,15 @@ static void send_hello(void)
     send_obj(o);
 }
 
+void net_send_diag(const char *msg)
+{
+    if (!msg) return;
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "t", "diag");
+    cJSON_AddStringToObject(o, "msg", msg);
+    send_obj(o);
+}
+
 void net_report_halo(void)
 {
 #ifdef PIN_RGB_LED

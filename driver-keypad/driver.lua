@@ -1017,6 +1017,11 @@ function HandleMessage(line)
     -- of from a photograph.
     dbg("art tile", msg.slot, msg.ok and "PUBLISHED" or "ABANDONED/failed",
         tostring(msg.bytes) .. " bytes", tostring(msg.w) .. "x" .. tostring(msg.h))
+  elseif t == "diag" then
+    -- One-off field diagnostics from the device (net_send_diag) -- the only
+    -- visibility into a panel with no physical/USB access. See ui.c's
+    -- wake-shield/backlight tracing.
+    dbg("diag:", tostring(msg.msg))
   elseif t == "halostate" then
     -- The device reporting its ACTUAL halo state (config.h/NVS is authoritative there --
     -- sent right after every connect, and again whenever an on-device edit or an

@@ -2464,6 +2464,12 @@ static lv_obj_t *s_wakeShield;
 static void onWakeTap(lv_event_t *e)
 {
     (void)e;
+    // DIAG: a field report of "connects fine but the screen never wakes" had no
+    // trace either way -- this and the ui_tick_screensaver diag below are relayed
+    // to the driver (net_send_diag -> director.log) since a panel with no
+    // physical/USB access has no other way to tell whether the shield ever saw
+    // the tap and whether the backlight transition that should follow ran.
+    net_send_diag("wake tap");
     if (s_wakeShield) lv_obj_add_flag(s_wakeShield, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -3323,7 +3329,17 @@ void ui_tick_screensaver(void)
     // brightness. Tracking the applied value means live driver/web changes to either
     // level — and waking on touch (idle resets) — apply on the next tick.
     int want = shouldDim ? g_settings.dim_brightness : g_settings.brightness;
-    if (want != applied) { bsp_set_backlight((uint8_t)want); applied = want; }
+    if (want != applied) {
+        bsp_set_backlight((uint8_t)want);
+        // DIAG: see onWakeTap -- confirms this tick actually ran and applied the
+        // transition, vs. the tap being seen but nothing downstream reacting.
+        if (applied >= 0) {
+            char m[48];
+            snprintf(m, sizeof(m), "backlight %d -> %d (idle=%s)", applied, want, shouldDim ? "y" : "n");
+            net_send_diag(m);
+        }
+        applied = want;
+    }
     // Arm the wake shield exactly while dimmed. onWakeTap drops it on the press,
     // so it never eats a second tap.
     if (s_wakeShield) {
