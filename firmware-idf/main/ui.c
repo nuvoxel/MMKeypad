@@ -3766,7 +3766,11 @@ void ui_set_state(const media_state_t *st)
     // room page (build_home_tiles).
     bool haveButtons = (st->n_buttons > 0);
     s_haveButtons = haveButtons;
-    if (s_homeBar) setVis(s_homeBar, st->power);   // hide the mini-player when the room is off
+    // Room "on" alone isn't enough -- a powered-on room with no source selected/playing
+    // (no title, and not an active "media" session) left the mini-player bar reserving
+    // its space with nothing in it. Same "is there a real session" condition as the
+    // home-panel auto-return check above.
+    if (s_homeBar) setVis(s_homeBar, st->power && (st->title[0] || !strcmp(st->media_type, "media")));
     if ((int)st->power != (int)s_lastPower) s_lastPower = st->power;
 }
 
