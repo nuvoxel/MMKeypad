@@ -4,26 +4,25 @@
 ## The display/audio components are gated to the targets that use them (via `rules`),
 ## so the headless ESP32-P4 build doesn't drag in LVGL / panel / codec / RTC stacks.
 dependencies:
-  idf: ">=5.1"
+  # >=5.5.5 specifically -- esp_lvgl_port 2.9.x below needs the
+  # on_frame_buf_complete field that landed in 5.5.5, not just any 5.5.x.
+  idf: ">=5.5.5"
 
   # ── UI / display (S3 lcdwiki + P4 display boards) ───────────────────────────
   # esp_lvgl_port 2.4+ uses LV_COLOR_FORMAT_RGB565_SWAPPED (LVGL 9.3+), so keep
   # LVGL >= 9.3 to stay compatible with the port's swap_bytes path. Needed by both
   # display boards (the headless P4-POE build ignores it).
   lvgl/lvgl:
-    version: "~9.3.0"
+    version: "~9.5.0"
     rules:
       - if: "target in [esp32s3, esp32p4]"
   espressif/esp_lvgl_port:
-    # PINNED to the 2.8 line, not ^2.8.0. 2.9.0 assumes a post-5.5 esp_lcd API:
-    # it gates on ESP_IDF_VERSION >= 5.5.0 and assigns
-    # cbs.on_frame_buf_complete, but IDF 5.5.4's
-    # esp_lcd_dpi_panel_event_callbacks_t has only on_color_trans_done /
-    # on_refresh_done (the field landed after 5.5). With a caret range the
-    # component manager silently resolved 2.9.0 on the next build and broke both
-    # DSI boards (ws43, nano) -- release builds only, because the debug build
-    # dirs still had a stale object for that file.
-    version: "~2.8.0"
+    # esp_lvgl_port 2.9.0 assigns cbs.on_frame_buf_complete, which needs
+    # esp_lcd_dpi_panel_event_callbacks_t to have that field -- it landed in
+    # ESP-IDF 5.5.5 (a bare caret range silently resolved 2.9.0 against 5.5.4
+    # once already and broke both DSI boards, ws43 and nano, in a release
+    # build only). Toolchain is now pinned to 5.5.5+, so 2.9 is safe.
+    version: "~2.9.0"
     rules:
       - if: "target in [esp32s3, esp32p4]"
   # SPI panel for the lcdwiki 2.8" S3 (ILI9341V). Touch on S3 is a direct FT6336
@@ -123,8 +122,13 @@ dependencies:
     rules:
       - if: "target in [esp32s3, esp32p4]"
   # SIP/RTP stack (ESPRESSIF MIT license, redistributable on Espressif silicon):
+  # Pinned: v1.0.1 added SDES-SRTP support but its component manifest doesn't
+  # actually link -- undefined reference to srtp_create/srtp_protect/etc, even
+  # with esp_libsrtp declared as a direct dependency of main. Stay on 1.0.0
+  # until that's fixed upstream (tracked: does not fix the tlsf_free crash
+  # below either, per its changelog, so no urgency to chase the link fix).
   espressif/esp_media_protocols:
-    version: "*"
+    version: "1.0.0"
     rules:
       - if: "target in [esp32s3, esp32p4]"
   # On-device AEC / noise-suppression:
