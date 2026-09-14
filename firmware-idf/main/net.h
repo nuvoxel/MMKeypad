@@ -59,23 +59,36 @@ typedef struct {
 // `playing` = that room's queue is playing; `active` = it's in some session.
 typedef struct { char id[24]; char name[48]; bool grouped, playing, active; } room_t;
 
-// Security partition snapshot (driver-pushed `secstate`, PROTOCOL.md). `available`
-// is false when this keypad's SECURITY connection isn't bound to a partition —
-// the UI hides the Security tile/page entirely in that case rather than showing
-// a broken one. Everything else is only meaningful when `available` is true.
+// Security partition snapshot (driver-pushed `secstate`, PROTOCOL.md). Partitions
+// are now auto-discovered per room via GET_SECURITY_DEVICES (driver.lua
+// BuildSecurityList) instead of a manual Composer binding -- confirmed live
+// 2026-09-14 that this room command is genuinely room-scoped for Security (same
+// family as GET_LIGHT_DEVICES/GET_BLIND_DEVICES): room 2434 "Office" returned TWO
+// real partitions (2684 "Home", 2685 "Office"), while every other tested room
+// returned just 2684. `available` is false when the room resolves zero real
+// partitions -- the UI hides the Security tile/page entirely in that case rather
+// than showing a broken one. Everything in `list[]` is only meaningful when
+// `available` is true.
 //
-// `state` mirrors the Control4 partition proxy's PARTITION_STATE string verbatim
-// (e.g. "DISARMED_READY", "ARMED_HOME", "EXIT_DELAY", "ALARM") rather than a
-// firmware-defined enum, so a value this build doesn't recognize still displays
-// (falls back to showing the raw string) instead of silently going blank.
+// `list[].state` mirrors the Control4 partition proxy's PARTITION_STATE string
+// verbatim (e.g. "DISARMED_READY", "ARMED_HOME", "EXIT_DELAY", "ALARM") rather
+// than a firmware-defined enum, so a value this build doesn't recognize still
+// displays (falls back to showing the raw string) instead of silently going
+// blank.
 //
 // Per-zone open/closed/bypassed status is NOT modeled here: the driver-side
 // SECURITY_PANEL proxy exposes no polled zone list, only a push notify whose
 // exact payload shape is unconfirmed against a live Director (see driver.lua
 // WatchSecurityVars and PROTOCOL.md) — `open_zones`/`last_faulted` are the only
 // zone-shaped fields wired end-to-end today.
+//
+// Live-confirmed max is 2 partitions in one room (Office); this is a generous
+// sanity ceiling against a hostile/buggy driver, same idea as NET_MAX_COMFORT.
+#define NET_MAX_PARTITIONS 4
 typedef struct {
-    bool available;
+    int  id;                   // Control4 device id of this partition — sent back
+                                // verbatim in `secarm`/`secdisarm` to address it
+    char title[48];             // partition name (e.g. "Home", "Office"), DeviceName(id)
     char state[24];            // PARTITION_STATE, e.g. "DISARMED_READY"
     char display[64];          // DISPLAY_TEXT
     char trouble[64];          // TROUBLE_TEXT
@@ -85,17 +98,24 @@ typedef struct {
     char alarm_type[16];       // ALARM_TYPE
     char armed_type[16];       // ARMED_TYPE
     char last_faulted[48];     // LAST_ZONE_FAULTED, e.g. "Pool Bath Door"
+} partition_t;
+
+typedef struct {
+    bool available;
+    partition_t list[NET_MAX_PARTITIONS];
+    int  n;
 } security_state_t;
 
 // Outcome of a `secarm`/`secdisarm` request (driver-pushed `secresult`). This is
 // delivery confirmation ONLY — "the driver called C4:SendToProxy" — never proof
 // the partition actually armed/disarmed. That proof, if it comes, is the next
-// `secstate` showing the requested PARTITION_STATE; the UI must not report
-// success from `ok` alone (fail-safe requirement, see ui.c).
+// `secstate` showing the requested PARTITION_STATE for partition `id`; the UI
+// must not report success from `ok` alone (fail-safe requirement, see ui.c).
 typedef struct {
+    int  id;            // which partition this result is for
     bool ok;
-    char action[12];   // "arm" | "disarm"
-    char error[48];    // set when ok == false, e.g. "not bound"
+    char action[12];    // "arm" | "disarm"
+    char error[48];     // set when ok == false, e.g. "no code entered"
 } security_result_t;
 
 // One thermostat's current state (driver-pushed `comfortlist`, PROTOCOL.md). `id` is
@@ -227,14 +247,17 @@ void net_request_favorites(void);                 // ask for this room's favorit
 void net_play_favorite(const char *id);           // play the favorite tile with this id
 void net_ping(void);
 
-// Security partition arm/disarm (see PROTOCOL.md `secarm`/`secdisarm`). `pin` rides
-// this one call — never persisted, logged, or echoed by net.c or the UI; the driver
-// forwards it straight to Control4's UserCode and drops it. `arm_type` is one of
-// "Stay" | "Away" | "Stay Instant" | "Away Instant" (the partition proxy's own
-// vocabulary — passed through verbatim). `bypass` asks the driver to arm with any
-// currently-faulted zones bypassed rather than refusing to arm.
-void net_security_arm(const char *arm_type, const char *pin, bool bypass);
-void net_security_disarm(const char *pin);
+// Security partition arm/disarm (see PROTOCOL.md `secarm`/`secdisarm`). `partition_id`
+// is the partition_t.id to address — a room can auto-discover more than one (see
+// security_state_t above), so every request now names its target explicitly instead
+// of assuming a single bound partition. `pin` rides this one call — never persisted,
+// logged, or echoed by net.c or the UI; the driver forwards it straight to Control4's
+// UserCode and drops it. `arm_type` is one of "Stay" | "Away" | "Stay Instant" |
+// "Away Instant" (the partition proxy's own vocabulary — passed through verbatim).
+// `bypass` asks the driver to arm with any currently-faulted zones bypassed rather
+// than refusing to arm.
+void net_security_arm(int partition_id, const char *arm_type, const char *pin, bool bypass);
+void net_security_disarm(int partition_id, const char *pin);
 
 // Comfort page thermostat control (see PROTOCOL.md `comfortcmd`). `id` is the
 // comfort_t.id of the thermostat to control. `action` is one of "heat_inc" |

@@ -192,19 +192,21 @@ void net_ping(void)
 
 // The PIN rides in the JSON payload (same as every other field here) but is
 // deliberately never logged: no ESP_LOGx anywhere in this file touches `pin`.
-void net_security_arm(const char *arm_type, const char *pin, bool bypass)
+void net_security_arm(int partition_id, const char *arm_type, const char *pin, bool bypass)
 {
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "t", "secarm");
+    cJSON_AddNumberToObject(o, "id", partition_id);
     cJSON_AddStringToObject(o, "armType", arm_type && arm_type[0] ? arm_type : "Away");
     cJSON_AddStringToObject(o, "pin", pin ? pin : "");
     cJSON_AddBoolToObject(o, "bypass", bypass);
     send_obj(o);
 }
-void net_security_disarm(const char *pin)
+void net_security_disarm(int partition_id, const char *pin)
 {
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "t", "secdisarm");
+    cJSON_AddNumberToObject(o, "id", partition_id);
     cJSON_AddStringToObject(o, "pin", pin ? pin : "");
     send_obj(o);
 }
@@ -660,24 +662,35 @@ static void handle_line(const char *line)
         net_report_halo();   // always -- a driver that just reconnected needs the reply even when nothing changed
 #endif
     } else if (!strcmp(ts, "secstate")) {
-        // Driver-pushed security partition state (PROTOCOL.md). `available` false
-        // means this keypad's SECURITY connection isn't bound to a partition -- the
-        // UI feature-detects on this and hides the Security tile/page entirely,
-        // same idea as ic_available() for the intercom.
+        // Driver-pushed security partition list (PROTOCOL.md). `available` false
+        // means this room auto-discovered zero real partitions (GET_SECURITY_DEVICES)
+        // -- the UI feature-detects on this and hides the Security tile/page
+        // entirely, same idea as ic_available() for the intercom. `list` entries
+        // mirror comfort_state_t's shape -- same array-of-N idiom as `comfortlist`
+        // below, since a room can now report more than one partition (live-confirmed:
+        // room 2434 "Office" returns two).
         security_state_t sec;
         memset(&sec, 0, sizeof(sec));
         sec.available = get_bool(d, "available", false);
-        const cJSON *p = cJSON_GetObjectItem(d, "partition");
-        if (sec.available && cJSON_IsObject(p)) {
-            get_str(p, "state",   sec.state,   sizeof(sec.state));
-            get_str(p, "display", sec.display, sizeof(sec.display));
-            get_str(p, "trouble", sec.trouble, sizeof(sec.trouble));
-            sec.open_zones      = get_int(p, "openZones", 0);
-            sec.delay_total     = get_int(p, "delayTotal", 0);
-            sec.delay_remaining = get_int(p, "delayRemaining", 0);
-            get_str(p, "alarmType",   sec.alarm_type,   sizeof(sec.alarm_type));
-            get_str(p, "armedType",   sec.armed_type,   sizeof(sec.armed_type));
-            get_str(p, "lastFaulted", sec.last_faulted, sizeof(sec.last_faulted));
+        const cJSON *arr = cJSON_GetObjectItem(d, "list");
+        if (sec.available && cJSON_IsArray(arr)) {
+            const cJSON *it;
+            cJSON_ArrayForEach(it, arr) {
+                if (sec.n >= NET_MAX_PARTITIONS) break;
+                partition_t *p = &sec.list[sec.n];
+                p->id = get_int(it, "id", 0);
+                get_str(it, "title",   p->title,   sizeof(p->title));
+                get_str(it, "state",   p->state,   sizeof(p->state));
+                get_str(it, "display", p->display, sizeof(p->display));
+                get_str(it, "trouble", p->trouble, sizeof(p->trouble));
+                p->open_zones      = get_int(it, "openZones", 0);
+                p->delay_total     = get_int(it, "delayTotal", 0);
+                p->delay_remaining = get_int(it, "delayRemaining", 0);
+                get_str(it, "alarmType",   p->alarm_type,   sizeof(p->alarm_type));
+                get_str(it, "armedType",   p->armed_type,   sizeof(p->armed_type));
+                get_str(it, "lastFaulted", p->last_faulted, sizeof(p->last_faulted));
+                sec.n++;
+            }
         } else {
             sec.available = false;
         }
@@ -688,6 +701,7 @@ static void handle_line(const char *line)
         // must keep showing "sending"/pending until a `secstate` confirms it.
         security_result_t res;
         memset(&res, 0, sizeof(res));
+        res.id = get_int(d, "id", 0);
         res.ok = get_bool(d, "ok", false);
         get_str(d, "action", res.action, sizeof(res.action));
         get_str(d, "error",  res.error,  sizeof(res.error));
