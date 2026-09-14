@@ -233,11 +233,11 @@ Tapping a room row sends `grouproom` (join/leave). Our own room can't be un-grou
 ### `favorites` — this room's favorite tiles (reply to `getfavorites`)
 The room's favorite tiles: the user-configured music favorites (read from the UI
 Configuration agent, verified, no navigator identity) plus the room's bound lighting/
-shade/comfort devices and any favorited garage/gate relay, exposed as described in
+shade devices and any favorited garage/gate relay, exposed as described in
 "Non-media favorites" below. Each entry:
 `id` (opaque favorite id — send it back in `favorite` to activate it), `title` (display
 name), `image` (artwork URL, may be empty), `kind`
-(`stream` | `broadcast` | `light` | `shade` | `comfort` | `relay`),
+(`stream` | `broadcast` | `light` | `shade` | `relay`),
 `on` (bool, current on/active state — meaningful for `kind:"light"` (on/off) and
 `kind:"shade"` (open/closed — driver's own best-effort guess after each `TOGGLE`, no
 real readback exists, see below), omitted/false for everything else). Forward-compatible: a device
@@ -249,21 +249,35 @@ with its `id`.
   {"id":"8F0FD8C2-...","title":"Electronic Station","image":"https://.../1024x1024sr.jpg","kind":"stream"},
   {"id":"light:2481","title":"Kitchen Pendants","kind":"light","on":true},
   {"id":"shade:2456","title":"Living Room Shades","kind":"shade","on":true},
-  {"id":"comfort:2929","title":"Great Room","kind":"comfort"},
   {"id":"F3A1...","title":"Front Gate","kind":"relay"}
 ]}
 ```
 > `kind:"stream"` tiles (media-service stations/playlists) play by selecting their source
 > (exact station play is navigator-gated); `kind:"broadcast"` tiles play the exact media
 > item; `kind:"light"` tiles toggle the light; `kind:"shade"` tiles send `TOGGLE`;
-> `kind:"comfort"` tiles are read-only (tap is a no-op); `kind:"relay"` tiles fire a
-> single `OPEN` (confirmed vocabulary; the tile-matching logic that finds these
-> favorites is the unconfirmed part, see below). All are enacted driver-side
-> from the tile `id` — the device just sends the id back. Category-launcher tiles from
-> the navigator favorites agent whose `<menu>` is `security` are still filtered out (a
-> separate Security Panel feature owns arm/disarm) — see "Non-media favorites" below.
+> `kind:"relay"` tiles fire a single `OPEN` (confirmed vocabulary; the tile-matching
+> logic that finds these favorites is the unconfirmed part, see below). All are enacted
+> driver-side from the tile `id` — the device just sends the id back. Category-launcher
+> tiles from the navigator favorites agent whose `<menu>` is `comfort` or `security` are
+> still filtered out — both own a dedicated full-screen page instead (Comfort, below;
+> Security Panel further down) — see "Non-media favorites" below.
+>
+> **`kind:"comfort"` USED to exist here** (a read-only per-room thermostat shortcut,
+> `BuildComfortFavorites`) but was removed: comfort is not room-scoped in this install
+> (see "Comfort page" below), so a per-room favorite tile was the wrong model. It has
+> been replaced by a dedicated Comfort page, structured exactly like the Security panel
+> (driver pushes state, device renders a page, taps relay back) rather than a favorite
+> tile.
 
 #### Provenance for `shade`/`comfort`/`relay` — resolved
+
+**Update (Comfort page):** `GET_COMFORT_DEVICES` and the six real thermostats it
+returns are still exactly as described below — only the CONSUMER changed. The old
+`BuildComfortFavorites`/`kind:"comfort"` favorite (read-only, no setpoint/mode
+control) is gone; `BuildComfortList` (driver.lua, "Comfort page" section) now calls
+the same command and feeds a full read/write Comfort page instead — see "Comfort
+page" further down for the live-confirmed variable/command vocabulary (temperature
+scale, setpoints, HVAC/fan mode) that made read-write possible.
 
 An earlier round's negative investigation (immediately below) grepped ~120 real
 `.c4z` drivers and a web search, found no `GET_SHADE_DEVICES`/`GET_COMFORT_DEVICES`
@@ -290,8 +304,9 @@ device — same caveat `light` would have without `LIGHT_STATE_VAR`), and the ex
 `<path>`/`<type>` shape of a real garage/gate favorite tile in the navigator-favorites
 XML (only observed for a security-partition tile, assumed — not confirmed — to be the
 same `/v1/rooms/{room}/items/{deviceId}` shape for a relay tile). `Show Gate/Garage
-Favorites` defaults Hidden until that's checked; `Show Shade/Comfort Favorites` default
-Show.
+Favorites` defaults Hidden until that's checked; `Show Shade Favorites` defaults Show.
+(There is no `Show Comfort Favorites` property any more — see the Comfort page
+update note above; its replacement, `Show Comfort`, also defaults Show.)
 
 #### Non-media favorites (lights, gates, …) — what's actually possible
 
@@ -610,6 +625,124 @@ immediately as a definitive failure, since no confirming `secstate` is coming
 for it. If neither a `secresult` nor a confirming `secstate` arrives within a
 device-side timeout, the device shows "no confirmation received" — still never
 a success state.
+
+---
+
+## Comfort page
+
+A full-screen page listing every real thermostat in the house, with a detail view
+per thermostat for heat/cool setpoint +/- and HVAC mode. Structured exactly like the
+Security panel above (driver pushes state, device renders a page, user actions relay
+back), replacing the old `kind:"comfort"` per-room favorite tile (see "Non-media
+favorites" above) — thermostats are **not** room-scoped in this install, so a global
+menu (one Comfort page per keypad instance, not per room) is the correct model,
+mirroring how the Security tile is one global thing too.
+
+Unlike Security this is **not** gated on a bound proxy — there is no per-instance
+CONSUMER binding to hide behind. The gate is a single dealer property, `Show Comfort`
+(Show/Hide, default Show): `GET_COMFORT_DEVICES` is a fixed, confirmed-live command
+that isn't room-scoped at all (any room id returns the identical house-wide list —
+confirmed live against 4 different rooms this round), so there's nothing instance-
+specific to bind.
+
+**Confirmed live** (2026-09-14, dev Director, `director.sh execute`/`rest`) against
+all 6 real thermostats in this project (ids 2929/2931/2933/2935/2937/2548):
+
+- `GET_COMFORT_DEVICES` from any room returns those 6 `<type>Thermostat</type>`
+  entries plus the two always-present pseudo-sources (`SPECIAL_COMFORT_POOLS`/
+  `SPECIAL_COMFORT_WEATHER`, sometimes a third `SPECIAL_COMFORT_EXTRAS`) — anything
+  whose `<type>` isn't exactly `Thermostat` is skipped, same as the old favorite did.
+- Per-thermostat **variables** (`C4:GetDeviceVariable`): `1100 SCALE` (string —
+  observed both `"FAHRENHEIT"` and bare `"F"` across real units; `"Celsius"` is the
+  only value seen that means Celsius), `1101 TEMPERATURE`, `1102 HEAT_SETPOINT`,
+  `1103 COOL_SETPOINT` (all three numbers — **tenths of a degree CELSIUS**,
+  regardless of what `SCALE` claims to display; see the callout below), `1104
+  HVAC_MODE` (string, inconsistently cased: `"off"`/`"heat"`/`"cool"`/`"Auto"`), `1105
+  FAN_MODE` (string, confirmed LIST values `"on"`/`"auto"`).
+- Per-thermostat **commands** (`C4:SendToDevice`, confirmed via
+  `director.sh rest GET /api/v1/items/<id>/commands`): `INC_SETPOINT_HEAT` /
+  `DEC_SETPOINT_HEAT` / `INC_SETPOINT_COOL` / `DEC_SETPOINT_COOL` (no params, bump by
+  the device's own step) and `SET_MODE_HVAC` (param `MODE`, LIST values `"off"` /
+  `"heat"` / `"cool"` / `"Auto"` — note the real enum's own inconsistent case on
+  `"Auto"`). `SET_SETPOINT_HEAT`/`SET_SETPOINT_COOL` (direct numeric entry, param
+  `FAHRENHEIT`, range 45–92) and `SET_SCALE` (Celsius/Fahrenheit) also exist but
+  aren't used — the +/- pair fits a touch page better than a numeric keypad, and the
+  unit scale is a dealer/install-time setting, not a daily control.
+
+> **Unit conversion, confirmed live, not assumed:** `TEMPERATURE`/`HEAT_SETPOINT`/
+> `COOL_SETPOINT` all read in the 220–240 range on an "off"-mode thermostat in a house
+> that is actually ~73–75°F — taken as raw whole degrees that's a nonsensical 232°F,
+> but as tenths of a degree Celsius it's 23.2°C → 73.8°F, which matches reality. Five
+> of the six real thermostats report `SCALE:"FAHRENHEIT"` and the underlying number is
+> STILL Celsius-tenths regardless — the scale variable is a display preference, not a
+> unit for these three variables. `driver.lua`'s `ReadComfortState`/`comfortCtoDisplay`
+> convert to whole display-unit degrees before ever putting a number on the wire, so
+> `ui.c` never does unit math. A raw display here would have been actively wrong, not
+> just mislabeled — this is why the issue brief said to sanity-check it live rather
+> than trust the brief's own live-research notes blindly.
+>
+> A thermostat reporting `HEAT_SETPOINT`/`COOL_SETPOINT` of exactly `0` (confirmed
+> live for "off"-mode units) means **no setpoint at all**, not `0°`/`32°F` — the wire
+> omits `heat`/`cool` entirely in that case (see `comfortlist` below) rather than
+> sending a setpoint that doesn't exist.
+
+### `comfortlist` (driver → device) — thermostat list snapshot, sent on connect/hello, on a `Show Comfort` property change, and on any real variable change
+
+```json
+{"t":"comfortlist","available":true,"list":[
+  {"id":2929,"title":"Front Hall Thermostat","temp":74,"mode":"off","fan":"auto","scale":"F"},
+  {"id":2931,"title":"Back Hall Thermostat","temp":68,"heat":70,"mode":"heat","fan":"auto","scale":"F"},
+  {"id":2933,"title":"Front Hall Radiant","temp":76,"cool":74,"mode":"cool","fan":"on","scale":"F"}
+]}
+{"t":"comfortlist","available":false}
+```
+
+| field | meaning |
+|---|---|
+| `available` | `false` when the `Show Comfort` dealer property is Hidden — the device hides the Comfort tile/page entirely (feature-detect, matches `secstate.available`). `list` is omitted/ignored when `available` is `false`. |
+| `list[].id` | The thermostat's Control4 device id — sent back verbatim in a `comfortcmd` to control this exact unit. |
+| `list[].title` | Display name (`DeviceName`). |
+| `list[].temp` | Current temperature, already converted to whole degrees in `scale`'s units (see the unit-conversion callout above). |
+| `list[].heat` / `.cool` | Setpoint, same units as `temp`. **Omitted entirely** (not `0`, not `null` — the key is absent) when the thermostat reports no setpoint at all (confirmed live for an "off"-mode unit) — the device must treat a missing field as "no setpoint", never as `0°`. |
+| `list[].mode` | `HVAC_MODE`, lower-cased by the driver for a consistent wire vocabulary: `off` \| `heat` \| `cool` \| `auto` (the live enum's own `"Auto"` is normalized down; `DoComfortCmd` maps back to the real casing when firing `SET_MODE_HVAC`). |
+| `list[].fan` | Raw `FAN_MODE` string — confirmed live values `on` \| `auto`. Display-only in this version; there is no fan control on the wire. |
+| `list[].scale` | `F` or `C` — the unit suffix to display next to `temp`/`heat`/`cool`. Derived from `SCALE`, not a straight passthrough (see the unit-conversion callout: `"Celsius"` means Celsius, everything else observed — `"FAHRENHEIT"`, bare `"F"` — means Fahrenheit). |
+
+### `comfortcmd` (device → driver) — setpoint/mode request for one thermostat
+
+```json
+{"t":"comfortcmd","id":2931,"action":"heat_inc"}
+{"t":"comfortcmd","id":2931,"action":"heat_dec"}
+{"t":"comfortcmd","id":2933,"action":"cool_inc"}
+{"t":"comfortcmd","id":2933,"action":"cool_dec"}
+{"t":"comfortcmd","id":2929,"action":"mode","mode":"heat"}
+```
+
+`action` is one of `heat_inc` / `heat_dec` / `cool_inc` / `cool_dec` (driver fires
+`INC_SETPOINT_HEAT`/`DEC_SETPOINT_HEAT`/`INC_SETPOINT_COOL`/`DEC_SETPOINT_COOL`, no
+params) or `mode` (driver fires `SET_MODE_HVAC` with `MODE` set to the real-cased
+value for `off`/`heat`/`cool`/`auto` — `mode` is required and ignored for every other
+`action`). There is **no PIN and no fail-safe result message** the way
+`secarm`/`secdisarm` has: a thermostat setpoint bump is not a security action, so
+there's nothing to gate behind a code and nothing that needs "the command was sent but
+maybe didn't take" framing beyond what already applies to every fire-and-forget
+Control4 command. The device shows a brief pending ("…") state after a tap and clears
+it on the next `comfortlist` — not a fail-safe requirement, just reasonable UX so a
+tap doesn't look ignored while the driver's variable-listener round-trip is in flight
+(same spirit as the light/shade favorites' optimistic-tap handling, but honest about
+not knowing the outcome yet rather than guessing a new value).
+
+The driver does **not** re-read and re-push synchronously after firing a command —
+`PARTITION_ARM`-style fire-and-forget commands are typically stale if read back
+immediately. Instead it relies on `C4:RegisterVariableListener` on the thermostat's
+five confirmed **numeric** variable ids (1101/1102/1103/1104/1105 — SCALE, 1100, isn't
+watched, since a units-preference change is rare and any other push would pick it up)
+firing `OnWatchedVariableChanged` the instant Control4 reports the real change, which
+triggers a fresh `comfortlist` push. This is more likely to actually work than the
+Security page's own listener attempt: Security's `SECURITY_WATCH_VARS` are **guessed
+variable NAMES** against an unconfirmed listener contract (see the Security section
+above), while thermostatV2's six variables above are documented, confirmed-live
+**numeric** ids — `C4:RegisterVariableListener`'s normal, expected contract.
 
 ---
 

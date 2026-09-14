@@ -18,17 +18,24 @@
 #define NET_MAX_ENDPOINTS 24
 #define NET_MAX_ROOMS   32
 #define NET_MAX_FAVORITES 24
+// Real thermostats in this house top out at 6 (GET_COMFORT_DEVICES, confirmed live);
+// a generous ceiling purely as a sanity bound against a hostile/buggy driver, same
+// idea as NET_MAX_FAVORITES.
+#define NET_MAX_COMFORT 12
 
 typedef struct { char id[24]; char name[48]; } id_name_t;
 
 // A room favorite tile (driver reply to `getfavorites`, PROTOCOL.md). Room-level
 // (no source id). `id` is the opaque favorite id sent back in a `favorite` message to
 // activate it; `title` is the display label; `art_url` is the tile artwork URL (may be
-// empty); `kind` is `stream` | `broadcast` | `light` | `shade` | `comfort` | `relay`
-// (informational — the driver enacts the action; the device just sends the id back).
-// `on` is a generic on/active state, meaningful for `kind:"light"` (on/off) and
+// empty); `kind` is `stream` | `broadcast` | `light` | `shade` | `relay` (informational
+// — the driver enacts the action; the device just sends the id back). `kind:"comfort"`
+// USED to exist here (a read-only per-room thermostat shortcut) but was removed: the
+// dedicated Comfort page (comfort_state_t below) replaced it entirely, since comfort
+// was never room-scoped in this install and a global menu is the correct model. `on`
+// is a generic on/active state, meaningful for `kind:"light"` (on/off) and
 // `kind:"shade"` (open/closed, driver's own last-commanded guess — UNVERIFIED, see
-// driver.lua BuildShadeFavorites) and always false for stream/broadcast/comfort/relay.
+// driver.lua BuildShadeFavorites) and always false for stream/broadcast/relay.
 typedef struct { char id[40]; char title[96]; char art_url[300]; char kind[12]; bool on; } favorite_t;
 
 // Callable intercom target (driver-pushed): a room/door-station endpoint or a group.
@@ -91,6 +98,48 @@ typedef struct {
     char error[48];    // set when ok == false, e.g. "not bound"
 } security_result_t;
 
+// One thermostat's current state (driver-pushed `comfortlist`, PROTOCOL.md). `id` is
+// the Control4 device id — sent back verbatim in a `comfortcmd` to control this exact
+// thermostat. `temp`/`heat`/`cool` are already converted to whole display-unit
+// degrees by the driver (confirmed live: the underlying Control4 variables are tenths
+// of a degree CELSIUS regardless of what the thermostat's own SCALE variable claims to
+// display — see driver.lua ReadComfortState — so the device never has to guess a
+// conversion). `has_heat`/`has_cool` are false when the thermostat reports no
+// setpoint at all (observed live for an "off"-mode unit) — `heat`/`cool` are
+// meaningless in that case and must not be shown. `mode` is the thermostat's
+// HVAC_MODE, lower-cased by the driver for a consistent wire vocabulary: "off" |
+// "heat" | "cool" | "auto". `fan` is the raw FAN_MODE string (confirmed live LIST
+// values: "on" | "auto"). `scale` is "F" or "C" — the unit suffix to display next to
+// the numbers, not something the device converts by itself.
+typedef struct {
+    int  id;
+    char title[64];
+    int  temp;
+    bool has_heat; int heat;
+    bool has_cool; int cool;
+    char mode[8];
+    char fan[8];
+    char scale[2];
+} comfort_t;
+
+// Comfort page snapshot (driver-pushed `comfortlist`, PROTOCOL.md). `available` is
+// false when the "Show Comfort" dealer property is Hidden — the UI hides the Comfort
+// tile/page entirely in that case, same idea as `security_state_t.available`. Unlike
+// Security, this is NOT gated on a bound proxy — GET_COMFORT_DEVICES is a fixed,
+// confirmed-live, NOT-room-scoped house-wide thermostat list (same list regardless of
+// which room asks, verified against 4 different rooms), so there is no per-instance
+// binding to hide behind; the dealer property is the only gate.
+typedef struct {
+    bool available;
+    comfort_t list[NET_MAX_COMFORT];
+    int  n;
+} comfort_state_t;
+
+// A `comfortcmd` request outcome would be nice, but unlike secarm/secdisarm there is
+// no PIN/fail-safe requirement here (a thermostat setpoint bump is not a security
+// action) — the confirming `comfortlist` push IS the acknowledgment, so no separate
+// result message exists on the wire (see PROTOCOL.md "Comfort page").
+
 typedef struct {
     int  id;
     char label[32];
@@ -136,6 +185,7 @@ typedef struct {
     void (*on_favorites)(const favorite_t *favs, int n);        // room navigator favorites
     void (*on_security)(const security_state_t *sec);           // security partition state
     void (*on_security_result)(const security_result_t *res);   // arm/disarm delivery outcome
+    void (*on_comfort)(const comfort_state_t *cmf);              // Comfort page thermostat list
 } net_callbacks_t;
 
 // Start the TCP server (the DEVICE listens; the Control4 driver dials in).
@@ -185,6 +235,16 @@ void net_ping(void);
 // currently-faulted zones bypassed rather than refusing to arm.
 void net_security_arm(const char *arm_type, const char *pin, bool bypass);
 void net_security_disarm(const char *pin);
+
+// Comfort page thermostat control (see PROTOCOL.md `comfortcmd`). `id` is the
+// comfort_t.id of the thermostat to control. `action` is one of "heat_inc" |
+// "heat_dec" | "cool_inc" | "cool_dec" | "mode" (driver.lua COMFORT_CMD /
+// COMFORT_MODE_WIRE); `mode` is only meaningful (and only sent) for action "mode",
+// one of "off" | "heat" | "cool" | "auto". There is no PIN and no fail-safe result
+// message the way secarm/secdisarm has — a thermostat bump is not a security action,
+// and the confirming `comfortlist` push (via the driver's variable-listener path) IS
+// the acknowledgment.
+void net_comfort_cmd(int id, const char *action, const char *mode);
 
 // Report the device's current halo settings (g_settings) up to the driver, so
 // Composer's Halo properties can mirror whatever is actually on the LED --

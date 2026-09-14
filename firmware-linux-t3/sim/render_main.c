@@ -19,6 +19,13 @@
  *     MMK_CALL=<event>    call screen: incoming | outgoing | active
  *     MMK_SETTINGS=1      the Settings overlay
  *     MMK_FAVS=<n>        how many favourites to seed (0-9, default 9)
+ *     MMK_COMFORT=0       hide the Comfort tile/page (default 1, seeded with 3
+ *                         sample thermostats -- one off with no setpoints, one
+ *                         heating, one cooling, matching real "off"-mode live data)
+ *     MMK_COMFORT_PANEL=<list|detail>  open the Comfort page instead of home
+ *     MMK_COMFORT_ID=<id> which sample thermostat "detail" opens (default 2931
+ *                         "heat"; 2929 "off" has no setpoint rows, 2933 "cool"
+ *                         has only the cool row)
  *     MMK_SETPAGE=<n>     which Settings page (0 grid, 1 display, 2 sound,
  *                         3 network, 4 diagnostics, 5 about)
  *     MMK_CALLPEER=<name> who is calling (default "Front Door")
@@ -209,6 +216,20 @@ int main(int argc, char **argv)
         if (nf < 0) nf = 0; if (nf > 9) nf = 9;
         ui_set_favorites(favs, nf);   /* 2 action cards + N favourites */
     }
+    /* Sample Comfort thermostats -- mirrors the real live-confirmed shape (2026-09-14,
+     * dev Director): an "off" unit reports no setpoints at all (has_heat/has_cool
+     * false), a "heat" unit only a heat setpoint, a "cool" unit only a cool one. */
+    {
+        static comfort_t cmf_list[] = {
+            { .id = 2929, .title = "Front Hall",  .temp = 74, .mode = "off",  .fan = "auto", .scale = "F" },
+            { .id = 2931, .title = "Back Hall",   .temp = 68, .has_heat = true, .heat = 70, .mode = "heat", .fan = "auto", .scale = "F" },
+            { .id = 2933, .title = "Front Radiant", .temp = 76, .has_cool = true, .cool = 74, .mode = "cool", .fan = "on", .scale = "F" },
+        };
+        comfort_state_t cmf = { .available = env_int("MMK_COMFORT", 1) != 0,
+                                 .n = (int)(sizeof(cmf_list) / sizeof(cmf_list[0])) };
+        memcpy(cmf.list, cmf_list, sizeof(cmf_list));
+        ui_set_comfort(&cmf);
+    }
     /* MMK_OFFLINE=1 previews the not-connected landing page (no driver link). */
     ui_set_connected(env_int("MMK_OFFLINE", 0) ? false : true);
 
@@ -270,6 +291,13 @@ int main(int argc, char **argv)
     }
     if (env_int("MMK_ROOMS", 0)) ui_show_rooms_panel();
     if (env_int("MMK_IC", 0)) ui_show_intercom_panel();
+    const char *cmf_panel = getenv("MMK_COMFORT_PANEL");
+    if (cmf_panel && !strcmp(cmf_panel, "list"))   ui_show_comfort_panel();
+    /* MMK_COMFORT_ID picks which sample thermostat's detail page to open (default
+     * 2931, the "heat" unit) -- 2929 is "off" (no setpoint rows at all), 2933 is
+     * "cool" (cool row only), letting all three has_heat/has_cool/neither shapes
+     * be previewed without a driver. */
+    if (cmf_panel && !strcmp(cmf_panel, "detail")) ui_show_comfort_detail(env_int("MMK_COMFORT_ID", 2931));
     /* Settings lives on lv_layer_top() like setup/call, so it needs the same
      * snapshot root -- off the active screen it renders invisibly. */
     const bool settings_scene = env_int("MMK_SETTINGS", 0) != 0;

@@ -35,6 +35,12 @@ void ui_set_security(const security_state_t *sec);
 void ui_set_security_result(const security_result_t *res);
 void ui_show_security_panel(void);   // open the Security page (sim/preview + programmatic)
 
+// Comfort page (driver-pushed `comfortlist`; comfort_state_t is in net.h).
+// ui_set_comfort(available:false) hides the tile, same idea as ui_set_security.
+void ui_set_comfort(const comfort_state_t *cmf);
+void ui_show_comfort_panel(void);    // open the Comfort list page (sim/preview + programmatic)
+void ui_show_comfort_detail(int id); // open one thermostat's detail page (sim/preview only)
+
 // Sim only: pin the compact bar's rotating text to one phase (0 title, 1 artist,
 // 2 album) so a static render can show each. -1 = rotate normally.
 extern int g_ui_rot_preview;
