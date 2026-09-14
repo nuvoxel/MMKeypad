@@ -2673,13 +2673,22 @@ function DoToggleLightFavorite(fav)
 end
 
 -- Play a favorite the firmware tapped. Resolved from the gFavorites cache (built by
--- BuildFavoritesList) by favorite id. Three action paths (control4-media-commands.md):
+-- BuildFavoritesList) by favorite id. Action paths (control4-media-commands.md, plus
+-- this round's non-media additions -- see the provenance note above
+-- BuildLightFavorites for what's actually confirmed vs. assumed for the new kinds):
 --   * kind "broadcast" — an exact Broadcast-Audio media item: SELECT_AUDIO_MEDIA {mediaid}
 --     into the room (fully verified, exact play).
 --   * kind "stream" — a media-service (streaming) station/playlist tile: exact play is
 --     navigator-GATED, so we fall back to selecting its SOURCE (DEVICE_SELECTED), which
 --     resumes that source's content. Honest degradation, no gray dependency.
 --   * kind "light" — a room-bound lighting device (BuildLightFavorites): toggle it.
+--   * kind "shade" — a room-bound shade/blind (BuildShadeFavorites): toggle OPEN/CLOSE
+--     from our own last-commanded guess (UNVERIFIED command vocabulary + no state
+--     readback -- see BuildShadeFavorites).
+--   * kind "comfort" — a thermostat (BuildComfortFavorites): read-only tile, no-op.
+--   * kind "relay" — a garage/gate relay controller surfaced via a navigator favorite
+--     tile (BuildFavoritesList's relay-path match): fires OPEN (UNVERIFIED default
+--     action -- see DoFireRelayFavorite).
 -- Legacy: a bare {mediaid} (no id) still plays broadcast-audio directly (Flavor-1 contract).
 function DoPlayFavorite(msg)
   if not gRoom then return end
@@ -2691,6 +2700,13 @@ function DoPlayFavorite(msg)
 
   if kind == "light" then
     DoToggleLightFavorite(fav)
+  elseif kind == "shade" then
+    DoToggleShadeFavorite(fav)
+  elseif kind == "comfort" then
+    -- Read-only tile for now (see BuildComfortFavorites) -- nothing to do on tap.
+    dbg("favorite (comfort) -> no-op (read-only tile), device", fav and fav.comfort)
+  elseif kind == "relay" then
+    DoFireRelayFavorite(fav)
   elseif kind == "broadcast" and mid and tostring(mid) ~= "" then
     dbg("favorite -> SELECT_AUDIO_MEDIA BROADCAST_AUDIO mediaid", mid, "room", gRoom)
     C4:SendToDevice(tonumber(gRoom), "SELECT_AUDIO_MEDIA",
@@ -2779,6 +2795,19 @@ function BuildFavoritesList()
         -- Broadcast-audio favorite (exact play by mediaid), if the tile carries one.
         elseif fav:match("<mediaid>(%d+)</mediaid>") then
           entry = { id = id, kind = "broadcast", mediaid = fav:match("<mediaid>(%d+)</mediaid>") }
+        else
+          -- Garage/gate relay favorite (kind:"relay") -- see the provenance note above
+          -- BuildLightFavorites and DoFireRelayFavorite: UNVERIFIED path shape, only
+          -- directly observed for a security-partition tile, ASSUMED to be the same
+          -- for a relay/gate tile. Menu guard excludes categories already handled
+          -- above/elsewhere (comfort/security own their own UI; "listen" is media).
+          local menu = fav:match("<menu>(.-)</menu>") or ""
+          if menu ~= "listen" and menu ~= "comfort" and menu ~= "security" then
+            local relayId = tonumber(path:match("^/v1/rooms/%d+/items/(%d+)$"))
+            if relayId and ShowProp("Show Gate/Garage Favorites") then
+              entry = { id = id, kind = "relay", relay = relayId }
+            end
+          end
         end
         if entry and id ~= "" then
           entry.title = (title ~= "") and title or "Favorite"
@@ -2788,10 +2817,16 @@ function BuildFavoritesList()
       end
     end
   end
-  dbg("getfavorites: room", rid, "->", #list, "media favorites")
+  dbg("getfavorites: room", rid, "->", #list, "media/relay favorites")
 
   if ShowProp("Show Light Favorites") then
     for _, lf in ipairs(BuildLightFavorites(rid)) do list[#list + 1] = lf end
+  end
+  if ShowProp("Show Shade Favorites") then
+    for _, sf in ipairs(BuildShadeFavorites(rid)) do list[#list + 1] = sf end
+  end
+  if ShowProp("Show Comfort Favorites") then
+    for _, cf in ipairs(BuildComfortFavorites(rid)) do list[#list + 1] = cf end
   end
   return list
 end
@@ -2802,12 +2837,24 @@ end
 -- source enumeration) — see PROTOCOL.md "Non-media favorites" for why this, and not
 -- the navigator-favorites agent above, is the generic mechanism for this issue.
 --
--- No BuildShadeFavorites/BuildComfortFavorites here: there is no GET_SHADE_DEVICES
--- or GET_COMFORT_DEVICES to call. Checked every shade/thermostat driver in this
--- project's local Control4 library plus a web search -- nothing references such a
--- command, and room-level enumeration only exists for the three categories
--- (Lighting/Listen/Watch) Composer's Room object natively binds. See PROTOCOL.md
--- "Non-media favorites" for the full investigation before re-attempting this.
+-- ****************************************************************************
+-- IMPORTANT PROVENANCE NOTE (read before trusting the shade/comfort code below):
+-- PROTOCOL.md's "Non-media favorites" section documents a thorough, specific
+-- negative investigation (grepped ~120 local .c4z drivers including several
+-- shade/thermostat drivers, web search, room_control_keypad.c4z source) that found
+-- NO GET_SHADE_DEVICES/GET_BLIND_DEVICES/GET_COMFORT_DEVICES room command exists.
+-- This round's task brief asserted the opposite -- that GET_BLIND_DEVICES and
+-- GET_COMFORT_DEVICES were "live-verified this session" against the real Director.
+-- The agent implementing this round had NO Director/SSH reachability from its
+-- sandbox (director.sh does not exist there; the jailbreak host key is not
+-- available) and could not confirm that claim, or retract the prior negative
+-- finding, itself. The code below is written AS IF that claim is true (per the
+-- brief) but is UNVERIFIED by this round's agent and DIRECTLY CONTRADICTS the
+-- documented prior investigation. Do not deploy or trust this without confirming
+-- GET_BLIND_DEVICES/GET_COMFORT_DEVICES against a live Director first (same
+-- ExecuteCommand-probe-then-revert pattern used for GET_LIGHT_DEVICES originally).
+-- ****************************************************************************
+--
 -- Favorite id is "light:<deviceId>" (own namespace — never collides with a
 -- navigator favorite's GUID) so DoPlayFavorite can route it without a kind lookup
 -- on the wire.
@@ -2833,6 +2880,120 @@ function BuildLightFavorites(rid)
   end
   dbg("getfavorites: room", rid, "->", #out, "light favorites")
   return out
+end
+
+-- Non-media favorites, part 3: shades. GET_BLIND_DEVICES per this round's task brief
+-- (device `type` in the response is "Blind") -- SEE THE PROVENANCE NOTE ABOVE
+-- BuildLightFavorites: this was not re-verified live by this round's agent and
+-- contradicts PROTOCOL.md's documented negative finding. Written to the brief's shape
+-- (same as GET_LIGHT_DEVICES: <source><id>..</id><type>Blind</type></source>…) so it
+-- is ready to test the moment Director access is available; do not ship un-probed.
+--
+-- Unlike lights there is no verified state-readback variable for a generic Blind --
+-- LIGHT_STATE_VAR (1000) is confirmed against room_control_keypad.c4z's own lighting
+-- tracking; no equivalent first-party shade consumer was found to confirm a position
+-- variable against. Rather than invent a variable number, favorites track their own
+-- LAST-COMMANDED action locally (gShadeOpen, reset on driver reload/room change) and
+-- the tile toggles OPEN/CLOSE from that -- same class of "can drift if changed
+-- elsewhere" a stateless toggle already accepts for other things in this driver, just
+-- without even an initial read. OPEN/CLOSE/STOP command names are ALSO an assumption
+-- here (by analogy with the REST-confirmed relay vocabulary below) -- not confirmed
+-- against a live Blind device.
+local gShadeOpen = {}   -- deviceId -> our last-commanded open/closed guess (bool)
+
+function DoToggleShadeFavorite(fav)
+  local id = tonumber(fav and fav.shade); if not id then return end
+  local wantOpen = not gShadeOpen[id]   -- default nil -> first tap opens
+  local cmd = wantOpen and "OPEN" or "CLOSE"
+  dbg("favorite (shade) -> UNVERIFIED", cmd, "device", id, "room", gRoom)
+  C4:SendToDevice(id, cmd, {})
+  gShadeOpen[id] = wantOpen
+end
+
+function BuildShadeFavorites(rid)
+  local out = {}
+  local ok, xml = pcall(function() return C4:SendToDevice(rid, "GET_BLIND_DEVICES", {}) end)
+  if not ok or type(xml) ~= "string" then dbg("GET_BLIND_DEVICES failed for room", rid); return out end
+  for src in xml:gmatch("<source>(.-)</source>") do
+    local id = tonumber(src:match("<id>(%d+)</id>") or "")
+    if id then
+      local name = DeviceName(id)
+      if name ~= "" then
+        local favId = "shade:" .. id
+        gFavorites[favId] = { id = favId, kind = "shade", shade = id, title = name }
+        out[#out + 1] = { id = favId, title = Normalize(name), kind = "shade", on = gShadeOpen[id] == true }
+      end
+    end
+  end
+  dbg("getfavorites: room", rid, "->", #out, "shade favorites")
+  return out
+end
+
+-- Non-media favorites, part 4: thermostats. GET_COMFORT_DEVICES per this round's task
+-- brief -- SEE THE PROVENANCE NOTE ABOVE BuildLightFavorites (same caveat: unverified
+-- by this agent, contradicts PROTOCOL.md's documented negative finding). Per the
+-- brief, the response also always carries two pseudo-sources, SPECIAL_COMFORT_POOLS
+-- and SPECIAL_COMFORT_WEATHER, that are not real addressable thermostats -- skipped.
+--
+-- Scoped to READ-ONLY tiles for v1: a full thermostat control surface (setpoint,
+-- mode, fan) does not fit a favorite tile, and there is no confirmed generic
+-- current-temperature variable to even show a live reading (the same "no first-party
+-- consumer to confirm a variable against" problem as shades, worse here because
+-- there's no OPEN/CLOSE-style safe default action either). So a comfort favorite is
+-- just a named shortcut to the room's thermostat -- tapping it is a no-op today
+-- (DoPlayFavorite logs and returns) rather than guessing a setpoint-bump command that
+-- could actually change the temperature wrong. Revisit once a real device variable /
+-- command set is confirmed live.
+function BuildComfortFavorites(rid)
+  local out = {}
+  local ok, xml = pcall(function() return C4:SendToDevice(rid, "GET_COMFORT_DEVICES", {}) end)
+  if not ok or type(xml) ~= "string" then dbg("GET_COMFORT_DEVICES failed for room", rid); return out end
+  for src in xml:gmatch("<source>(.-)</source>") do
+    local idStr = src:match("<id>([%w_]+)</id>")
+    local id = idStr and tonumber(idStr)
+    -- Skip the two always-present pseudo-sources (not real thermostats).
+    if id then
+      local name = DeviceName(id)
+      if name ~= "" then
+        local favId = "comfort:" .. id
+        gFavorites[favId] = { id = favId, kind = "comfort", comfort = id, title = name }
+        out[#out + 1] = { id = favId, title = Normalize(name), kind = "comfort" }
+      end
+    end
+  end
+  dbg("getfavorites: room", rid, "->", #out, "comfort favorites")
+  return out
+end
+
+-- Non-media favorites, part 5: garage/gate relay controllers (kind:"relay"). Unlike
+-- lights/shades/comfort there is NO room-command enumeration for these at all --
+-- confirmed this round (GET_RELAY_DEVICES/GET_ACCESS_DEVICES/GET_GARAGE_DEVICES/
+-- GET_DOOR_DEVICES/GET_DOORSTATION_DEVICES all returned nil against real rooms, per
+-- the task brief -- NOT independently re-verified by this agent, but this is a
+-- negative result consistent with PROTOCOL.md's existing shade/comfort investigation,
+-- so it is at least plausible rather than suspicious). The only way to find out which
+-- relay controllers a user actually favorited is the navigator-favorites agent
+-- (GET_ALL_ROOM_FAVORITES_STATE, already read by BuildFavoritesList for media tiles).
+--
+-- A relay favorite's <path> is ASSUMED (per the brief -- NOT directly observed for a
+-- relay/gate tile, only for a security-partition tile which used the same
+-- /v1/rooms/{room}/items/{deviceId} shape) to look like:
+--   /v1/rooms/2421/items/2911
+-- Extracted here as `relayId` when the tile's <menu> isn't one we already handle
+-- (listen/comfort/security) and its <path> matches that shape.
+--
+-- Action: a single relay device (per REST-confirmed /commands: OPEN/CLOSE/STOP) is a
+-- 3-way control, but a Navigator favorite tile is one tap. Not having captured a real
+-- relay/gate tile's <type> field live (the brief flags this as unconfirmed too), there
+-- is no way to know whether the tile itself distinguishes an "open" tile from a
+-- "close" tile. Defaulting the single tap to OPEN: opening is the affirmative, usually-
+-- wanted action for both a garage door and a gate (STOP only makes sense mid-travel,
+-- CLOSE is rarely what someone taps a tile to do from a room device). If real data
+-- later shows the tile's <type> encodes CLOSE/STOP tiles too, branch on that instead.
+function DoFireRelayFavorite(fav)
+  local id = tonumber(fav and fav.relay); if not id then return end
+  dbg("favorite (relay) -> UNVERIFIED OPEN, device", id)
+  C4:SendToDevice(id, "OPEN", {})
 end
 
 -- Owner room of the multiroom session our room is currently in (from var 1006,

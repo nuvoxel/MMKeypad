@@ -232,26 +232,56 @@ Tapping a room row sends `grouproom` (join/leave). Our own room can't be un-grou
 
 ### `favorites` — this room's favorite tiles (reply to `getfavorites`)
 The room's favorite tiles: the user-configured music favorites (read from the UI
-Configuration agent, verified, no navigator identity) plus the room's bound lighting
-devices, exposed the same way (see "Non-media favorites" below). Each entry:
+Configuration agent, verified, no navigator identity) plus the room's bound lighting/
+shade/comfort devices and any favorited garage/gate relay, exposed as described in
+"Non-media favorites" below. Each entry:
 `id` (opaque favorite id — send it back in `favorite` to activate it), `title` (display
-name), `image` (artwork URL, may be empty), `kind` (`stream` | `broadcast` | `light`),
-`on` (bool, current on/off state — only meaningful for `kind:"light"`, omitted/false for
-everything else). Forward-compatible: a device that doesn't render a kind or the `on`
-field ignores it. Tapping a tile sends `favorite` with its `id`.
+name), `image` (artwork URL, may be empty), `kind`
+(`stream` | `broadcast` | `light` | `shade` | `comfort` | `relay`),
+`on` (bool, current on/active state — meaningful for `kind:"light"` (on/off) and
+`kind:"shade"` (open/closed — UNVERIFIED / driver's own last-commanded guess, no real
+readback, see below), omitted/false for everything else). Forward-compatible: a device
+that doesn't render a kind or the `on` field ignores it. Tapping a tile sends `favorite`
+with its `id`.
 ```json
 {"t":"favorites","list":[
   {"id":"70F6945B-...","title":"Mike DeLuca's Station","image":"https://.../1024x1024sr.jpg","kind":"stream"},
   {"id":"8F0FD8C2-...","title":"Electronic Station","image":"https://.../1024x1024sr.jpg","kind":"stream"},
-  {"id":"light:2481","title":"Kitchen Pendants","kind":"light","on":true}
+  {"id":"light:2481","title":"Kitchen Pendants","kind":"light","on":true},
+  {"id":"shade:2456","title":"Living Room Shades","kind":"shade","on":true},
+  {"id":"comfort:2929","title":"Great Room","kind":"comfort"},
+  {"id":"F3A1...","title":"Front Gate","kind":"relay"}
 ]}
 ```
 > `kind:"stream"` tiles (media-service stations/playlists) play by selecting their source
 > (exact station play is navigator-gated); `kind:"broadcast"` tiles play the exact media
-> item; `kind:"light"` tiles toggle the light. All are enacted driver-side from the tile
-> `id` — the device just sends the id back. Only media favorites plus room lights are
-> returned; category-launcher tiles (comfort/security/etc.) from the navigator favorites
-> agent are still filtered out — see "Non-media favorites" below for why.
+> item; `kind:"light"` tiles toggle the light; `kind:"shade"` tiles toggle open/closed
+> (unverified vocabulary, see below); `kind:"comfort"` tiles are read-only (tap is a
+> no-op); `kind:"relay"` tiles fire a single assumed `OPEN`. All are enacted driver-side
+> from the tile `id` — the device just sends the id back. Category-launcher tiles from
+> the navigator favorites agent whose `<menu>` is `security` are still filtered out (a
+> separate Security Panel feature owns arm/disarm) — see "Non-media favorites" below.
+
+#### ⚠ Provenance warning for `shade`/`comfort`/`relay` (read before trusting or shipping)
+
+The `light` mechanism below (`GET_LIGHT_DEVICES`, var 1000) is genuinely verified
+against the first-party `room_control_keypad.c4z` source. The `shade`/`comfort`/`relay`
+additions that follow are **not** independently verified by the agent that added them —
+it had no reachable Director or SSH access in its sandbox (`director.sh` did not exist
+there, and the documented jailbreak host key was not available) and could not run the
+live probes this feature depends on. They were written to match a task brief that
+asserted `GET_BLIND_DEVICES` and `GET_COMFORT_DEVICES` were "live-verified this session"
+— an assertion that **directly contradicts** the specific, detailed negative
+investigation immediately below (which grepped ~120 real `.c4z` drivers, including
+several shade and thermostat drivers, and found no such command anywhere). That
+contradiction was never resolved. Until someone with real Director access confirms
+`GET_BLIND_DEVICES` / `GET_COMFORT_DEVICES` actually return data (the same
+`ExecuteCommand`-probe-then-revert pattern used to originally confirm `GET_LIGHT_DEVICES`),
+treat everything below the original "Non-media favorites" section as an unverified
+draft, not a confirmed protocol addition — the driver-side `Show Shade/Comfort/Gate-
+Garage Favorites` properties default accordingly (Comfort defaults Show since it's
+read-only and harmless if the command returns nothing; Shade and Gate/Garage default
+Hide since they fire real commands at real hardware on an unconfirmed vocabulary).
 
 #### Non-media favorites (lights, gates, …) — what's actually possible
 
@@ -318,6 +348,42 @@ this driver doesn't do) or guessing an unverified command against a live Directo
 generic mechanism ever turns up — e.g. from a live Director spike trying
 `C4:SendToDevice(roomId, "GET_SHADE_DEVICES", {})` and inspecting what comes back,
 the same way `GET_LIGHT_DEVICES` was originally confirmed.
+
+**Update (favorites-round2, unverified — see the provenance warning above):** a later
+task brief asserted that `C4:SendToDevice(roomId, "GET_BLIND_DEVICES", {})` (device
+`type` "Blind") and `C4:SendToDevice(roomId, "GET_COMFORT_DEVICES", {})` (returning real
+thermostats plus two always-present pseudo-sources, `SPECIAL_COMFORT_POOLS` and
+`SPECIAL_COMFORT_WEATHER`, which are not real addressable thermostats and are skipped)
+had been "live-verified" against the real Director, superseding the negative finding
+above. The agent acting on that brief could not reach a live Director to confirm or
+deny it, so `BuildShadeFavorites`/`BuildComfortFavorites` in `driver.lua` were written
+to that claimed shape — `kind:"shade"` toggles OPEN/CLOSE from the driver's own
+last-commanded guess (no verified position-readback variable exists for a generic
+Blind, unlike `LIGHT_STATE_VAR` for lights), and `kind:"comfort"` is a read-only tile
+(no verified temperature/mode variable either, and guessing a setpoint-changing command
+risked being actively wrong rather than merely inert). **Re-run the original negative
+investigation's grep/websearch pass, or better, a live probe, before trusting this
+section over the one above it.**
+
+For garage/gate relay controllers specifically (also unverified, same brief): no room
+command enumerates them (`GET_RELAY_DEVICES`/`GET_ACCESS_DEVICES`/`GET_GARAGE_DEVICES`/
+`GET_DOOR_DEVICES`/`GET_DOORSTATION_DEVICES` were all reported to return nil — plausible
+given it's consistent with the shade/comfort negative pattern above, but likewise not
+independently confirmed). The brief did independently confirm, via REST rather than a
+Lua room command (`director.sh rest GET /api/v1/items/<id>/commands`), that a first-party
+"Relay Garage Door Controller (OS2.9+)" / "Relay Gate Controller (OS2.9+)" device
+(proxy type `uibutton`) takes exactly `OPEN` / `CLOSE` / `STOP` with no params — that
+REST-derived command vocabulary is more trustworthy than the Lua room-command claims
+above since it names an exact request/response, but it too was not re-run by the agent
+that wired it up. `kind:"relay"` favorites are surfaced from the navigator-favorites
+agent (`GET_ALL_ROOM_FAVORITES_STATE`, `BuildFavoritesList`) by matching a tile's
+`<path>` against `/v1/rooms/{room}/items/{deviceId}` — a shape only directly observed
+for a security-partition tile, ASSUMED (not confirmed) to be the same for a relay/gate
+tile. Since a single relay device is a 3-way OPEN/CLOSE/STOP control but a favorite
+tile is one tap, and the tile's `<type>` was never captured live for an actual relay
+favorite, tapping defaults to `OPEN` (the affirmative, usually-wanted action for both a
+garage door and a gate) — revisit if real `<type>` data later shows tiles encode which
+action they represent.
 
 #### How a favourite is played (driver-side)
 

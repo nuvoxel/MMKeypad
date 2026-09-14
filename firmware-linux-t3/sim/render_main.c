@@ -18,7 +18,7 @@
  *     MMK_IC=1            open the intercom target picker
  *     MMK_CALL=<event>    call screen: incoming | outgoing | active
  *     MMK_SETTINGS=1      the Settings overlay
- *     MMK_FAVS=<n>        how many favourites to seed (0-5, default 5)
+ *     MMK_FAVS=<n>        how many favourites to seed (0-9, default 9)
  *     MMK_SETPAGE=<n>     which Settings page (0 grid, 1 display, 2 sound,
  *                         3 network, 4 diagnostics, 5 about)
  *     MMK_CALLPEER=<name> who is calling (default "Front Door")
@@ -196,13 +196,17 @@ int main(int argc, char **argv)
             { .id = "ra.3", .title = "Chill Jazz",            .kind = "stream" },
             { .id = "ra.4", .title = "Classic Rock",          .kind = "stream" },
             { .id = "ra.5", .title = "Morning Coffee",        .kind = "stream" },
-            { .id = "light:1", .title = "Kitchen Pendants",   .kind = "light", .on = true },
+            { .id = "light:1", .title = "Kitchen Pendants",   .kind = "light",   .on = true },
+            { .id = "shade:1", .title = "Living Room Shades", .kind = "shade",   .on = true },
+            { .id = "comfort:1", .title = "Great Room",       .kind = "comfort" },
+            { .id = "relay:1", .title = "Front Gate",         .kind = "relay" },
         };
         /* MMK_FAVS trims the list so the "few favourites go bigger" reflow can be
          * previewed without a driver: 1 and 2 are one-per-row, 3+ is the 2-up grid
-         * (the trailing light favourite previews the new kind at the full count). */
-        int nf = env_int("MMK_FAVS", 6);
-        if (nf < 0) nf = 0; if (nf > 6) nf = 6;
+         * (the trailing light/shade/comfort/relay favourites preview the new kinds at
+         * the full count). */
+        int nf = env_int("MMK_FAVS", 9);
+        if (nf < 0) nf = 0; if (nf > 9) nf = 9;
         ui_set_favorites(favs, nf);   /* 2 action cards + N favourites */
     }
     /* MMK_OFFLINE=1 previews the not-connected landing page (no driver link). */
