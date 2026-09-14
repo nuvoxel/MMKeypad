@@ -138,6 +138,9 @@ local gButtons   = nil            -- keypad button state {id,label,color,on}, se
 local gSecurityDev  = nil         -- Control4 device id of the bound SECURITY partition proxy
                                   -- (nil = SECURITY_BINDING unbound -> feature hidden on the device)
 local gLastSecState = nil         -- last pushed secstate JSON (dedupe, mirrors gLastState)
+local gLastComfortState = nil     -- last pushed comfortlist JSON (dedupe, mirrors gLastSecState)
+local gComfortWatch = {}          -- Control4 device id -> true, thermostats we currently
+                                  -- C4:RegisterVariableListener on (Comfort page; see WatchComfortDevices)
 gLastPlaying     = false          -- last resolved play state (BuildState -> playpause)
 local gKpTimer   = nil            -- debounce timer for keypad re-init (L2)
 local gThumbUp   = nil            -- {dev,cmd} for the source's thumbs-up PROTOCOL command
@@ -441,6 +444,11 @@ function OnPropertyChanged(prop)
     -- Skip when WE just set this property from the device's own report (gApplyingHaloReport) --
     -- that is the device telling us what it already has, not a dealer asking to change it.
     if gConnected and not gApplyingHaloReport then pcall(PushHalo) end
+  elseif prop == "Show Comfort" then
+    -- A dealer flipping this should reveal/hide the Comfort tile right away, not wait
+    -- for the next connect/hello -- same idea as the Security tile reacting the
+    -- instant its binding changes (OnBindingChanged).
+    if gConnected then pcall(PushComfortState) end
   end
 end
 
@@ -780,6 +788,7 @@ function OnConnectionStatusChanged(idBinding, nPort, strStatus)
     setStatus("Connected " .. (ok and tostring(addr) or ""))
     PushState(true)
     PushSecurityState()
+    PushComfortState()
     -- No PushHalo here: the device is authoritative for halo now, and reports its
     -- real state (`halostate`, right after `hello`) rather than waiting to be told.
     if not was then
@@ -1026,6 +1035,7 @@ function HandleMessage(line)
     -- talked to Composer -- or changed locally while offline -- is never overwritten.
     PushState(true)
     PushSecurityState()     -- likewise: (re)send Security availability/state on every real "device is ready" edge
+    PushComfortState()      -- likewise: (re)send the Comfort thermostat list on every real "device is ready" edge
     RelayHello()           -- tell the bound intercom driver the device is up (it re-provisions SIP)
   elseif t == "cmd" then DoTransport(msg.cmd)
   elseif t == "vol" then
@@ -1073,6 +1083,7 @@ function HandleMessage(line)
   elseif t == "button" then FireButton(msg.id)
   elseif t == "secarm" then DoSecurityArm(msg)
   elseif t == "secdisarm" then DoSecurityDisarm(msg)
+  elseif t == "comfortcmd" then DoComfortCmd(msg)
   elseif t == "sipstate" or t == "callstate" or t == "callctl" then
     -- Intercom traffic → relay the line to the companion intercom driver (it owns the
     -- intercomproxy + SIP/call logic). Re-encode the decoded msg; the intercom driver
@@ -2035,6 +2046,10 @@ function CheckRoomMoved()
   WatchRoomVars()
   pcall(RegisterMediaSessionEvents)
   pcall(PushState, true)     -- full push so the panel relabels immediately
+  -- Comfort's enumeration just needs SOME room id (GET_COMFORT_DEVICES isn't
+  -- room-scoped), but it had none until gRoom first resolved -- covers a keypad
+  -- whose room was still unknown at the connect-time PushComfortState() call above.
+  pcall(PushComfortState)
 end
 
 function StartPolling()
@@ -2235,16 +2250,212 @@ function DoSecurityDisarm(msg)
   Send({ t = "secresult", ok = ok, action = "disarm" })
 end
 
--- C4 callback: any watched variable changed. Three subscribers share this one entry
+-- ============================================================================
+-- Comfort page: thermostat list + setpoint/mode control
+-- ============================================================================
+-- Same architecture as the Security panel just above (driver pushes state, device
+-- renders a page, user actions relay back) -- see PROTOCOL.md "Comfort page" for the
+-- wire format. Unlike Security, Comfort is NOT gated on a bound proxy: it's a fixed
+-- global thermostat list (GET_COMFORT_DEVICES is confirmed live but NOT room-scoped
+-- -- see the provenance note above BuildLightFavorites, and the "Show Comfort
+-- Favorites" removal note in PROTOCOL.md), so the gate is just the "Show Comfort"
+-- dealer property. This REPLACES the old per-room kind:"comfort" favorite mechanism
+-- (BuildComfortFavorites, removed) -- comfort was never room-scoped in this
+-- install, so a per-room favorite tile was the wrong model; a global Comfort menu
+-- (mirroring a real Control4/Navigator "Comfort" screen, and how the Security tile
+-- is one global thing per keypad instance, not per-room) is correct instead.
+--
+-- Confirmed live (2026-09-14, dev Director, thermostat id 2929 "Front Hall
+-- Thermostat" + all 6 real thermostats in this project -- 2929/2931/2933/2935/
+-- 2937/2548): GET_COMFORT_DEVICES from ANY room id returns the identical
+-- house-wide list (tested against 4 different rooms), always with the two
+-- pseudo-sources SPECIAL_COMFORT_POOLS/SPECIAL_COMFORT_WEATHER (and sometimes
+-- SPECIAL_COMFORT_EXTRAS) alongside the real `<type>Thermostat</type>` entries --
+-- skip anything whose type doesn't say Thermostat, exactly like the old
+-- BuildComfortFavorites did.
+local COMFORT_VAR = {
+  SCALE = 1100, TEMPERATURE = 1101, HEAT_SETPOINT = 1102, COOL_SETPOINT = 1103,
+  HVAC_MODE = 1104, FAN_MODE = 1105,
+}
+local COMFORT_MAX = 12   -- sanity ceiling (net.h NET_MAX_COMFORT); this house has 6
+
+-- IMPORTANT, confirmed live across all 6 real thermostats: TEMPERATURE/HEAT_SETPOINT/
+-- COOL_SETPOINT are tenths of a degree CELSIUS on the wire, regardless of what the
+-- SCALE variable says to display. Five of the six read SCALE="FAHRENHEIT", one reads
+-- the bare "F" -- but all six's TEMPERATURE sat in the 220-240 range while "off" in a
+-- house that is actually ~73-75F: 232 -> 23.2C -> 73.8F (sane); taken as raw whole
+-- degrees it would show 232F, which is nonsense. A raw display would have been
+-- actively wrong, not just off by a unit label -- this is why the brief said to
+-- sanity-check it live rather than assume. Converted here so ui.c never has to guess.
+local function comfortCtoDisplay(tenthsC, fahrenheit)
+  tenthsC = tonumber(tenthsC)
+  if not tenthsC then return nil end
+  local c = tenthsC / 10
+  local v = fahrenheit and (c * 9 / 5 + 32) or c
+  return math.floor(v + 0.5)
+end
+
+-- One thermostat's current state, in display units. heat/cool are OMITTED (nil, so
+-- json.encode drops the key) when the raw setpoint reads 0 -- confirmed live that an
+-- "off"-mode thermostat reports HEAT_SETPOINT/COOL_SETPOINT of 0 for "not set", and
+-- 0 tenths-C converts to a very real-looking 32F that would lie about there being a
+-- setpoint at all.
+local function ReadComfortState(id, name)
+  local function v(varId)
+    local ok, val = pcall(function() return C4:GetDeviceVariable(id, varId) end)
+    return ok and val or nil
+  end
+  -- "Celsius" is the only value seen live that means Celsius; every other observed
+  -- value ("FAHRENHEIT", bare "F") means Fahrenheit -- treat unrecognized as F too,
+  -- same fail-open-to-the-common-case idea as secStateLabel's raw-string fallback.
+  local scaleRaw = tostring(v(COMFORT_VAR.SCALE) or "FAHRENHEIT")
+  local fahrenheit = scaleRaw:sub(1, 1):lower() ~= "c"
+  local rawHeat = tonumber(v(COMFORT_VAR.HEAT_SETPOINT)) or 0
+  local rawCool = tonumber(v(COMFORT_VAR.COOL_SETPOINT)) or 0
+  -- Live HVAC_MODE enum is inconsistently cased ("off"/"heat"/"cool"/"Auto", confirmed
+  -- via the device's own /commands SET_MODE_HVAC param list) -- lower-case it for a
+  -- consistent wire vocabulary; DoComfortCmd maps back to the real casing when firing
+  -- SET_MODE_HVAC.
+  local mode = tostring(v(COMFORT_VAR.HVAC_MODE) or ""):lower()
+  if mode == "" then mode = "off" end
+  return {
+    id = id, title = name,
+    temp = comfortCtoDisplay(v(COMFORT_VAR.TEMPERATURE), fahrenheit) or 0,
+    heat = rawHeat > 0 and comfortCtoDisplay(rawHeat, fahrenheit) or nil,
+    cool = rawCool > 0 and comfortCtoDisplay(rawCool, fahrenheit) or nil,
+    mode = mode,
+    fan  = tostring(v(COMFORT_VAR.FAN_MODE) or "auto"),   -- confirmed live LIST values: "on" | "auto"
+    scale = fahrenheit and "F" or "C",
+  }
+end
+
+-- (Un)register the per-thermostat variable listeners so a real Control4-side change
+-- (another keypad, Navigator, the thermostat's own schedule) reaches this panel the
+-- instant it happens, same idea as WatchSecurityVars -- but using the CONFIRMED
+-- NUMERIC variable ids above rather than the security page's guessed-at variable
+-- NAMES (see SECURITY_WATCH_VARS's "NEEDS LIVE CONFIRMATION" note): thermostatV2
+-- documents these six as real numeric ids, and C4:RegisterVariableListener's normal
+-- contract IS a numeric id, so this one is expected to actually fire.
+local COMFORT_WATCH_VARS = {
+  COMFORT_VAR.TEMPERATURE, COMFORT_VAR.HEAT_SETPOINT, COMFORT_VAR.COOL_SETPOINT,
+  COMFORT_VAR.HVAC_MODE, COMFORT_VAR.FAN_MODE,
+  -- SCALE (1100) not watched: a units-preference change is rare, and the next
+  -- poll-driven push (a fresh secstate/hello/connect) would pick it up anyway.
+}
+function WatchComfortDevices(newSet)
+  for id in pairs(gComfortWatch) do
+    if not newSet[id] then
+      for _, varId in ipairs(COMFORT_WATCH_VARS) do
+        pcall(function() C4:UnregisterVariableListener(id, varId) end)
+      end
+    end
+  end
+  for id in pairs(newSet) do
+    if not gComfortWatch[id] then
+      for _, varId in ipairs(COMFORT_WATCH_VARS) do
+        pcall(function() C4:RegisterVariableListener(id, varId) end)
+      end
+    end
+  end
+  gComfortWatch = newSet
+end
+
+-- Enumerate + read every real thermostat. Any room id works (GET_COMFORT_DEVICES is
+-- NOT room-scoped, confirmed live -- see the section header above); gRoom is used
+-- purely because it's the room id we already have on hand, not because it matters
+-- which room asks. Returns {} (and leaves listeners alone) before gRoom is known --
+-- BuildComfortState/PushComfortState are called again once it resolves (WatchRoomVars
+-- path / CheckRoomMoved), same as every other room-dependent query in this file.
+function BuildComfortList()
+  local out = {}
+  local rid = tonumber(gRoom); if not rid then return out end
+  local ok, xml = pcall(function() return C4:SendToDevice(rid, "GET_COMFORT_DEVICES", {}) end)
+  if not ok or type(xml) ~= "string" then dbg("GET_COMFORT_DEVICES failed for room", rid); return out end
+  local newWatch = {}
+  for src in xml:gmatch("<source>(.-)</source>") do
+    if src:match("<type>%s*Thermostat%s*</type>") then
+      local id = tonumber(src:match("<id>(%d+)</id>") or "")
+      if id and #out < COMFORT_MAX then
+        local name = DeviceName(id)
+        if name ~= "" then
+          out[#out + 1] = ReadComfortState(id, Normalize(name))
+          newWatch[id] = true
+        end
+      end
+    end
+  end
+  WatchComfortDevices(newWatch)
+  dbg("comfort:", #out, "real thermostats (house-wide)")
+  return out
+end
+
+function BuildComfortState()
+  if not ShowProp("Show Comfort") then return { available = false } end
+  return { available = true, list = BuildComfortList() }
+end
+
+function PushComfortState()
+  if not gConnected then return end
+  local st = BuildComfortState()
+  local ok, encoded = pcall(json.encode, st)
+  if not ok then dbg("comfortlist encode failed:", tostring(encoded)); return end
+  if encoded == gLastComfortState then return end   -- dedupe, same as PushState/PushSecurityState
+  gLastComfortState = encoded
+  st.t = "comfortlist"
+  Send(st)
+end
+
+-- Setpoint/mode command relay: device -> driver -> C4:SendToDevice on the tapped
+-- thermostat. Command vocabulary confirmed live via the Director REST API's
+-- per-device /commands listing (director.sh rest GET /api/v1/items/2929/commands,
+-- 2026-09-14) -- INC/DEC_SETPOINT_HEAT/COOL take no params; SET_MODE_HVAC takes a
+-- MODE LIST param whose real values are "off"/"heat"/"cool"/"Auto" (note the live
+-- enum's own inconsistent case on "Auto" -- passed through by name below, not
+-- lower-cased, since the LIST param presumably needs an exact match).
+--
+-- No forced re-read/re-push after firing: WatchComfortDevices' listeners fire
+-- PushComfortState the instant Control4 reports the real change, same as the
+-- Security page's OnWatchedVariableChanged path. A synchronous re-read right after
+-- SendToDevice would most likely just observe the stale value -- these commands are
+-- fire-and-forget from the driver's side, the same caveat PARTITION_ARM has.
+local COMFORT_CMD = {
+  heat_inc = "INC_SETPOINT_HEAT", heat_dec = "DEC_SETPOINT_HEAT",
+  cool_inc = "INC_SETPOINT_COOL", cool_dec = "DEC_SETPOINT_COOL",
+}
+local COMFORT_MODE_WIRE = { off = "off", heat = "heat", cool = "cool", auto = "Auto" }
+function DoComfortCmd(msg)
+  local id = tonumber(msg and msg.id); if not id then return end
+  local action = tostring(msg and msg.action or "")
+  if COMFORT_CMD[action] then
+    dbg("comfort ->", COMFORT_CMD[action], "device", id)
+    pcall(function() C4:SendToDevice(id, COMFORT_CMD[action], {}) end)
+  elseif action == "mode" then
+    local wire = COMFORT_MODE_WIRE[tostring(msg and msg.mode or ""):lower()]
+    if not wire then dbg("comfort: unknown mode", tostring(msg and msg.mode)); return end
+    dbg("comfort -> SET_MODE_HVAC", wire, "device", id)
+    pcall(function() C4:SendToDevice(id, "SET_MODE_HVAC", { MODE = wire }) end)
+  else
+    dbg("comfort: unknown action", action)
+  end
+end
+
+-- C4 callback: any watched variable changed. Four subscribers share this one entry
 -- point now — the intercom's proxy level vars (ringer/speaker/mic sliders, watched by
--- the separate intercom driver), our room/aggregator watches, and the security
--- partition — so route on idDevice first.
+-- the separate intercom driver), our room/aggregator watches, the security
+-- partition, and the Comfort page's thermostats — so route on idDevice first.
 function OnWatchedVariableChanged(idDevice, idVariable, strValue)
   if gSecurityDev and idDevice == gSecurityDev then
     -- No debounce here (unlike SchedulePush for room vars): partition variables
     -- change far less often than a streaming session's, and a state change is
     -- exactly the kind of update that should reach the panel with no delay.
     PushSecurityState()
+    return
+  end
+  if gComfortWatch[idDevice] then
+    -- Same no-debounce reasoning as security: a thermostat's five watched variables
+    -- change rarely (a person or a schedule, not a streaming session), so there is
+    -- no storm here to coalesce.
+    PushComfortState()
     return
   end
   -- Intercom level vars are watched by the separate intercom driver now; we only
@@ -2700,7 +2911,6 @@ end
 --   * kind "shade" — a room-bound shade/blind (BuildShadeFavorites): toggle OPEN/CLOSE
 --     from our own last-commanded guess (UNVERIFIED command vocabulary + no state
 --     readback -- see BuildShadeFavorites).
---   * kind "comfort" — a thermostat (BuildComfortFavorites): read-only tile, no-op.
 --   * kind "relay" — a garage/gate relay controller surfaced via a navigator favorite
 --     tile (BuildFavoritesList's relay-path match): fires OPEN (UNVERIFIED default
 --     action -- see DoFireRelayFavorite).
@@ -2719,9 +2929,6 @@ function DoPlayFavorite(msg)
     DoToggleFanFavorite(fav)
   elseif kind == "shade" then
     DoToggleShadeFavorite(fav)
-  elseif kind == "comfort" then
-    -- Read-only tile for now (see BuildComfortFavorites) -- nothing to do on tap.
-    dbg("favorite (comfort) -> no-op (read-only tile), device", fav and fav.comfort)
   elseif kind == "relay" then
     DoFireRelayFavorite(fav)
   elseif kind == "broadcast" and mid and tostring(mid) ~= "" then
@@ -2842,9 +3049,6 @@ function BuildFavoritesList()
   if ShowProp("Show Shade Favorites") then
     for _, sf in ipairs(BuildShadeFavorites(rid)) do list[#list + 1] = sf end
   end
-  if ShowProp("Show Comfort Favorites") then
-    for _, cf in ipairs(BuildComfortFavorites(rid)) do list[#list + 1] = cf end
-  end
   return list
 end
 
@@ -2855,21 +3059,20 @@ end
 -- the navigator-favorites agent above, is the generic mechanism for this issue.
 --
 -- ****************************************************************************
--- PROVENANCE NOTE, RESOLVED: the agent that wrote BuildShadeFavorites/
--- BuildComfortFavorites below had no live Director access from its sandbox and
--- flagged GET_BLIND_DEVICES/GET_COMFORT_DEVICES as unverified, contradicting an
--- earlier round's negative investigation (that round grepped ~120 local .c4z
--- drivers and a web search, found nothing -- but never actually called the room
--- directly to check, which is the only way that would have caught it). Both
--- commands ARE real: confirmed live against the dev Director (same call shape as
--- GET_LIGHT_DEVICES) -- GET_BLIND_DEVICES returned a real bound Blind device,
--- GET_COMFORT_DEVICES returned six real thermostats (correctly excluding the two
--- SPECIAL_COMFORT_* pseudo-sources). BuildShadeFavorites/BuildComfortFavorites
--- below were then run live end-to-end (via a temporary diagnostic, since
--- reverted) against real rooms and returned correct counts. What's still
--- genuinely unconfirmed: shade OPEN/CLOSE command names and any state-readback
--- variable (see BuildShadeFavorites) -- comfort is deliberately read-only so
--- nothing there needed confirming beyond the list itself.
+-- PROVENANCE NOTE, RESOLVED: an earlier agent working from a sandbox with no live
+-- Director access flagged GET_BLIND_DEVICES/GET_COMFORT_DEVICES as unverified,
+-- contradicting an even earlier round's negative investigation (that round grepped
+-- ~120 local .c4z drivers and a web search, found nothing -- but never actually
+-- called the room directly to check, which is the only way that would have caught
+-- it). Both commands ARE real: confirmed live against the dev Director (same call
+-- shape as GET_LIGHT_DEVICES) -- GET_BLIND_DEVICES returned a real bound Blind
+-- device, GET_COMFORT_DEVICES returned six real thermostats (correctly excluding
+-- the two SPECIAL_COMFORT_* pseudo-sources; see BuildComfortList below, the
+-- Comfort page's own enumeration, for the live re-confirmation of this + the six
+-- real thermostat ids). BuildShadeFavorites below was then run live end-to-end
+-- (via a temporary diagnostic, since reverted) against real rooms and returned
+-- correct counts. What's still genuinely unconfirmed: shade OPEN/CLOSE command
+-- names and any state-readback variable (see BuildShadeFavorites).
 -- ****************************************************************************
 --
 -- Favorite id is "light:<deviceId>" (own namespace — never collides with a
@@ -2952,43 +3155,7 @@ function BuildShadeFavorites(rid)
   return out
 end
 
--- Non-media favorites, part 4: thermostats. GET_COMFORT_DEVICES per this round's task
--- brief -- SEE THE PROVENANCE NOTE ABOVE BuildLightFavorites (same caveat: unverified
--- by this agent, contradicts PROTOCOL.md's documented negative finding). Per the
--- brief, the response also always carries two pseudo-sources, SPECIAL_COMFORT_POOLS
--- and SPECIAL_COMFORT_WEATHER, that are not real addressable thermostats -- skipped.
---
--- Scoped to READ-ONLY tiles for v1: a full thermostat control surface (setpoint,
--- mode, fan) does not fit a favorite tile, and there is no confirmed generic
--- current-temperature variable to even show a live reading (the same "no first-party
--- consumer to confirm a variable against" problem as shades, worse here because
--- there's no OPEN/CLOSE-style safe default action either). So a comfort favorite is
--- just a named shortcut to the room's thermostat -- tapping it is a no-op today
--- (DoPlayFavorite logs and returns) rather than guessing a setpoint-bump command that
--- could actually change the temperature wrong. Revisit once a real device variable /
--- command set is confirmed live.
-function BuildComfortFavorites(rid)
-  local out = {}
-  local ok, xml = pcall(function() return C4:SendToDevice(rid, "GET_COMFORT_DEVICES", {}) end)
-  if not ok or type(xml) ~= "string" then dbg("GET_COMFORT_DEVICES failed for room", rid); return out end
-  for src in xml:gmatch("<source>(.-)</source>") do
-    local idStr = src:match("<id>([%w_]+)</id>")
-    local id = idStr and tonumber(idStr)
-    -- Skip the two always-present pseudo-sources (not real thermostats).
-    if id then
-      local name = DeviceName(id)
-      if name ~= "" then
-        local favId = "comfort:" .. id
-        gFavorites[favId] = { id = favId, kind = "comfort", comfort = id, title = name }
-        out[#out + 1] = { id = favId, title = Normalize(name), kind = "comfort" }
-      end
-    end
-  end
-  dbg("getfavorites: room", rid, "->", #out, "comfort favorites")
-  return out
-end
-
--- Non-media favorites, part 5: garage/gate relay controllers (kind:"relay"). Unlike
+-- Non-media favorites, part 4: garage/gate relay controllers (kind:"relay"). Unlike
 -- lights/shades/comfort there is NO room-command enumeration for these at all --
 -- confirmed live (GET_RELAY_DEVICES/GET_ACCESS_DEVICES/GET_GARAGE_DEVICES/
 -- GET_DOOR_DEVICES/GET_DOORSTATION_DEVICES all returned nil against the real rooms
