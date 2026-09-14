@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>   // secStateLabel(): humanize the raw PARTITION_STATE string
 
 // Roboto (Control4 / Navigator typeface, Apache-2.0) + DejaVu symbols (♪ ★ ♥ …),
 // generated via lv_font_conv. Regular for body, Medium for titles.
@@ -245,6 +246,48 @@ static int       s_nRooms;
 static lv_obj_t *s_favPanel, *s_favGrid;
 static favorite_t s_favs[NET_MAX_FAVORITES];
 static int       s_nFavs;
+
+// ── Security partition page ─────────────────────────────────────────────────
+// Full-screen page (same idiom as the intercom picker / favorites grid): state
+// front and center, Arm Home / Arm Away / Disarm gated by a PIN pad, and an
+// aggregate zone line. Feature-detected the same way as intercom (ic_available()):
+// the tile/page exist only while s_secAvailable is true (this keypad's SECURITY
+// connection is bound to a partition), so an installation with no security system
+// never shows a broken affordance.
+static lv_obj_t *s_secPanel, *s_secStateLbl, *s_secSubLbl, *s_secTroubleLbl, *s_secStatusLbl;
+static lv_obj_t *s_secBypassBtn, *s_secBypassLbl;
+static security_state_t s_sec;
+static bool      s_secAvailable;   // s_sec.available, mirrored so a rebuild can gate on it before any secstate ever arrives
+static bool      s_secHomeShown;   // home Security card is currently shown (ic_available()-style rebuild gate)
+static bool      s_secBypassWanted;   // "bypass faulted zones" toggle for the next Arm tap
+static int       s_secDelayLeft;      // local countdown (sec), resynced from every secstate; -1 = not counting
+static uint32_t  s_secDelayTickMs;
+// Fail-safe (issue requirement): a failed/ambiguous arm-disarm attempt must never
+// report success. s_secPending/s_secPendingSince gate a small STATUS line only --
+// the big state label above is bound exclusively to the driver-confirmed
+// s_sec.state and is never set optimistically from a button tap or a `secresult`.
+static bool      s_secPending;
+static char      s_secPendingAction[12];
+static uint32_t  s_secPendingSinceMs;
+#define SEC_PENDING_TIMEOUT_MS 12000   // no confirming secstate in time -> "no confirmation", not success
+
+// PIN entry overlay (lv_layer_top(), same layer Settings/the intercom call screen
+// use). No numeric-entry widget exists anywhere else in this codebase to reuse --
+// checked Settings and the keypad-button config, neither has one -- so this is new.
+#define SEC_PIN_MAX 8
+static lv_obj_t *s_pinPanel, *s_pinDots[SEC_PIN_MAX], *s_pinError, *s_pinTitle;
+static char      s_pinBuf[SEC_PIN_MAX + 1];
+static int       s_pinLen;
+static bool      s_pinIsDisarm;
+static char      s_pinArmType[16];   // valid when !s_pinIsDisarm: "Stay"|"Away"|"Stay Instant"|"Away Instant"
+static bool      s_pinBypass;
+
+// The panel shows the Security feature purely on whether the driver has told us a
+// partition is bound -- there is no local licensing/hardware gate the way
+// ic_available() has MMK_HAS_SIP, because this is a Control4-side binding, not a
+// board capability. Until the first secstate arrives this is false, so a freshly
+// booted panel with no driver push yet correctly shows no Security tile.
+static inline bool sec_available(void) { return s_secAvailable; }
 
 // Intercom availability is purely a hardware fact: the panel shows the intercom
 // feature iff the board has SIP audio. It deliberately does NOT depend on s_nEps
@@ -1795,6 +1838,427 @@ static void x4PageHeader(lv_obj_t *parent, const char *title, lv_event_cb_t back
     lv_obj_align(t, LV_ALIGN_TOP_LEFT, (int)(84 * s), (int)(30 * s));
 }
 
+// ── Security partition page ─────────────────────────────────────────────────
+// Same full-screen-page idiom as the intercom picker / favorites grid above:
+// hidden by default, revealed over home, one back chevron. Reachable from a home
+// tile that only exists while sec_available() is true.
+static void secRebuild(void);   // fwd
+static void onSecHome(lv_event_t *e) { (void)e; goHomeFrom(s_secPanel); }
+static void homeSecurity(lv_event_t *e)
+{
+    (void)e;
+    if (!s_secPanel) return;
+    if (s_x4 && s_home) { s_homeAtHome = false; lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); }
+    secRebuild();
+    lv_obj_clear_flag(s_secPanel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_secPanel);
+}
+void ui_show_security_panel(void) { homeSecurity(NULL); }
+
+// Humanize the driver's raw PARTITION_STATE for display ("DISARMED_READY" ->
+// "Disarmed"). The mapped values below are the ones named in the issue's live
+// research; anything else falls back to a readable "Some state" rendering of the
+// raw string rather than going blank or showing a raw enum, since the exact state
+// vocabulary is NOT exhaustively confirmed (see driver.lua WatchSecurityVars).
+static const char *secStateLabel(const char *raw, char *buf, size_t n)
+{
+    static const struct { const char *raw, *label; } map[] = {
+        {"DISARMED_READY",     "Disarmed"},
+        {"DISARMED_NOT_READY", "Disarmed (not ready)"},
+        {"ARMED_HOME",         "Armed Home"},
+        {"ARMED_STAY",         "Armed Home"},
+        {"ARMED_AWAY",         "Armed Away"},
+        {"EXIT_DELAY",         "Arming..."},
+        {"ENTRY_DELAY",        "Entry Delay"},
+        {"ALARM",              "ALARM"},
+    };
+    if (!raw || !raw[0]) return "Unknown";
+    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++)
+        if (!strcmp(raw, map[i].raw)) return map[i].label;
+    size_t j = 0;
+    for (size_t i = 0; raw[i] && j + 1 < n; i++) {
+        char c = raw[i];
+        buf[j++] = (i == 0) ? (char)toupper((unsigned char)c)
+                             : (char)(c == '_' ? ' ' : tolower((unsigned char)c));
+    }
+    buf[j] = 0;
+    return buf;
+}
+static bool secInDelay(void)   { return s_sec.state[0] && strstr(s_sec.state, "DELAY"); }
+static bool secInAlarm(void)   { return s_sec.state[0] && strstr(s_sec.state, "ALARM"); }
+static bool secIsArmed(void)   { return s_sec.state[0] && strstr(s_sec.state, "ARMED") && !secInDelay(); }
+
+// One line of feedback for an in-flight secarm/secdisarm -- NEVER the big state
+// label above it. That label only ever mirrors s_sec.state (driver-confirmed), so
+// this function can say "sending" or "failed" or "no confirmation" without any
+// risk of the page claiming an arm/disarm succeeded before the partition itself
+// reports it (the issue's fail-safe requirement).
+static void secUpdateStatusLine(void)
+{
+    if (!s_secStatusLbl) return;
+    if (!s_secPending) { lv_label_set_text(s_secStatusLbl, ""); return; }
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Sending %s...", s_secPendingAction);
+    lv_label_set_text(s_secStatusLbl, buf);
+    lv_obj_set_style_text_color(s_secStatusLbl, lv_color_hex(C_SUBTLE), 0);
+}
+
+static void secRebuild(void)
+{
+    if (!s_secPanel) return;
+    char stbuf[32];
+    lv_label_set_text(s_secStateLbl, secStateLabel(s_sec.state, stbuf, sizeof(stbuf)));
+    lv_obj_set_style_text_color(s_secStateLbl,
+        lv_color_hex(secInAlarm() ? C_RED : (secIsArmed() ? C_RED : C_GREEN)), 0);
+
+    // Sub-line: entry/exit delay countdown, else the driver's DISPLAY_TEXT, else
+    // an aggregate zone summary. Per-zone open/closed/bypassed status is NOT
+    // rendered here -- see the NET_MAX zone note in net.h / PROTOCOL.md: the
+    // partition proxy has no polled zone list, only an unconfirmed notify push,
+    // so this sticks to the two zone-shaped fields the driver actually mirrors.
+    char sub[96];
+    if (secInDelay() && s_secDelayLeft >= 0) {
+        snprintf(sub, sizeof(sub), "%ds remaining", s_secDelayLeft);
+    } else if (s_sec.display[0]) {
+        snprintf(sub, sizeof(sub), "%s", s_sec.display);
+    } else if (s_sec.open_zones > 0) {
+        if (s_sec.last_faulted[0])
+            snprintf(sub, sizeof(sub), "%d zone%s open - %s", s_sec.open_zones,
+                     s_sec.open_zones == 1 ? "" : "s", s_sec.last_faulted);
+        else
+            snprintf(sub, sizeof(sub), "%d zone%s open", s_sec.open_zones, s_sec.open_zones == 1 ? "" : "s");
+    } else {
+        snprintf(sub, sizeof(sub), "All zones secure");
+    }
+    lv_label_set_text(s_secSubLbl, sub);
+
+    if (s_secTroubleLbl) {
+        setVis(s_secTroubleLbl, s_sec.trouble[0] != 0);
+        if (s_sec.trouble[0]) lv_label_set_text(s_secTroubleLbl, s_sec.trouble);
+    }
+    if (s_secBypassBtn) {
+        setVis(s_secBypassBtn, s_sec.open_zones > 0);
+        if (s_secBypassLbl) {
+            char blabel[48];
+            snprintf(blabel, sizeof(blabel), "%s Bypass %d faulted zone%s",
+                     s_secBypassWanted ? LV_SYMBOL_OK : "", s_sec.open_zones,
+                     s_sec.open_zones == 1 ? "" : "s");
+            lv_label_set_text(s_secBypassLbl, blabel);
+        }
+    }
+    secUpdateStatusLine();
+}
+
+// ── PIN entry overlay ────────────────────────────────────────────────────────
+// Modeled on the intercom call screen's use of lv_layer_top() for a modal that
+// must sit above every full-screen page. The PIN lives ONLY in s_pinBuf, for only
+// as long as this overlay is open: secPinConfirm() copies it straight into the
+// net_security_arm/disarm call and then zeroes it (secPinClose) -- it is never
+// written to NVS, a property, or a log line anywhere on either side of the link.
+static void secPinRenderDots(void)
+{
+    for (int i = 0; i < SEC_PIN_MAX; i++) {
+        if (!s_pinDots[i]) continue;
+        bool filled = i < s_pinLen;
+        lv_obj_set_style_bg_opa(s_pinDots[i], filled ? LV_OPA_COVER : LV_OPA_20, 0);
+    }
+}
+static void secPinClose(void)
+{
+    memset(s_pinBuf, 0, sizeof(s_pinBuf));   // PIN never outlives this overlay
+    s_pinLen = 0;
+    if (s_pinPanel) lv_obj_add_flag(s_pinPanel, LV_OBJ_FLAG_HIDDEN);
+}
+static void onPinCancel(lv_event_t *e) { (void)e; secPinClose(); }
+static void onPinDigit(lv_event_t *e)
+{
+    int d = (int)(intptr_t)lv_event_get_user_data(e);
+    if (s_pinLen >= SEC_PIN_MAX) return;
+    s_pinBuf[s_pinLen++] = (char)('0' + d);
+    s_pinBuf[s_pinLen] = 0;
+    if (s_pinError) lv_label_set_text(s_pinError, "");
+    secPinRenderDots();
+}
+static void onPinBackspace(lv_event_t *e)
+{
+    (void)e;
+    if (s_pinLen > 0) { s_pinBuf[--s_pinLen] = 0; secPinRenderDots(); }
+}
+static void onPinConfirm(lv_event_t *e)
+{
+    (void)e;
+    if (s_pinLen == 0) {
+        if (s_pinError) lv_label_set_text(s_pinError, "Enter your code");
+        return;
+    }
+    // Snapshot before secPinClose() zeroes the buffer.
+    char pin[SEC_PIN_MAX + 1];
+    snprintf(pin, sizeof(pin), "%s", s_pinBuf);
+    bool isDisarm = s_pinIsDisarm;
+    char armType[16]; snprintf(armType, sizeof(armType), "%s", s_pinArmType);
+    bool bypass = s_pinBypass;
+    secPinClose();
+
+    s_secPending = true;
+    s_secPendingSinceMs = millis();
+    snprintf(s_secPendingAction, sizeof(s_secPendingAction), "%s", isDisarm ? "disarm" : "arm");
+    secUpdateStatusLine();
+    if (isDisarm) net_security_disarm(pin);
+    else          net_security_arm(armType, pin, bypass);
+    memset(pin, 0, sizeof(pin));   // done with our copy too
+}
+static void secOpenPin(const char *armType, bool isDisarm, bool bypass)
+{
+    if (!s_pinPanel) return;
+    s_pinIsDisarm = isDisarm;
+    snprintf(s_pinArmType, sizeof(s_pinArmType), "%s", armType ? armType : "");
+    s_pinBypass = bypass;
+    memset(s_pinBuf, 0, sizeof(s_pinBuf));
+    s_pinLen = 0;
+    secPinRenderDots();
+    if (s_pinError) lv_label_set_text(s_pinError, "");
+    if (s_pinTitle) {
+        char t[32];
+        snprintf(t, sizeof(t), "%s code", isDisarm ? "Disarm" : "Arm");
+        lv_label_set_text(s_pinTitle, t);
+    }
+    lv_obj_clear_flag(s_pinPanel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_pinPanel);
+}
+static void onSecArmHome(lv_event_t *e)   { (void)e; secOpenPin("Stay", false, s_secBypassWanted); }
+static void onSecArmAway(lv_event_t *e)   { (void)e; secOpenPin("Away", false, s_secBypassWanted); }
+static void onSecDisarm(lv_event_t *e)    { (void)e; secOpenPin(NULL, true, false); }
+static void onSecBypassToggle(lv_event_t *e) { (void)e; s_secBypassWanted = !s_secBypassWanted; secRebuild(); }
+
+// One PIN-pad button (digit or action). Square, dark, matches tileCard's glass look.
+static lv_obj_t *pinKey(lv_obj_t *p, const char *label, int x, int y, int sz,
+                        lv_event_cb_t cb, void *ud)
+{
+    lv_obj_t *b = lv_button_create(p);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_pos(b, x, y);
+    lv_obj_set_size(b, sz, sz);
+    lv_obj_set_style_radius(b, sz / 2, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_10, 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_30, LV_STATE_PRESSED);
+    lv_obj_t *l = lv_label_create(b);
+    lv_obj_set_style_text_font(l, F24, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
+    lv_label_set_text(l, label);
+    lv_obj_center(l);
+    if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, ud);
+    return b;
+}
+
+static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
+{
+    const float s = s_uiscale;
+    s_secPanel = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_secPanel);
+    lv_obj_set_size(s_secPanel, W, H);
+    lv_obj_set_pos(s_secPanel, 0, 0);
+    lv_obj_add_flag(s_secPanel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(s_secPanel, lv_color_hex(HOME_BG_TOP), 0);
+    lv_obj_set_style_bg_grad_color(s_secPanel, lv_color_hex(HOME_BG_BOT), 0);
+    lv_obj_set_style_bg_grad_dir(s_secPanel, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(s_secPanel, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(s_secPanel, LV_OBJ_FLAG_SCROLLABLE);
+    if (smallP) {
+        lv_obj_t *back = iconBtnImg(s_secPanel, ICON_BACK, 30, 0, LV_OPA_TRANSP, 0xFFFFFF, onSecHome, NULL);
+        lv_obj_align(back, LV_ALIGN_TOP_LEFT, 8, 8);
+    } else {
+        x4PageHeader(s_secPanel, "Security", onSecHome);
+    }
+    const int top = smallP ? 50 : (int)(120 * s);
+
+    s_secStateLbl = lv_label_create(s_secPanel);
+    lv_obj_set_style_text_font(s_secStateLbl, F32, 0);
+    lv_label_set_text(s_secStateLbl, "Unknown");
+    lv_obj_align(s_secStateLbl, LV_ALIGN_TOP_MID, 0, top);
+
+    s_secSubLbl = lv_label_create(s_secPanel);
+    lv_obj_set_style_text_font(s_secSubLbl, F16, 0);
+    lv_obj_set_style_text_color(s_secSubLbl, lv_color_hex(C_SUBTLE), 0);
+    lv_label_set_text(s_secSubLbl, "");
+    lv_obj_align_to(s_secSubLbl, s_secStateLbl, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(8 * s));
+
+    s_secTroubleLbl = lv_label_create(s_secPanel);
+    lv_obj_set_style_text_font(s_secTroubleLbl, F16, 0);
+    lv_obj_set_style_text_color(s_secTroubleLbl, lv_color_hex(C_RED), 0);
+    lv_label_set_text(s_secTroubleLbl, "");
+    lv_obj_align_to(s_secTroubleLbl, s_secSubLbl, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(6 * s));
+    lv_obj_add_flag(s_secTroubleLbl, LV_OBJ_FLAG_HIDDEN);
+
+    const int bw = (int)(200 * s), bh = (int)(64 * s), bgap = (int)(16 * s);
+    const int by = top + (int)(140 * s);
+    lv_obj_t *armHome = lv_button_create(s_secPanel);
+    lv_obj_set_size(armHome, bw, bh);
+    lv_obj_set_style_bg_color(armHome, lv_color_hex(0x2A2E37), 0);
+    lv_obj_set_style_radius(armHome, (int)(14 * s), 0);
+    lv_obj_add_event_cb(armHome, onSecArmHome, LV_EVENT_CLICKED, NULL);
+    lv_obj_align(armHome, LV_ALIGN_TOP_MID, -(bw + bgap) / 2, by);
+    { lv_obj_t *l = lv_label_create(armHome); lv_obj_set_style_text_font(l, F16, 0);
+      lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Arm Home"); lv_obj_center(l); }
+
+    lv_obj_t *armAway = lv_button_create(s_secPanel);
+    lv_obj_set_size(armAway, bw, bh);
+    lv_obj_set_style_bg_color(armAway, lv_color_hex(0x2A2E37), 0);
+    lv_obj_set_style_radius(armAway, (int)(14 * s), 0);
+    lv_obj_add_event_cb(armAway, onSecArmAway, LV_EVENT_CLICKED, NULL);
+    lv_obj_align(armAway, LV_ALIGN_TOP_MID, (bw + bgap) / 2, by);
+    { lv_obj_t *l = lv_label_create(armAway); lv_obj_set_style_text_font(l, F16, 0);
+      lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Arm Away"); lv_obj_center(l); }
+
+    lv_obj_t *disarm = lv_button_create(s_secPanel);
+    lv_obj_set_size(disarm, 2 * bw + bgap, bh);
+    lv_obj_set_style_bg_color(disarm, lv_color_hex(C_GREEN), 0);
+    lv_obj_set_style_bg_opa(disarm, LV_OPA_30, 0);
+    lv_obj_set_style_radius(disarm, (int)(14 * s), 0);
+    lv_obj_add_event_cb(disarm, onSecDisarm, LV_EVENT_CLICKED, NULL);
+    lv_obj_align(disarm, LV_ALIGN_TOP_MID, 0, by + bh + bgap);
+    { lv_obj_t *l = lv_label_create(disarm); lv_obj_set_style_text_font(l, F16, 0);
+      lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Disarm"); lv_obj_center(l); }
+
+    // "Bypass & arm" affordance (issue: optional quick bypass when zones are
+    // faulted). A toggle, not a separate command -- PARTITION_ARM's own Bypass
+    // flag IS bypass-and-arm, there is no separate bypass call (see driver.lua).
+    s_secBypassBtn = lv_button_create(s_secPanel);
+    lv_obj_remove_style_all(s_secBypassBtn);
+    lv_obj_set_size(s_secBypassBtn, 2 * bw + bgap, (int)(40 * s));
+    lv_obj_add_event_cb(s_secBypassBtn, onSecBypassToggle, LV_EVENT_CLICKED, NULL);
+    lv_obj_align(s_secBypassBtn, LV_ALIGN_TOP_MID, 0, by + 2 * (bh + bgap));
+    lv_obj_add_flag(s_secBypassBtn, LV_OBJ_FLAG_HIDDEN);
+    s_secBypassLbl = lv_label_create(s_secBypassBtn);
+    lv_obj_set_style_text_font(s_secBypassLbl, F14, 0);
+    lv_obj_set_style_text_color(s_secBypassLbl, lv_color_hex(C_SUBTLE), 0);
+    lv_label_set_text(s_secBypassLbl, "Bypass faulted zones");
+    lv_obj_center(s_secBypassLbl);
+
+    s_secStatusLbl = lv_label_create(s_secPanel);
+    lv_obj_set_style_text_font(s_secStatusLbl, F14, 0);
+    lv_label_set_text(s_secStatusLbl, "");
+    lv_obj_align(s_secStatusLbl, LV_ALIGN_BOTTOM_MID, 0, -(int)(24 * s));
+
+    // ── PIN entry overlay (lv_layer_top(), hidden until secOpenPin) ─────────
+    s_pinPanel = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_pinPanel);
+    lv_obj_set_size(s_pinPanel, W, H);
+    lv_obj_set_pos(s_pinPanel, 0, 0);
+    lv_obj_add_flag(s_pinPanel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(s_pinPanel, lv_color_hex(0x0B0D12), 0);
+    lv_obj_set_style_bg_opa(s_pinPanel, LV_OPA_90, 0);
+    lv_obj_clear_flag(s_pinPanel, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_pinTitle = lv_label_create(s_pinPanel);
+    lv_obj_set_style_text_font(s_pinTitle, F24, 0);
+    lv_obj_set_style_text_color(s_pinTitle, lv_color_hex(C_TEXT), 0);
+    lv_label_set_text(s_pinTitle, "Arm code");
+    lv_obj_align(s_pinTitle, LV_ALIGN_TOP_MID, 0, (int)(40 * s));
+
+    const int dotSz = (int)(16 * s), dotGap = (int)(14 * s);
+    const int dotsW = SEC_PIN_MAX * dotSz + (SEC_PIN_MAX - 1) * dotGap;
+    for (int i = 0; i < SEC_PIN_MAX; i++) {
+        lv_obj_t *dot = lv_obj_create(s_pinPanel);
+        lv_obj_remove_style_all(dot);
+        lv_obj_set_size(dot, dotSz, dotSz);
+        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(dot, lv_color_hex(C_TEXT), 0);
+        lv_obj_set_style_bg_opa(dot, LV_OPA_20, 0);
+        lv_obj_set_pos(dot, (W - dotsW) / 2 + i * (dotSz + dotGap), (int)(96 * s));
+        lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
+        s_pinDots[i] = dot;
+    }
+    s_pinError = lv_label_create(s_pinPanel);
+    lv_obj_set_style_text_font(s_pinError, F14, 0);
+    lv_obj_set_style_text_color(s_pinError, lv_color_hex(C_RED), 0);
+    lv_label_set_text(s_pinError, "");
+    lv_obj_align(s_pinError, LV_ALIGN_TOP_MID, 0, (int)(126 * s));
+
+    // 3x4 keypad: 1-9, blank, 0, backspace.
+    const int ksz = (int)(66 * s), kgap = (int)(18 * s);
+    const int kx0 = (W - (3 * ksz + 2 * kgap)) / 2;
+    const int ky0 = (int)(160 * s);
+    for (int d = 1; d <= 9; d++) {
+        int col = (d - 1) % 3, row = (d - 1) / 3;
+        char lbl[2] = { (char)('0' + d), 0 };
+        pinKey(s_pinPanel, lbl, kx0 + col * (ksz + kgap), ky0 + row * (ksz + kgap), ksz,
+               onPinDigit, (void *)(intptr_t)d);
+    }
+    pinKey(s_pinPanel, "0", kx0 + 1 * (ksz + kgap), ky0 + 3 * (ksz + kgap), ksz,
+           onPinDigit, (void *)(intptr_t)0);
+    pinKey(s_pinPanel, LV_SYMBOL_BACKSPACE, kx0 + 2 * (ksz + kgap), ky0 + 3 * (ksz + kgap), ksz,
+           onPinBackspace, NULL);
+
+    const int by2 = ky0 + 4 * (ksz + kgap) + (int)(10 * s);
+    lv_obj_t *cancel = lv_button_create(s_pinPanel);
+    lv_obj_set_size(cancel, (int)(140 * s), (int)(52 * s));
+    lv_obj_set_style_bg_opa(cancel, LV_OPA_20, 0);
+    lv_obj_set_style_radius(cancel, (int)(12 * s), 0);
+    lv_obj_add_event_cb(cancel, onPinCancel, LV_EVENT_CLICKED, NULL);
+    lv_obj_align(cancel, LV_ALIGN_TOP_MID, -(int)(80 * s), by2);
+    { lv_obj_t *l = lv_label_create(cancel); lv_obj_set_style_text_font(l, F16, 0);
+      lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Cancel"); lv_obj_center(l); }
+
+    lv_obj_t *confirm = lv_button_create(s_pinPanel);
+    lv_obj_set_size(confirm, (int)(140 * s), (int)(52 * s));
+    lv_obj_set_style_bg_color(confirm, lv_color_hex(C_GREEN), 0);
+    lv_obj_set_style_bg_opa(confirm, LV_OPA_60, 0);
+    lv_obj_set_style_radius(confirm, (int)(12 * s), 0);
+    lv_obj_add_event_cb(confirm, onPinConfirm, LV_EVENT_CLICKED, NULL);
+    lv_obj_align(confirm, LV_ALIGN_TOP_MID, (int)(80 * s), by2);
+    { lv_obj_t *l = lv_label_create(confirm); lv_obj_set_style_text_font(l, F16, 0);
+      lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "OK"); lv_obj_center(l); }
+}
+
+// Driver-pushed security partition state (`secstate`, PROTOCOL.md). NULL-ing
+// `available` (rather than merely stale fields) is what makes the tile/page
+// disappear on a keypad instance whose SECURITY connection was never bound, or
+// got unbound (driver.lua OnBindingChanged) -- matches ic_available()'s "purely a
+// fact reported to us" gating.
+void ui_set_security(const security_state_t *sec)
+{
+    if (!sec) return;
+    s_sec = *sec;
+    s_secAvailable = sec->available;
+    // Resync the local delay countdown from the driver's latest DELAY_TIME_REMAINING
+    // -- this only ticks visually between pushes (ui_tick_progress), it is never the
+    // source of truth for whether the delay is still running.
+    s_secDelayLeft = secInDelay() ? s_sec.delay_remaining : -1;
+    s_secDelayTickMs = millis();
+    // A confirming state arrived: whatever we were waiting on either happened or
+    // didn't, but either way the driver-reported state is now authoritative again,
+    // so drop the "sending..." status line. (Deliberately NOT keyed to matching the
+    // requested action -- any fresh secstate is a real report, and holding the
+    // spinner past that would itself be a small dishonesty.)
+    if (s_secPending) { s_secPending = false; s_secPendingAction[0] = 0; }
+    if (s_secPanel) secRebuild();
+    if (s_home && sec_available() != s_secHomeShown) ui_request_rebuild();
+}
+
+// Delivery outcome for a secarm/secdisarm (`secresult`). ok==true means only "the
+// driver called SendToProxy", not "the partition armed" -- see security_result_t.
+// A false here IS a definitive failure worth surfacing immediately, since no
+// secstate confirming anything is coming.
+void ui_set_security_result(const security_result_t *res)
+{
+    if (!res) return;
+    if (!res->ok) {
+        s_secPending = false;
+        if (s_secStatusLbl) {
+            char buf[80];
+            snprintf(buf, sizeof(buf), "%s failed%s%s",
+                     res->action[0] ? res->action : "Command",
+                     res->error[0] ? ": " : "", res->error[0] ? res->error : "");
+            lv_label_set_text(s_secStatusLbl, buf);
+            lv_obj_set_style_text_color(s_secStatusLbl, lv_color_hex(C_RED), 0);
+        }
+    }
+    // ok==true: stay pending. secRebuild()'s status line keeps reading
+    // "Sending..." until a secstate confirms it or SEC_PENDING_TIMEOUT_MS elapses
+    // (ui_tick_progress) -- never flips to a success message on its own.
+}
+
 
 // ── Compact-bar text rotation ───────────────────────────────────────────────
 // The compact bar has room for ONE text line, but title / artist / album are all
@@ -1997,6 +2461,8 @@ static void build_home_tiles(int W, int H, bool smallP)
 
     const bool icAvail = ic_available();
     s_homeIcShown = icAvail;
+    const bool secAvail = sec_available();
+    s_secHomeShown = secAvail;
 
     int nfav = s_nFavs; if (nfav > HOME_MAX_FAV) nfav = HOME_MAX_FAV;
     int nbtn = s_haveButtons ? s_lastState.n_buttons : 0;
@@ -2021,7 +2487,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     // space on tile size instead of on gaps. tileCard sizes from cw/ch below, so
     // this is the only lever needed.
     {
-        int ntiles = (icAvail ? 1 : 0) + nfav + nbtn;
+        int ntiles = (icAvail ? 1 : 0) + (secAvail ? 1 : 0) + nfav + nbtn;
         if (ntiles > 0 && cols > ntiles) cols = ntiles;
         if (ntiles <= 2) cols = 1;
         else if (ntiles <= 4 && cols > 2) cols = 2;
@@ -2037,7 +2503,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     // take as many as fit (within touch limits), and stretch the tiles into the
     // remainder. It still snaps because a part-height row reads as broken rather
     // than as "there is more below".
-    const int ntot  = (icAvail ? 1 : 0) + nfav + nbtn;
+    const int ntot  = (icAvail ? 1 : 0) + (secAvail ? 1 : 0) + nfav + nbtn;
     const int need  = (ntot + cols - 1) / cols;
     // Prefer MORE ROWS over taller tiles: a proportional floor scaled to ~96px on
     // the 10", which rejected three 93px rows in favour of two 150px ones --
@@ -2050,7 +2516,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     // as small as on a crowded page -- the opposite of what a short list wants.
     // Raise the ceiling as the count falls, so the space goes into the tiles.
     {
-        int ntiles = (icAvail ? 1 : 0) + nfav + nbtn;
+        int ntiles = (icAvail ? 1 : 0) + (secAvail ? 1 : 0) + nfav + nbtn;
         if (ntiles <= 2)      chMax = (int)(180 * s);
         else if (ntiles <= 4) chMax = (int)(140 * s);
         else if (ntiles <= 6) chMax = (int)(110 * s);
@@ -2095,6 +2561,18 @@ static void build_home_tiles(int W, int H, bool smallP)
     if (icAvail)
         tileCard(grid, ICON_INTERCOM, "Bell", "Intercom", NULL, false, 0x4CC9F0,
                  homeIntercom, NULL, cw, ch, NULL, NULL, NULL);
+
+    // "Security" is an existing Lucide glyph name (ICONS table above) -- no HA
+    // icon asset exists for it (icon_security has no icon_ha_security counterpart),
+    // so the image fallback param is effectively unreachable in either theme, same
+    // as ICON_INTERCOM's role for the "Bell" glyph tile just above.
+    if (secAvail) {
+        bool alarm  = secInAlarm();
+        bool armed  = secIsArmed() || alarm;
+        const char *sub = alarm ? "Alarm" : (armed ? "Armed" : NULL);
+        tileCard(grid, ICON_INTERCOM, "Security", "Security", sub, armed,
+                 alarm ? C_RED : 0x4CC9F0, homeSecurity, NULL, cw, ch, NULL, NULL, NULL);
+    }
 
     // Favourites lead the content: with no browse on the panel they are the only
     // way to start music here.
@@ -3046,6 +3524,12 @@ void ui_begin(void)
     lv_obj_set_scroll_dir(s_favGrid, LV_DIR_VER);
     rebuildFavGrid();
 
+    // Security partition page + its PIN entry overlay. Built unconditionally (like
+    // the intercom picker, which exists even on boards with MMK_HAS_SIP off) --
+    // sec_available() just keeps its home tile from ever appearing until a
+    // secstate says a partition is actually bound.
+    buildSecurityPage(scr, W, H, smallP);
+
     // X4-inspired home screen on top of the now-playing (shown by default). Its
     // own rich indigo->blue gradient (not the charcoal now-playing bg) so the
     // dark glass cards stand out.
@@ -3318,8 +3802,31 @@ void ui_tick_screensaver(void)
     if (s_connected && ++s_favTick >= FAV_REFRESH_SEC) { s_favTick = 0; net_request_favorites(); }
 
     // The intercom card is gated on ic_available(); rebuild when that flips vs
-    // what home currently shows.
+    // what home currently shows. Security is gated the same way on sec_available()
+    // (ui_set_security also requests this directly on a fresh secstate, same as
+    // ic_available()'s ui_set_endpoints path -- this is only the periodic fallback
+    // for a flip that happened with no accompanying push, mirroring the intercom's).
     if (s_home && ic_available() != s_homeIcShown) { ui_request_rebuild(); return; }
+    if (s_home && sec_available() != s_secHomeShown) { ui_request_rebuild(); return; }
+
+    // Fail-safe timeout: a secarm/secdisarm that never gets a confirming secstate
+    // (or a secresult at all) must not sit showing "Sending..." forever, but it
+    // must ALSO never claim success on its own -- so this only replaces the status
+    // line with an explicit "no confirmation", never with an arm/disarm state.
+    if (s_secPending && (millis() - s_secPendingSinceMs) > SEC_PENDING_TIMEOUT_MS) {
+        s_secPending = false;
+        if (s_secStatusLbl) {
+            lv_label_set_text(s_secStatusLbl, "No confirmation received");
+            lv_obj_set_style_text_color(s_secStatusLbl, lv_color_hex(C_RED), 0);
+        }
+    }
+    // Local exit/entry-delay countdown between driver pushes (ticks once a second
+    // off this same timer; resynced to DELAY_TIME_REMAINING on every real secstate).
+    if (s_secDelayLeft >= 0 && (millis() - s_secDelayTickMs) >= 1000) {
+        s_secDelayTickMs += 1000;
+        if (s_secDelayLeft > 0) s_secDelayLeft--;
+        if (s_secPanel && !lv_obj_has_flag(s_secPanel, LV_OBJ_FLAG_HIDDEN)) secRebuild();
+    }
 
     uint16_t ss = g_settings.screensaver_sec;
     static int applied = -1;   // last backlight % pushed; -1 = none yet

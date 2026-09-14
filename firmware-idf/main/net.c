@@ -190,6 +190,25 @@ void net_ping(void)
     send_obj(o);
 }
 
+// The PIN rides in the JSON payload (same as every other field here) but is
+// deliberately never logged: no ESP_LOGx anywhere in this file touches `pin`.
+void net_security_arm(const char *arm_type, const char *pin, bool bypass)
+{
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "t", "secarm");
+    cJSON_AddStringToObject(o, "armType", arm_type && arm_type[0] ? arm_type : "Away");
+    cJSON_AddStringToObject(o, "pin", pin ? pin : "");
+    cJSON_AddBoolToObject(o, "bypass", bypass);
+    send_obj(o);
+}
+void net_security_disarm(const char *pin)
+{
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "t", "secdisarm");
+    cJSON_AddStringToObject(o, "pin", pin ? pin : "");
+    send_obj(o);
+}
+
 // ── Offline relay client ────────────────────────────────────────────────────
 // A panel on an isolated network can be licensed (the driver fetches that for it)
 static void send_hello(void)
@@ -625,6 +644,39 @@ static void handle_line(const char *line)
         }
         net_report_halo();   // always -- a driver that just reconnected needs the reply even when nothing changed
 #endif
+    } else if (!strcmp(ts, "secstate")) {
+        // Driver-pushed security partition state (PROTOCOL.md). `available` false
+        // means this keypad's SECURITY connection isn't bound to a partition -- the
+        // UI feature-detects on this and hides the Security tile/page entirely,
+        // same idea as ic_available() for the intercom.
+        security_state_t sec;
+        memset(&sec, 0, sizeof(sec));
+        sec.available = get_bool(d, "available", false);
+        const cJSON *p = cJSON_GetObjectItem(d, "partition");
+        if (sec.available && cJSON_IsObject(p)) {
+            get_str(p, "state",   sec.state,   sizeof(sec.state));
+            get_str(p, "display", sec.display, sizeof(sec.display));
+            get_str(p, "trouble", sec.trouble, sizeof(sec.trouble));
+            sec.open_zones      = get_int(p, "openZones", 0);
+            sec.delay_total     = get_int(p, "delayTotal", 0);
+            sec.delay_remaining = get_int(p, "delayRemaining", 0);
+            get_str(p, "alarmType",   sec.alarm_type,   sizeof(sec.alarm_type));
+            get_str(p, "armedType",   sec.armed_type,   sizeof(sec.armed_type));
+            get_str(p, "lastFaulted", sec.last_faulted, sizeof(sec.last_faulted));
+        } else {
+            sec.available = false;
+        }
+        if (s_cb.on_security) s_cb.on_security(&sec);
+    } else if (!strcmp(ts, "secresult")) {
+        // Delivery confirmation for a secarm/secdisarm request -- NOT proof the
+        // partition actually changed state (see security_result_t in net.h). The UI
+        // must keep showing "sending"/pending until a `secstate` confirms it.
+        security_result_t res;
+        memset(&res, 0, sizeof(res));
+        res.ok = get_bool(d, "ok", false);
+        get_str(d, "action", res.action, sizeof(res.action));
+        get_str(d, "error",  res.error,  sizeof(res.error));
+        if (s_cb.on_security_result) s_cb.on_security_result(&res);
     } else if (!strcmp(ts, "audiotest")) {
         // Bring-up/field diagnostic: run the audio self-test (chime + tone, mic
         // capture w/ level report, mic->speaker loopback). See audio_selftest_async.

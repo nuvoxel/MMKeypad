@@ -559,6 +559,27 @@
       <consumer>False</consumer>
       <classes><class><classname>MMKEYPAD_INTERCOM</classname></class></classes>
     </connection>
+    <!-- Security partition CONSUMER binding (Security panel page, issue #2): the
+         installer binds this to a Control4 SECURITY partition proxy elsewhere in
+         the project (a security-panel driver's partition sub-proxy, e.g. the
+         "Home"/"Office" partitions on a live IQPanel2/DSC/Honeywell integration).
+         type=2 (PROXY) mirrors the keypad connection above; consumer=True is the
+         difference — THIS driver binds outward to consume another proxy rather
+         than provide one. Left unbound, driver.lua's SECURITY_BINDING never sees
+         OnBindingChanged and the device is told `available:false`, hiding the
+         Security tile/page entirely (see ui.c sec_available()).
+
+         One partition per keypad instance for v1 — a multi-partition picker
+         (issue #2 "Open questions") is future work; a house with several
+         partitions needs one keypad instance's worth of Security UI bound per
+         partition, same as one room per driver instance today. -->
+    <connection>
+      <id>5010</id>
+      <type>2</type>
+      <connectionname>Security Partition</connectionname>
+      <consumer>True</consumer>
+      <classes><class><classname>SECURITY</classname></class></classes>
+    </connection>
     <!-- Network binding the installer associates with the SDDP-discovered MMKeypad
          on the Connections page. The DRIVER connects OUT to the device (which is a
          TCP server on this port). auto_connect=True so Director dials it on bind. -->
