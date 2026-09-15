@@ -282,6 +282,8 @@ static int       s_nFavs;
 // bound Composer connection -- see driver.lua BuildSecurityList.
 static lv_obj_t *s_secPanel, *s_secTitleLbl, *s_secStateLbl, *s_secSubLbl, *s_secTroubleLbl, *s_secStatusLbl;
 static lv_obj_t *s_secBypassBtn, *s_secBypassLbl;
+static lv_obj_t *s_secHero, *s_secHeroIcon;   // hero circle (ring + lock glyph) -- the Navigator app's own
+                                               // Security page look, see secSetHero()
 static lv_obj_t *s_secPickerPanel, *s_secPickerList;   // list page (partition rows), only built/shown when s_sec.n > 1
 static security_state_t s_sec;
 static bool      s_secAvailable;   // s_sec.available, mirrored so a rebuild can gate on it before any secstate ever arrives
@@ -2109,6 +2111,22 @@ static bool secIsArmed(const partition_t *p) {
            strncmp(p->state, "DISARMED", 8) != 0 && !secInDelay(p);
 }
 
+// The Navigator app's own Security page centers a big circular status icon (an
+// open or closed padlock inside a colored ring) above the state text -- ours was
+// text-only. secRebuild() calls this with the same tri-state read as the home
+// tile's badge (see build_home_tiles' old tileCard call): alarm beats armed beats
+// delay beats disarmed-ready.
+static void secSetHero(const partition_t *p)
+{
+    if (!s_secHero || !s_secHeroIcon) return;
+    bool alarm = secInAlarm(p), delay = secInDelay(p), armed = secIsArmed(p);
+    uint32_t ring = alarm ? C_RED : armed ? C_RED : delay ? 0xFFD166 : C_GREEN;
+    bool locked = alarm || armed || delay;
+    lv_obj_set_style_border_color(s_secHero, lv_color_hex(ring), 0);
+    lv_label_set_text(s_secHeroIcon, iconGlyph(locked ? "Lock" : "Unlock"));
+    lv_obj_set_style_text_color(s_secHeroIcon, lv_color_hex(ring), 0);
+}
+
 // One line of feedback for an in-flight secarm/secdisarm -- NEVER the big state
 // label above it. That label only ever mirrors the partition's driver-confirmed
 // state, so this function can say "sending" or "failed" or "no confirmation"
@@ -2146,6 +2164,7 @@ static void secRebuild(void)
     if (!p) { onSecDetailBack(NULL); return; }
 
     if (s_secTitleLbl) lv_label_set_text(s_secTitleLbl, (s_sec.n > 1 && p->title[0]) ? p->title : "");
+    secSetHero(p);
 
     char stbuf[32];
     lv_label_set_text(s_secStateLbl, secStateLabel(p->state, stbuf, sizeof(stbuf)));
@@ -2326,10 +2345,38 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_label_set_text(s_secTitleLbl, "");
     lv_obj_align(s_secTitleLbl, LV_ALIGN_TOP_MID, 0, top - (int)(24 * s));
 
+    // Hero circle: the Navigator app's own Security page centers a big circular
+    // status icon (an open/closed padlock inside a colored ring) above the state
+    // text -- ours was text-only. secSetHero() (called from secRebuild) drives
+    // the ring color and lock/unlock glyph from the same tri-state read the home
+    // tile's badge uses.
+    const int heroD = smallP ? (int)(100 * s) : (int)(150 * s);
+    s_secHero = lv_obj_create(s_secPanel);
+    lv_obj_remove_style_all(s_secHero);
+    lv_obj_set_size(s_secHero, heroD, heroD);
+    lv_obj_clear_flag(s_secHero, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(s_secHero, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_radius(s_secHero, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_secHero, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_secHero, LV_OPA_30, 0);
+    lv_obj_set_style_border_width(s_secHero, (int)(6 * s) < 4 ? 4 : (int)(6 * s), 0);
+    lv_obj_set_style_border_color(s_secHero, lv_color_hex(C_GREEN), 0);
+    lv_obj_align(s_secHero, LV_ALIGN_TOP_MID, 0, top);
+    s_secHeroIcon = lv_label_create(s_secHero);
+    // FICON (24px), not FICONL: the 34px icon set only carries the three transport
+    // glyphs (play/pause/stop) -- Lock/Unlock rendered as missing-glyph boxes
+    // there (confirmed in the sim). Scaled up via transform since there's no
+    // larger bitmap asset, same approach as x4PageHeader's heading bump.
+    lv_obj_set_style_text_font(s_secHeroIcon, FICON, 0);
+    lv_obj_set_style_text_color(s_secHeroIcon, lv_color_hex(C_GREEN), 0);
+    lv_label_set_text(s_secHeroIcon, iconGlyph("Unlock"));
+    lv_obj_set_style_transform_scale(s_secHeroIcon, (int)(256 * 2.2f), 0);
+    lv_obj_center(s_secHeroIcon);
+
     s_secStateLbl = lv_label_create(s_secPanel);
     lv_obj_set_style_text_font(s_secStateLbl, F32, 0);
     lv_label_set_text(s_secStateLbl, "Unknown");
-    lv_obj_align(s_secStateLbl, LV_ALIGN_TOP_MID, 0, top);
+    lv_obj_align_to(s_secStateLbl, s_secHero, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(14 * s));
 
     s_secSubLbl = lv_label_create(s_secPanel);
     lv_obj_set_style_text_font(s_secSubLbl, F16, 0);
@@ -2344,14 +2391,16 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_obj_align_to(s_secTroubleLbl, s_secSubLbl, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(6 * s));
     lv_obj_add_flag(s_secTroubleLbl, LV_OBJ_FLAG_HIDDEN);
 
+    // Buttons chain off the trouble label's own box (hidden-but-laid-out, same as
+    // before) rather than a fixed top+N offset, so the hero circle above can
+    // change size (smallP) without the button row drifting into or away from it.
     const int bw = (int)(200 * s), bh = (int)(64 * s), bgap = (int)(16 * s);
-    const int by = top + (int)(140 * s);
     lv_obj_t *armHome = lv_button_create(s_secPanel);
     lv_obj_set_size(armHome, bw, bh);
     lv_obj_set_style_bg_color(armHome, lv_color_hex(0x2A2E37), 0);
     lv_obj_set_style_radius(armHome, (int)(14 * s), 0);
     lv_obj_add_event_cb(armHome, onSecArmHome, LV_EVENT_CLICKED, NULL);
-    lv_obj_align(armHome, LV_ALIGN_TOP_MID, -(bw + bgap) / 2, by);
+    lv_obj_align_to(armHome, s_secTroubleLbl, LV_ALIGN_OUT_BOTTOM_MID, -(bw + bgap) / 2, (int)(24 * s));
     { lv_obj_t *l = lv_label_create(armHome); lv_obj_set_style_text_font(l, F16, 0);
       lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Arm Home"); lv_obj_center(l); }
 
@@ -2360,7 +2409,7 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_obj_set_style_bg_color(armAway, lv_color_hex(0x2A2E37), 0);
     lv_obj_set_style_radius(armAway, (int)(14 * s), 0);
     lv_obj_add_event_cb(armAway, onSecArmAway, LV_EVENT_CLICKED, NULL);
-    lv_obj_align(armAway, LV_ALIGN_TOP_MID, (bw + bgap) / 2, by);
+    lv_obj_align_to(armAway, s_secTroubleLbl, LV_ALIGN_OUT_BOTTOM_MID, (bw + bgap) / 2, (int)(24 * s));
     { lv_obj_t *l = lv_label_create(armAway); lv_obj_set_style_text_font(l, F16, 0);
       lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Arm Away"); lv_obj_center(l); }
 
@@ -2370,7 +2419,7 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_obj_set_style_bg_opa(disarm, LV_OPA_30, 0);
     lv_obj_set_style_radius(disarm, (int)(14 * s), 0);
     lv_obj_add_event_cb(disarm, onSecDisarm, LV_EVENT_CLICKED, NULL);
-    lv_obj_align(disarm, LV_ALIGN_TOP_MID, 0, by + bh + bgap);
+    lv_obj_align_to(disarm, armHome, LV_ALIGN_OUT_BOTTOM_MID, bw / 2 + bgap / 2, bgap);
     { lv_obj_t *l = lv_label_create(disarm); lv_obj_set_style_text_font(l, F16, 0);
       lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Disarm"); lv_obj_center(l); }
 
@@ -2381,7 +2430,7 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_obj_remove_style_all(s_secBypassBtn);
     lv_obj_set_size(s_secBypassBtn, 2 * bw + bgap, (int)(40 * s));
     lv_obj_add_event_cb(s_secBypassBtn, onSecBypassToggle, LV_EVENT_CLICKED, NULL);
-    lv_obj_align(s_secBypassBtn, LV_ALIGN_TOP_MID, 0, by + 2 * (bh + bgap));
+    lv_obj_align_to(s_secBypassBtn, disarm, LV_ALIGN_OUT_BOTTOM_MID, 0, bgap);
     lv_obj_add_flag(s_secBypassBtn, LV_OBJ_FLAG_HIDDEN);
     s_secBypassLbl = lv_label_create(s_secBypassBtn);
     lv_obj_set_style_text_font(s_secBypassLbl, F14, 0);
