@@ -33,6 +33,8 @@
  *                         room 2434 "Office" shape (2026-09-14)
  *     MMK_SEC_PANEL=1     open the Security page instead of home (picker if
  *                         MMK_SEC=2, else straight to the single partition)
+ *     MMK_NOWPLAYING=1    expand the now-playing card (same as tapping the
+ *                         mini-player bar / Listen chip)
  *     MMK_SETPAGE=<n>     which Settings page (0 grid, 1 display, 2 sound,
  *                         3 network, 4 diagnostics, 5 about)
  *     MMK_CALLPEER=<name> who is calling (default "Front Door")
@@ -327,6 +329,9 @@ int main(int argc, char **argv)
      * exercises the same "skip the picker for the common case" logic homeSecurity
      * itself uses, without simulating a touch event. */
     if (env_int("MMK_SEC_PANEL", 0)) ui_show_security_panel();
+    /* MMK_NOWPLAYING=1 expands the now-playing card over home, the same way
+     * tapping the mini-player bar / Listen chip does. */
+    if (env_int("MMK_NOWPLAYING", 0)) ui_show_now_playing();
     /* Settings lives on lv_layer_top() like setup/call, so it needs the same
      * snapshot root -- off the active screen it renders invisibly. */
     const bool settings_scene = env_int("MMK_SETTINGS", 0) != 0;

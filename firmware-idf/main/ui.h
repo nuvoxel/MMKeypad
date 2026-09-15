@@ -23,6 +23,7 @@ void ui_call(const char *event, const char *peer);
 // intercom_target_t is defined in net.h.
 void ui_set_endpoints(const intercom_target_t *eps, int n);
 void ui_set_rooms(const room_t *rooms, int n);
+void ui_show_now_playing(void);   // expand the now-playing card (sim/preview + programmatic)
 void ui_show_rooms_panel(void);   // open the add-rooms panel (sim/preview + programmatic)
 void ui_show_intercom_panel(void);   // open the intercom target picker (sim/preview)
 void ui_show_settings_panel(int page);  // open Settings (sim/preview); 0 = the tile grid

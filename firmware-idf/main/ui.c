@@ -1238,7 +1238,9 @@ static void onCheckFirmware(lv_event_t *e) {
     lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(hdr, (int)(10 * s_uiscale), 0);
     {
-        int bsz = (s_uiscale < 0.99f) ? 30 : (int)(30 * s_uiscale);
+        // Matches the home page's own top-bar icons/gear (topGlyphBtn, 25% bumped
+        // to 42/50*s) -- this was a visibly smaller leftover from before that bump.
+        int bsz = (s_uiscale < 0.99f) ? 42 : (int)(50 * s_uiscale);
         lv_obj_t *back = iconBtnImg(hdr, ICON_BACK, bsz, C_BTN, LV_OPA_COVER, 0xFFFFFF,
                                     onFwuClose, NULL);
         if (back) lv_obj_set_ext_click_area(back, (int)(12 * s_uiscale));
@@ -1560,7 +1562,9 @@ static void ui_show_settings(void) {
     lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(hdr, (int)(10 * s_uiscale), 0);
     {
-        int bsz = (s_uiscale < 0.99f) ? 30 : (int)(30 * s_uiscale);
+        // Matches the home page's own top-bar icons/gear (topGlyphBtn, 25% bumped
+        // to 42/50*s) -- this was a visibly smaller leftover from before that bump.
+        int bsz = (s_uiscale < 0.99f) ? 42 : (int)(50 * s_uiscale);
         lv_obj_t *back = iconBtnImg(hdr, ICON_BACK, bsz, C_BTN, LV_OPA_COVER, 0xFFFFFF,
                                     onSettingsBack, NULL);
         // Touch target beyond the drawn circle -- cheap insurance on the smaller panels.
@@ -1925,6 +1929,7 @@ static void showHome(void)
     s_homeAtHome = true;  if (s_home) lv_obj_clear_flag(s_home, LV_OBJ_FLAG_HIDDEN);
 }
 static void expandListen(lv_event_t *e) { (void)e; s_homeAtHome = false; if (s_home) lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); npShowRight(0); }
+void ui_show_now_playing(void) { expandListen(NULL); }   // sim/preview + programmatic
 // Open the keypad / intercom as a full card over home (X4): hide home, reveal the
 // panel on top. Each panel has a back chevron (onKpHome/onIcHome) to return home.
 static void homeIntercom(lv_event_t *e)
@@ -2887,7 +2892,15 @@ static void buildComfortPage(lv_obj_t *scr, int W, int H, bool smallP)
     } else {
         x4PageHeader(s_cmfDetail, "Thermostat", onCmfDetailBack);
     }
-    const int dTop = smallP ? 50 : (int)(120 * s);
+    // H (not smallP, a WIDTH-derived flag) decides whether this page's vertical
+    // stack fits -- same "compact" idea and same real bug as buildSecurityPage's
+    // hero circle: the office WS43 runs 800x480 LANDSCAPE (smallP=false, plenty
+    // wide, only 480px tall), and this page's dial rows + mode picker, sized for
+    // the >=700px-tall layouts they were tested against, pushed the mode picker
+    // off the bottom of a 480px screen entirely (confirmed in the sim after the
+    // fact -- again, what should have been checked before flashing).
+    const bool compact = !smallP && H < 700;
+    const int dTop = smallP ? 50 : compact ? 20 : (int)(120 * s);
     s_cmfDetailTitle = lv_label_create(s_cmfDetail);
     lv_obj_set_style_text_font(s_cmfDetailTitle, F24, 0);
     lv_obj_set_style_text_color(s_cmfDetailTitle, lv_color_hex(C_SUBTLE), 0);
@@ -2931,20 +2944,20 @@ static void buildComfortPage(lv_obj_t *scr, int W, int H, bool smallP)
     // so a `dTop + K*s` offset undershoots the title+temp+fan block's real height.
     // Chaining sidesteps the mismatch entirely: each row starts where the block
     // above it actually ends, on any panel.
-    const int gap    = (int)(28 * s) > 12 ? (int)(28 * s) : 12;   // floor so small panels don't crowd
+    const int gap    = compact ? 8 : (int)(28 * s) > 12 ? (int)(28 * s) : 12;   // floor so small panels don't crowd
     // Floored, not just scaled: at s=0.5 (240x320) a bare 48*s=24px row is shorter
     // than the F24 setpoint label it has to hold (confirmed live in the sim -- the
     // label overflowed its row and clashed with the "Heat"/"Cool" tag above it), and
     // 24px is under any reasonable touch target besides.
-    const int btnSz  = (int)(48 * s) > 44 ? (int)(48 * s) : 44;
+    const int btnSz  = compact ? 36 : (int)(48 * s) > 44 ? (int)(48 * s) : 44;
     // The Navigator app's own thermostat page centers a big circular dial (ring +
     // setpoint number), not a bare number between two buttons -- ringD is that
     // dial's diameter, and the row now has to be wide enough for [-] ring [+].
-    const int ringD  = (int)(96 * s) > 76 ? (int)(96 * s) : 76;
-    const int rowGap = (int)(14 * s) > 10 ? (int)(14 * s) : 10;
+    const int ringD  = compact ? 64 : (int)(96 * s) > 76 ? (int)(96 * s) : 76;
+    const int rowGap = compact ? 8 : (int)(14 * s) > 10 ? (int)(14 * s) : 10;
     const int rowW   = 2 * btnSz + ringD + 2 * rowGap;
     const int rowH   = ringD > btnSz ? ringD : btnSz;
-    const int tagY   = (int)(20 * s) > 16 ? (int)(20 * s) : 16;   // "Heat"/"Cool" tag's rise above its row
+    const int tagY   = compact ? 16 : (int)(20 * s) > 16 ? (int)(20 * s) : 16;   // "Heat"/"Cool" tag's rise above its row
 
     s_cmfHeatRow = lv_obj_create(s_cmfDetail);
     lv_obj_remove_style_all(s_cmfHeatRow);
@@ -3018,7 +3031,9 @@ static void buildComfortPage(lv_obj_t *scr, int W, int H, bool smallP)
     // by cmfDetailRebuild. Each is aligned off coolRow's own bottom edge (same
     // chaining reasoning as the setpoint rows above) with a per-button x offset.
     static const char *modeLabels[4] = { "Off", "Heat", "Cool", "Auto" };
-    const int mBw = (int)(90 * s), mBh = (int)(44 * s), mGap = (int)(10 * s);
+    const int mBw = compact ? 70 : (int)(90 * s);
+    const int mBh = compact ? 32 : (int)(44 * s);
+    const int mGap = compact ? 6 : (int)(10 * s);
     const int mX0 = -((4 * mBw + 3 * mGap) / 2) + mBw / 2;
     for (int i = 0; i < 4; i++) {
         lv_obj_t *b = lv_button_create(s_cmfDetail);
@@ -3990,7 +4005,9 @@ void ui_begin(void)
         // Chrome glyphs (back/info/volume) must not shrink with s_uiscale below a
         // readable floor — on the 240x320 a 38*0.5=19px glyph is illegible. smallP
         // pins them to fixed, finger-sized values instead.
-        lv_obj_t *npback = iconBtnImg(scr, ICON_BACK, smallP ? 30 : (int)(38 * s_uiscale), 0, LV_OPA_TRANSP, 0xFFFFFF, onHomeChevron, NULL);
+        // Matches the home page's own top-bar icons/gear (topGlyphBtn, 25% bumped
+        // to 42/50*s) -- this was a visibly smaller leftover from before that bump.
+        lv_obj_t *npback = iconBtnImg(scr, ICON_BACK, smallP ? 42 : (int)(50 * s_uiscale), 0, LV_OPA_TRANSP, 0xFFFFFF, onHomeChevron, NULL);
         lv_obj_set_pos(npback, x4M + (int)(6 * s_uiscale) + (smallP ? 4 : 0), x4M + (int)(6 * s_uiscale) + (smallP ? 4 : 0));
     }
     // x4V vertical-flow anchors (progress bar / time / transport center / volume):
@@ -4254,7 +4271,9 @@ void ui_begin(void)
             lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                                   LV_FLEX_ALIGN_CENTER);
             lv_obj_set_style_pad_column(hdr, (int)(10 * s), 0);
-            int bsz = (s < 0.99f) ? 30 : (int)(30 * s);
+            // Matches the home page's own top-bar icons/gear (topGlyphBtn, 25% bumped
+            // to 42/50*s) -- this was a visibly smaller leftover from before that bump.
+            int bsz = (s < 0.99f) ? 42 : (int)(50 * s);
             iconBtnImg(hdr, ICON_BACK, bsz, C_BTN, LV_OPA_COVER, 0xFFFFFF, onRoomsClose, NULL);
             lv_obj_t *ht = lv_label_create(hdr);
             lv_label_set_text(ht, "Rooms");
