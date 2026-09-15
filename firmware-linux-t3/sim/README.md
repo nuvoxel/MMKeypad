@@ -6,16 +6,24 @@ layout across every panel size/orientation before building firmware.
 
 ```sh
 cd firmware-linux-t3/sim
-./render.sh            # builds + renders the 4 canonical panels into shots/
+./render.sh            # builds + renders the 5 canonical panels into shots/
 open shots/            # (macOS) eyeball them
 ```
 
-`render.sh` emits one PNG per layout "flavor" `ui.c` picks by resolution:
+`render.sh` emits one PNG per layout "flavor" `ui.c` picks by resolution. Flavor
+follows ORIENTATION, not board identity -- the WS43's "Screen Rotation" driver
+property makes both of its rows real, deployed configs (the office install
+runs landscape), not "one canonical layout plus a hypothetical rotation." A
+hero-circle layout that overflowed a 480px-tall screen shipped to that exact
+panel unnoticed because this table used to test WS43 portrait only -- always
+render every orientation a board can actually be set to, not just the one it
+happened to be tested in.
 
 | file                    | logical size | ui.c flavor | real panel            |
 | ----------------------- | ------------ | ----------- | --------------------- |
 | `shots/nano-landscape`  | 1280×800     | `x4L`       | P4 nano 10.1"         |
 | `shots/ws43-portrait`   | 480×800      | `x4P`       | Waveshare 4.3"        |
+| `shots/ws43-landscape`  | 800×480      | `x4L`       | Waveshare 4.3" (rot)  |
 | `shots/s3-landscape`    | 320×240      | `x4Ls`      | lcdwiki 2.8" (rot)    |
 | `shots/s3-portrait`     | 240×320      | `smallP`    | lcdwiki 2.8"          |
 

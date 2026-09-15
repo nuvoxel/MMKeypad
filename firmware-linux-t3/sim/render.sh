@@ -15,6 +15,12 @@ panels=(
   "s3-landscape    320   240"   # lcdwiki 2.8\" rotated  -> flavor x4Ls
   "s3-portrait     240   320"   #                        -> flavor smallP
   "ws43-portrait   480   800"   # Waveshare 4.3\"        -> flavor x4P
+  # ws43-landscape used to be missing from this table entirely -- the WS43's
+  # "Screen Rotation" driver property makes landscape a real, supported,
+  # DEPLOYED config (the office install runs this way), not a hypothetical
+  # one, and only testing portrait here is exactly how a hero-circle layout
+  # that overflowed a 480px-tall screen shipped to that panel unnoticed.
+  "ws43-landscape  800   480"   # Waveshare 4.3\" rotated -> flavor x4L, H=480
   "nano-landscape  1280  800"   # P4 nano 10\"           -> flavor x4L
 )
 
