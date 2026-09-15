@@ -354,8 +354,10 @@ static bool      s_cmfAvailable;   // s_cmf.available, mirrored so a rebuild can
 static bool      s_cmfHomeShown;   // home Comfort card is currently shown (ic_available()-style rebuild gate)
 static lv_obj_t *s_cmfPanel, *s_cmfList;             // list page (thermostat rows)
 static lv_obj_t *s_cmfDetail;                        // detail page (one thermostat)
-static lv_obj_t *s_cmfDetailTitle, *s_cmfDetailTemp, *s_cmfDetailFan;
-static lv_obj_t *s_cmfHeatRow, *s_cmfHeatLbl, *s_cmfCoolRow, *s_cmfCoolLbl;
+static lv_obj_t *s_cmfDetailTitle, *s_cmfDetailTempIcon, *s_cmfDetailTemp, *s_cmfDetailFan;
+// Each row is now a dial: [-] (ring w/ big setpoint number) [+], the Navigator
+// app's own circular-thermostat look, not a plain number between two buttons.
+static lv_obj_t *s_cmfHeatRow, *s_cmfHeatRing, *s_cmfHeatLbl, *s_cmfCoolRow, *s_cmfCoolRing, *s_cmfCoolLbl;
 static lv_obj_t *s_cmfModeBtns[4], *s_cmfModeLbls[4];   // off/heat/cool/auto
 static int       s_cmfDetailId = -1;   // comfort_t.id currently shown on the detail page, -1 = none
 // A tapped +/-/mode button shows "..." in place of the number/highlight until the
@@ -2683,13 +2685,21 @@ static void cmfDetailRebuild(void)
     // PENDING (a comfortcmd is in flight for THIS thermostat): show "..." rather
     // than the last-confirmed number, and don't highlight any mode pill as current
     // -- the honest "we don't know yet" state, not an optimistic guess (see the
-    // s_cmfPending declaration comment above).
+    // s_cmfPending declaration comment above). The ring itself dims to LV_OPA_40
+    // when its setpoint isn't the one actually driving the equipment right now
+    // (has_heat/has_cool report a CONFIGURED setpoint, not "currently heating" --
+    // a unit can carry both while mode is "off") -- same idea as the mode pill
+    // highlight just below, applied to the dial instead of a label.
+    bool heatActive = !strcmp(c->mode, "heat") || !strcmp(c->mode, "auto");
+    bool coolActive = !strcmp(c->mode, "cool") || !strcmp(c->mode, "auto");
     if (s_cmfHeatRow) setVis(s_cmfHeatRow, c->has_heat);
+    if (s_cmfHeatRing) lv_obj_set_style_border_opa(s_cmfHeatRing, heatActive ? LV_OPA_COVER : LV_OPA_40, 0);
     if (s_cmfHeatLbl) {
         if (s_cmfPending) lv_label_set_text(s_cmfHeatLbl, "...");
         else { char b[16]; snprintf(b, sizeof(b), "%d\xC2\xB0%s", c->heat, c->scale); lv_label_set_text(s_cmfHeatLbl, b); }
     }
     if (s_cmfCoolRow) setVis(s_cmfCoolRow, c->has_cool);
+    if (s_cmfCoolRing) lv_obj_set_style_border_opa(s_cmfCoolRing, coolActive ? LV_OPA_COVER : LV_OPA_40, 0);
     if (s_cmfCoolLbl) {
         if (s_cmfPending) lv_label_set_text(s_cmfCoolLbl, "...");
         else { char b[16]; snprintf(b, sizeof(b), "%d\xC2\xB0%s", c->cool, c->scale); lv_label_set_text(s_cmfCoolLbl, b); }
@@ -2860,11 +2870,25 @@ static void buildComfortPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_label_set_text(s_cmfDetailTitle, "");
     lv_obj_align(s_cmfDetailTitle, LV_ALIGN_TOP_MID, 0, dTop);
 
-    s_cmfDetailTemp = lv_label_create(s_cmfDetail);
+    // Current-temp readout: the Navigator app's own thermostat page pairs this
+    // with a small gauge icon rather than showing it bare -- reused "Climate"
+    // (the same glyph the Comfort tile/list already use) rather than adding a
+    // new one.
+    lv_obj_t *tempRow = lv_obj_create(s_cmfDetail);
+    lv_obj_remove_style_all(tempRow);
+    lv_obj_set_size(tempRow, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_clear_flag(tempRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align_to(tempRow, s_cmfDetailTitle, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(8 * s));
+    s_cmfDetailTempIcon = lv_label_create(tempRow);
+    lv_obj_set_style_text_font(s_cmfDetailTempIcon, FICON, 0);
+    lv_obj_set_style_text_color(s_cmfDetailTempIcon, lv_color_hex(C_SUBTLE), 0);
+    lv_label_set_text(s_cmfDetailTempIcon, iconGlyph("Climate"));
+    lv_obj_align(s_cmfDetailTempIcon, LV_ALIGN_LEFT_MID, 0, 0);
+    s_cmfDetailTemp = lv_label_create(tempRow);
     lv_obj_set_style_text_font(s_cmfDetailTemp, F32, 0);
     lv_obj_set_style_text_color(s_cmfDetailTemp, lv_color_hex(C_TEXT), 0);
     lv_label_set_text(s_cmfDetailTemp, "--");
-    lv_obj_align_to(s_cmfDetailTemp, s_cmfDetailTitle, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(8 * s));
+    lv_obj_align_to(s_cmfDetailTemp, s_cmfDetailTempIcon, LV_ALIGN_OUT_RIGHT_MID, (int)(8 * s), 0);
 
     s_cmfDetailFan = lv_label_create(s_cmfDetail);
     lv_obj_set_style_text_font(s_cmfDetailFan, F14, 0);
@@ -2889,12 +2913,18 @@ static void buildComfortPage(lv_obj_t *scr, int W, int H, bool smallP)
     // label overflowed its row and clashed with the "Heat"/"Cool" tag above it), and
     // 24px is under any reasonable touch target besides.
     const int btnSz  = (int)(48 * s) > 44 ? (int)(48 * s) : 44;
-    const int rowW   = (int)(260 * s) > 200 ? (int)(260 * s) : 200;
+    // The Navigator app's own thermostat page centers a big circular dial (ring +
+    // setpoint number), not a bare number between two buttons -- ringD is that
+    // dial's diameter, and the row now has to be wide enough for [-] ring [+].
+    const int ringD  = (int)(96 * s) > 76 ? (int)(96 * s) : 76;
+    const int rowGap = (int)(14 * s) > 10 ? (int)(14 * s) : 10;
+    const int rowW   = 2 * btnSz + ringD + 2 * rowGap;
+    const int rowH   = ringD > btnSz ? ringD : btnSz;
     const int tagY   = (int)(20 * s) > 16 ? (int)(20 * s) : 16;   // "Heat"/"Cool" tag's rise above its row
 
     s_cmfHeatRow = lv_obj_create(s_cmfDetail);
     lv_obj_remove_style_all(s_cmfHeatRow);
-    lv_obj_set_size(s_cmfHeatRow, rowW, btnSz);
+    lv_obj_set_size(s_cmfHeatRow, rowW, rowH);
     lv_obj_align_to(s_cmfHeatRow, s_cmfDetailFan, LV_ALIGN_OUT_BOTTOM_MID, 0, gap + (int)(20 * s));
     lv_obj_clear_flag(s_cmfHeatRow, LV_OBJ_FLAG_SCROLLABLE);
     {
@@ -2905,7 +2935,20 @@ static void buildComfortPage(lv_obj_t *scr, int W, int H, bool smallP)
         lv_obj_align(tag, LV_ALIGN_TOP_MID, 0, -tagY);
         lv_obj_t *dec = cmfRoundBtn(s_cmfHeatRow, "-", onCmfHeatDec, btnSz);
         lv_obj_align(dec, LV_ALIGN_LEFT_MID, 0, 0);
-        s_cmfHeatLbl = lv_label_create(s_cmfHeatRow);
+        // Warm orange ring -- distinct from Cool's blue below, same idea as the
+        // Security hero's green/red.
+        s_cmfHeatRing = lv_obj_create(s_cmfHeatRow);
+        lv_obj_remove_style_all(s_cmfHeatRing);
+        lv_obj_set_size(s_cmfHeatRing, ringD, ringD);
+        lv_obj_clear_flag(s_cmfHeatRing, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(s_cmfHeatRing, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_radius(s_cmfHeatRing, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(s_cmfHeatRing, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(s_cmfHeatRing, LV_OPA_30, 0);
+        lv_obj_set_style_border_width(s_cmfHeatRing, (int)(4 * s) < 3 ? 3 : (int)(4 * s), 0);
+        lv_obj_set_style_border_color(s_cmfHeatRing, lv_color_hex(0xFF8A3D), 0);
+        lv_obj_center(s_cmfHeatRing);
+        s_cmfHeatLbl = lv_label_create(s_cmfHeatRing);
         lv_obj_set_style_text_font(s_cmfHeatLbl, F24, 0);
         lv_obj_set_style_text_color(s_cmfHeatLbl, lv_color_hex(C_TEXT), 0);
         lv_label_set_text(s_cmfHeatLbl, "--");
@@ -2916,7 +2959,7 @@ static void buildComfortPage(lv_obj_t *scr, int W, int H, bool smallP)
 
     s_cmfCoolRow = lv_obj_create(s_cmfDetail);
     lv_obj_remove_style_all(s_cmfCoolRow);
-    lv_obj_set_size(s_cmfCoolRow, rowW, btnSz);
+    lv_obj_set_size(s_cmfCoolRow, rowW, rowH);
     lv_obj_align_to(s_cmfCoolRow, s_cmfHeatRow, LV_ALIGN_OUT_BOTTOM_MID, 0, gap);
     lv_obj_clear_flag(s_cmfCoolRow, LV_OBJ_FLAG_SCROLLABLE);
     {
@@ -2927,7 +2970,18 @@ static void buildComfortPage(lv_obj_t *scr, int W, int H, bool smallP)
         lv_obj_align(tag, LV_ALIGN_TOP_MID, 0, -tagY);
         lv_obj_t *dec = cmfRoundBtn(s_cmfCoolRow, "-", onCmfCoolDec, btnSz);
         lv_obj_align(dec, LV_ALIGN_LEFT_MID, 0, 0);
-        s_cmfCoolLbl = lv_label_create(s_cmfCoolRow);
+        s_cmfCoolRing = lv_obj_create(s_cmfCoolRow);
+        lv_obj_remove_style_all(s_cmfCoolRing);
+        lv_obj_set_size(s_cmfCoolRing, ringD, ringD);
+        lv_obj_clear_flag(s_cmfCoolRing, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(s_cmfCoolRing, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_radius(s_cmfCoolRing, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(s_cmfCoolRing, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(s_cmfCoolRing, LV_OPA_30, 0);
+        lv_obj_set_style_border_width(s_cmfCoolRing, (int)(4 * s) < 3 ? 3 : (int)(4 * s), 0);
+        lv_obj_set_style_border_color(s_cmfCoolRing, lv_color_hex(0x4CC9F0), 0);
+        lv_obj_center(s_cmfCoolRing);
+        s_cmfCoolLbl = lv_label_create(s_cmfCoolRing);
         lv_obj_set_style_text_font(s_cmfCoolLbl, F24, 0);
         lv_obj_set_style_text_color(s_cmfCoolLbl, lv_color_hex(C_TEXT), 0);
         lv_label_set_text(s_cmfCoolLbl, "--");
