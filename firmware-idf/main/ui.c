@@ -3298,14 +3298,17 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
         lv_obj_set_pos(room, m, (int)(30 * s));
         s_homeTitle = room;
     } else s_homeTitle = NULL;
-    // Settings: a three-dot menu in the TOP-RIGHT, level with the room title. This was
+    // Settings: a gear in the TOP-RIGHT, level with the room title. This was
     // a gear pinned bottom-right (with a star bottom-left for favourites) -- two pieces
-    // of floating chrome competing with the content. Top-right "more" is where the rest
+    // of floating chrome competing with the content. Top-right is where the rest
     // of the UI already puts a menu (the now-playing card), so this is consistent, and
-    // it frees the bottom of the page for real content.
+    // it frees the bottom of the page for real content. A three-dot "more" glyph read
+    // as a generic overflow menu; now that it sits alongside the Intercom/Security/
+    // Comfort launchers (topGlyphBtn(), same shape) it needs to read as SETTINGS
+    // specifically, so it uses the same gear glyph the Settings page's own
+    // Diagnostics tab uses (G_TOOLS / "Settings" in ICONS[]).
     { int gsz = smallP ? 42 : (int)(50 * s);   // 25% up from 34/40 -- more next to the room name
-      lv_obj_t *more = iconBtnImg(s_home, ICON_DOTS, gsz, 0x000000, LV_OPA_40,
-                                  0xFFFFFF, onSettingsOpen, NULL);
+      lv_obj_t *more = topGlyphBtn(s_home, "Settings", gsz, 0xFFFFFF, onSettingsOpen, NULL);
       lv_obj_align(more, LV_ALIGN_TOP_RIGHT, -(int)(12 * s), (int)(28 * s));
       lv_obj_set_ext_click_area(more, (int)(12 * s)); }
 
