@@ -569,6 +569,48 @@ static lv_obj_t *iconBtnImg(lv_obj_t *parent, const lv_image_dsc_t *img, int siz
     return b;
 }
 
+// Same shape as iconBtnImg(), but for the Lucide-font glyphs (iconGlyph()) that
+// have no HA/image asset of their own -- Security and Comfort both render this
+// way already on their tileCard rows. Used for the top-bar launcher row (see
+// build_home()): Intercom/Security/Comfort are menus, not favourites, so they
+// sit next to the room name instead of taking a tile-grid slot. dotOut, if
+// non-NULL, returns a small hidden status dot in the corner the caller can
+// reveal/recolor (Security's armed/alarm state).
+static lv_obj_t *topGlyphBtn(lv_obj_t *parent, const char *glyphName, int size,
+                              uint32_t iconColor, lv_event_cb_t cb, lv_obj_t **dotOut)
+{
+    lv_obj_t *b = lv_button_create(parent);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_size(b, size, size);
+    lv_obj_set_style_radius(b, size / 2, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_40, 0);
+    lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *ic = lv_label_create(b);
+    lv_obj_set_style_text_font(ic, FICON, 0);
+    lv_label_set_text(ic, iconGlyph(glyphName));
+    lv_obj_set_style_text_color(ic, lv_color_hex(iconColor), 0);
+    lv_obj_center(ic);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(b, size / 4);
+    if (dotOut) {
+        lv_obj_t *dot = lv_obj_create(b);
+        lv_obj_remove_style_all(dot);
+        int ds = size * 3 / 10;
+        lv_obj_set_size(dot, ds, ds);
+        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(dot, 2, 0);
+        lv_obj_set_style_border_color(dot, lv_color_hex(0x000000), 0);
+        lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_align(dot, LV_ALIGN_TOP_RIGHT, 2, -2);
+        lv_obj_add_flag(dot, LV_OBJ_FLAG_HIDDEN);
+        *dotOut = dot;
+    }
+    return b;
+}
+
 // Drop characters the built-in font can't render (no missing-glyph boxes).
 static void sanitize(const char *in, char *out, size_t outsz)
 {
@@ -3079,12 +3121,9 @@ static void build_home_tiles(int W, int H, bool smallP)
     const int gap = (int)(14 * s);
     const bool portrait = (H > W);
 
-    const bool icAvail = ic_available();
-    s_homeIcShown = icAvail;
-    const bool secAvail = sec_available();
-    s_secHomeShown = secAvail;
-    const bool cmfAvail = cmf_available();
-    s_cmfHomeShown = cmfAvail;
+    // Intercom/Security/Comfort are menu launchers, not favourites -- they live in
+    // the top bar now (see build_home()), not in this grid. Availability/*Shown
+    // bookkeeping happens there instead.
 
     int nfav = s_nFavs; if (nfav > HOME_MAX_FAV) nfav = HOME_MAX_FAV;
     int nbtn = s_haveButtons ? s_lastState.n_buttons : 0;
@@ -3109,7 +3148,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     // space on tile size instead of on gaps. tileCard sizes from cw/ch below, so
     // this is the only lever needed.
     {
-        int ntiles = (icAvail ? 1 : 0) + (secAvail ? 1 : 0) + (cmfAvail ? 1 : 0) + nfav + nbtn;
+        int ntiles = nfav + nbtn;
         if (ntiles > 0 && cols > ntiles) cols = ntiles;
         if (ntiles <= 2) cols = 1;
         else if (ntiles <= 4 && cols > 2) cols = 2;
@@ -3129,7 +3168,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     // take as many as fit (within touch limits), and stretch the tiles into the
     // remainder. It still snaps because a part-height row reads as broken rather
     // than as "there is more below".
-    const int ntot  = (icAvail ? 1 : 0) + (secAvail ? 1 : 0) + (cmfAvail ? 1 : 0) + nfav + nbtn;
+    const int ntot  = nfav + nbtn;
     const int need  = (ntot + cols - 1) / cols;
     // Prefer MORE ROWS over taller tiles: a proportional floor scaled to ~96px on
     // the 10", which rejected three 93px rows in favour of two 150px ones --
@@ -3142,7 +3181,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     // as small as on a crowded page -- the opposite of what a short list wants.
     // Raise the ceiling as the count falls, so the space goes into the tiles.
     {
-        int ntiles = (icAvail ? 1 : 0) + (secAvail ? 1 : 0) + (cmfAvail ? 1 : 0) + nfav + nbtn;
+        int ntiles = nfav + nbtn;
         if (ntiles <= 2)      chMax = (int)(180 * s);
         else if (ntiles <= 4) chMax = (int)(140 * s);
         else if (ntiles <= 6) chMax = (int)(110 * s);
@@ -3183,38 +3222,6 @@ static void build_home_tiles(int W, int H, bool smallP)
 
     const int gw = W - 2 * m - (int)(10 * s);            // usable width inside the grid
     const int cw = (gw - (cols - 1) * gap) / cols;
-
-    if (icAvail)
-        tileCard(grid, ICON_INTERCOM, "Bell", "Intercom", NULL, false, 0x4CC9F0,
-                 homeIntercom, NULL, cw, ch, NULL, NULL, NULL);
-
-    // "Security" is an existing Lucide glyph name (ICONS table above) -- no HA
-    // icon asset exists for it (icon_security has no icon_ha_security counterpart),
-    // so the image fallback param is effectively unreachable in either theme, same
-    // as ICON_INTERCOM's role for the "Bell" glyph tile just above.
-    if (secAvail) {
-        // Aggregate across every auto-discovered partition for this room (Office
-        // has two, live-confirmed) -- ANY armed/alarm partition drives the home
-        // tile's badge; the picker/detail pages are where a specific one's state
-        // is seen individually.
-        bool alarm = false, armed = false;
-        for (int i = 0; i < s_sec.n; i++) {
-            if (secInAlarm(&s_sec.list[i])) alarm = true;
-            if (secIsArmed(&s_sec.list[i])) armed = true;
-        }
-        armed = armed || alarm;
-        const char *sub = alarm ? "Alarm" : (armed ? "Armed" : NULL);
-        tileCard(grid, ICON_INTERCOM, "Security", "Security", sub, armed,
-                 alarm ? C_RED : 0x4CC9F0, homeSecurity, NULL, cw, ch, NULL, NULL, NULL);
-    }
-
-    // "Climate" is the same Lucide glyph the old per-room kind:"comfort" favorite
-    // used (see favDeviceGlyph, now light/shade/relay only) -- reused here rather
-    // than adding a new one, per the issue brief. No sub-line/on-state: unlike
-    // Security there's no single aggregate "armed" fact for N thermostats to show.
-    if (cmfAvail)
-        tileCard(grid, ICON_MEDIA, "Climate", "Comfort", NULL, false, 0x4CC9F0,
-                 homeComfort, NULL, cw, ch, NULL, NULL, NULL);
 
     // Favourites lead the content: with no browse on the panel they are the only
     // way to start music here.
@@ -3302,16 +3309,23 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
       lv_obj_align(more, LV_ALIGN_TOP_RIGHT, -(int)(12 * s), (int)(28 * s));
       lv_obj_set_ext_click_area(more, (int)(12 * s)); }
 
-    // Record intercom availability BEFORE any early-out below. ui_tick asks for a
-    // rebuild whenever ic_available() disagrees with this flag, and the
-    // not-connected path returns without ever building the tile grid -- which is
-    // where the flag used to be set. So a panel that was licensed for intercom and
-    // had lost its link requested a rebuild, rebuilt, skipped the assignment, and
-    // requested another. A live panel in the field had done this 4136 times,
-    // pinning its CPU so it could not answer SDDP or hold the link that would have
-    // cleared the condition. The flag must be updated on EVERY path that builds
-    // this page, not just the connected one.
-    s_homeIcShown = ic_available();
+    // Record Intercom/Security/Comfort availability BEFORE any early-out below.
+    // ui_tick asks for a rebuild whenever ic_available()/sec_available()/
+    // cmf_available() disagrees with these flags, and the not-connected path
+    // returns before the top-bar icons below are ever placed -- which is where
+    // the flags used to be set (inside build_home_tiles, reachable only from the
+    // connected path). So a panel that was licensed for intercom and had lost its
+    // link requested a rebuild, rebuilt, skipped the assignment, and requested
+    // another. A live panel in the field had done this 4136 times, pinning its
+    // CPU so it could not answer SDDP or hold the link that would have cleared
+    // the condition. The flags must be updated on EVERY path that builds this
+    // page, not just the connected one.
+    const bool icAvail  = ic_available();
+    const bool secAvail = sec_available();
+    const bool cmfAvail = cmf_available();
+    s_homeIcShown  = icAvail;
+    s_secHomeShown = secAvail;
+    s_cmfHomeShown = cmfAvail;
 
     // NOT CONNECTED: say so, instead of offering tiles that cannot do anything.
     // Every one of those actions is a round trip to the driver, so
@@ -3375,6 +3389,51 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
             lv_obj_set_style_text_font(l3, F16, 0);
         }
         goto home_chrome;   // skip the action cards + mini-player
+    }
+
+    // Intercom/Security/Comfort are menu launchers -- each opens its own list or
+    // detail page -- not favourites, so they no longer take a slot in the tile
+    // grid below. They land here instead, in the wide gap between the room name
+    // and the settings dots that a two- or three-tile room otherwise left as bare
+    // wallpaper. Right-to-left from the dots button, so reading left-to-right
+    // toward it lands on Intercom, Security, Comfort -- roughly rarest-to-most
+    // reached for, dots (settings) last.
+    if (icAvail || secAvail || cmfAvail) {
+        const int isz = smallP ? 34 : (int)(40 * s);
+        const int igap = (int)(10 * s);
+        const int iy = (int)(28 * s);
+        int xoff = -(int)(12 * s) - isz - igap;   // just left of the "more" dots button
+
+        if (cmfAvail) {
+            lv_obj_t *btn = topGlyphBtn(s_home, "Climate", isz, 0xFFFFFF, homeComfort, NULL);
+            lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, xoff, iy);
+            xoff -= isz + igap;
+        }
+        if (secAvail) {
+            // Same aggregate as the old tile: ANY auto-discovered partition armed or
+            // in alarm drives the badge (Office has two, live-confirmed); the
+            // picker/detail pages are where a specific partition's state is seen.
+            bool alarm = false, armed = false;
+            for (int i = 0; i < s_sec.n; i++) {
+                if (secInAlarm(&s_sec.list[i])) alarm = true;
+                if (secIsArmed(&s_sec.list[i])) armed = true;
+            }
+            armed = armed || alarm;
+            lv_obj_t *dot = NULL;
+            lv_obj_t *btn = topGlyphBtn(s_home, "Security", isz,
+                                        alarm ? C_RED : 0xFFFFFF, homeSecurity, &dot);
+            lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, xoff, iy);
+            if (dot && (armed || alarm)) {
+                lv_obj_set_style_bg_color(dot, lv_color_hex(alarm ? C_RED : 0x4CC9F0), 0);
+                lv_obj_clear_flag(dot, LV_OBJ_FLAG_HIDDEN);
+            }
+            xoff -= isz + igap;
+        }
+        if (icAvail) {
+            lv_obj_t *btn = topGlyphBtn(s_home, "Bell", isz, 0xFFFFFF, homeIntercom, NULL);
+            lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, xoff, iy);
+            xoff -= isz + igap;
+        }
     }
 
     build_home_tiles(W, H, smallP);
