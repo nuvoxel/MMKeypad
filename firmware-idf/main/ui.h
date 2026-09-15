@@ -30,10 +30,15 @@ void ui_show_settings_panel(int page);  // open Settings (sim/preview); 0 = the 
 void ui_set_favorites(const favorite_t *favs, int n);
 
 // Security partition page (driver-pushed `secstate`/`secresult`; security_state_t /
-// security_result_t are in net.h). ui_set_security(NULL-available) hides the tile.
+// security_result_t are in net.h). Partitions are auto-discovered per room
+// (GET_SECURITY_DEVICES, driver.lua BuildSecurityList) rather than a manual
+// Composer binding. ui_set_security(available:false) hides the tile.
 void ui_set_security(const security_state_t *sec);
 void ui_set_security_result(const security_result_t *res);
-void ui_show_security_panel(void);   // open the Security page (sim/preview + programmatic)
+void ui_show_security_panel(void);   // open the Security page (sim/preview + programmatic):
+                                      // the picker if this room has >1 partition, else its
+                                      // one detail page directly
+void ui_show_security_detail(int id); // open one partition's detail page (sim/preview only)
 
 // Comfort page (driver-pushed `comfortlist`; comfort_state_t is in net.h).
 // ui_set_comfort(available:false) hides the tile, same idea as ui_set_security.

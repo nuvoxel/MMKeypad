@@ -271,25 +271,34 @@ static favorite_t s_favs[NET_MAX_FAVORITES];
 static int       s_nFavs;
 
 // ── Security partition page ─────────────────────────────────────────────────
-// Full-screen page (same idiom as the intercom picker / favorites grid): state
+// Same list-then-detail idiom as the Comfort page below: a full-screen PICKER
+// (one row per auto-discovered partition, `s_secPickerPanel`/`s_secPickerList`)
+// when the room has more than one, else the detail page opens directly -- state
 // front and center, Arm Home / Arm Away / Disarm gated by a PIN pad, and an
 // aggregate zone line. Feature-detected the same way as intercom (ic_available()):
-// the tile/page exist only while s_secAvailable is true (this keypad's SECURITY
-// connection is bound to a partition), so an installation with no security system
-// never shows a broken affordance.
-static lv_obj_t *s_secPanel, *s_secStateLbl, *s_secSubLbl, *s_secTroubleLbl, *s_secStatusLbl;
+// the tile/page exist only while s_secAvailable is true (GET_SECURITY_DEVICES
+// found at least one real partition for this room), so an installation with no
+// security system never shows a broken affordance. Partitions are no longer a
+// bound Composer connection -- see driver.lua BuildSecurityList.
+static lv_obj_t *s_secPanel, *s_secTitleLbl, *s_secStateLbl, *s_secSubLbl, *s_secTroubleLbl, *s_secStatusLbl;
 static lv_obj_t *s_secBypassBtn, *s_secBypassLbl;
+static lv_obj_t *s_secPickerPanel, *s_secPickerList;   // list page (partition rows), only built/shown when s_sec.n > 1
 static security_state_t s_sec;
 static bool      s_secAvailable;   // s_sec.available, mirrored so a rebuild can gate on it before any secstate ever arrives
 static bool      s_secHomeShown;   // home Security card is currently shown (ic_available()-style rebuild gate)
+static int       s_secDetailId = -1;   // partition_t.id currently shown on the detail page, -1 = none
 static bool      s_secBypassWanted;   // "bypass faulted zones" toggle for the next Arm tap
 static int       s_secDelayLeft;      // local countdown (sec), resynced from every secstate; -1 = not counting
 static uint32_t  s_secDelayTickMs;
 // Fail-safe (issue requirement): a failed/ambiguous arm-disarm attempt must never
 // report success. s_secPending/s_secPendingSince gate a small STATUS line only --
 // the big state label above is bound exclusively to the driver-confirmed
-// s_sec.state and is never set optimistically from a button tap or a `secresult`.
+// partition's state and is never set optimistically from a button tap or a
+// `secresult`. s_secPendingId ties the pending flag to the partition it was fired
+// for, so a picker with more than one partition can't have one's "sending..." mis-
+// attributed to another.
 static bool      s_secPending;
+static int       s_secPendingId = -1;
 static char      s_secPendingAction[12];
 static uint32_t  s_secPendingSinceMs;
 #define SEC_PENDING_TIMEOUT_MS 12000   // no confirming secstate in time -> "no confirmation", not success
@@ -302,15 +311,22 @@ static lv_obj_t *s_pinPanel, *s_pinDots[SEC_PIN_MAX], *s_pinError, *s_pinTitle;
 static char      s_pinBuf[SEC_PIN_MAX + 1];
 static int       s_pinLen;
 static bool      s_pinIsDisarm;
+static int       s_pinPartitionId;   // partition_t.id this PIN entry targets
 static char      s_pinArmType[16];   // valid when !s_pinIsDisarm: "Stay"|"Away"|"Stay Instant"|"Away Instant"
 static bool      s_pinBypass;
 
-// The panel shows the Security feature purely on whether the driver has told us a
-// partition is bound -- there is no local licensing/hardware gate the way
-// ic_available() has MMK_HAS_SIP, because this is a Control4-side binding, not a
-// board capability. Until the first secstate arrives this is false, so a freshly
-// booted panel with no driver push yet correctly shows no Security tile.
+// The panel shows the Security feature purely on whether the driver auto-discovered
+// any real partition for this room -- there is no local licensing/hardware gate the
+// way ic_available() has MMK_HAS_SIP, because this is a Control4-side room command,
+// not a board capability. Until the first secstate arrives this is false, so a
+// freshly booted panel with no driver push yet correctly shows no Security tile.
 static inline bool sec_available(void) { return s_secAvailable; }
+
+static partition_t *secFind(int id)
+{
+    for (int i = 0; i < s_sec.n; i++) if (s_sec.list[i].id == id) return &s_sec.list[i];
+    return NULL;
+}
 
 // Intercom availability is purely a hardware fact: the panel shows the intercom
 // feature iff the board has SIP audio. It deliberately does NOT depend on s_nEps
@@ -1914,19 +1930,59 @@ static void x4PageHeader(lv_obj_t *parent, const char *title, lv_event_cb_t back
 // ── Security partition page ─────────────────────────────────────────────────
 // Same full-screen-page idiom as the intercom picker / favorites grid above:
 // hidden by default, revealed over home, one back chevron. Reachable from a home
-// tile that only exists while sec_available() is true.
-static void secRebuild(void);   // fwd
-static void onSecHome(lv_event_t *e) { (void)e; goHomeFrom(s_secPanel); }
+// tile that only exists while sec_available() is true. List-then-detail: a room
+// with exactly one partition (the common case) skips straight to its detail page
+// -- issue #2's original single-clean-page intent -- while a room with more than
+// one (live-confirmed: room 2434 "Office" has 2684+2685) shows the picker first,
+// mirroring how the Comfort page shows a thermostat list before its detail view.
+static void secRebuild(void);          // fwd
+static void secPickerRebuild(void);    // fwd
+static void secOpenDetail(int id);     // fwd
+static void onSecPickerHome(lv_event_t *e) { (void)e; goHomeFrom(s_secPickerPanel); }
+static void onSecDetailBack(lv_event_t *e)
+{
+    (void)e;
+    if (s_secPanel) lv_obj_add_flag(s_secPanel, LV_OBJ_FLAG_HIDDEN);
+    // Only one partition -> the picker was never shown, so "back" from the detail
+    // page goes all the way home. More than one -> back to the picker list, like
+    // Comfort's onCmfDetailBack.
+    if (s_sec.n > 1 && s_secPickerPanel) {
+        secPickerRebuild();
+        lv_obj_clear_flag(s_secPickerPanel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_secPickerPanel);
+    } else if (s_home) {
+        s_homeAtHome = true;
+        lv_obj_clear_flag(s_home, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_home);
+    }
+}
 static void homeSecurity(lv_event_t *e)
 {
     (void)e;
-    if (!s_secPanel) return;
+    if (!s_secPanel || s_sec.n == 0) return;
     if (s_x4 && s_home) { s_homeAtHome = false; lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); }
-    secRebuild();
-    lv_obj_clear_flag(s_secPanel, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(s_secPanel);
+    if (s_sec.n == 1) {
+        // Common case: skip the picker entirely, same as the pre-auto-discovery
+        // single-bound-partition UX.
+        secOpenDetail(s_sec.list[0].id);
+        return;
+    }
+    if (s_secPickerPanel) {
+        secPickerRebuild();
+        lv_obj_clear_flag(s_secPickerPanel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_secPickerPanel);
+    }
 }
 void ui_show_security_panel(void) { homeSecurity(NULL); }
+// Sim/preview only: jump straight to one partition's detail page (bypassing the
+// picker-row tap or the single-partition auto-skip), so the sim can render either
+// shape without simulating a touch event -- mirrors ui_show_comfort_detail.
+void ui_show_security_detail(int id)
+{
+    if (!s_secPanel) return;
+    if (s_x4 && s_home) { s_homeAtHome = false; lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); }
+    secOpenDetail(id);
+}
 
 // ── Comfort page (home tile) ────────────────────────────────────────────────
 // Same idiom as homeSecurity just above: reveal the full-screen list page over
@@ -1986,32 +2042,52 @@ static const char *secStateLabel(const char *raw, char *buf, size_t n)
     buf[j] = 0;
     return buf;
 }
-static bool secInDelay(void)   { return s_sec.state[0] && strstr(s_sec.state, "DELAY"); }
-static bool secInAlarm(void)   { return s_sec.state[0] && strstr(s_sec.state, "ALARM"); }
-static bool secIsArmed(void)   { return s_sec.state[0] && strstr(s_sec.state, "ARMED") && !secInDelay(); }
+static bool secInDelay(const partition_t *p) { return p && p->state[0] && strstr(p->state, "DELAY"); }
+static bool secInAlarm(const partition_t *p) { return p && p->state[0] && strstr(p->state, "ALARM"); }
+static bool secIsArmed(const partition_t *p) { return p && p->state[0] && strstr(p->state, "ARMED") && !secInDelay(p); }
 
 // One line of feedback for an in-flight secarm/secdisarm -- NEVER the big state
-// label above it. That label only ever mirrors s_sec.state (driver-confirmed), so
-// this function can say "sending" or "failed" or "no confirmation" without any
-// risk of the page claiming an arm/disarm succeeded before the partition itself
-// reports it (the issue's fail-safe requirement).
+// label above it. That label only ever mirrors the partition's driver-confirmed
+// state, so this function can say "sending" or "failed" or "no confirmation"
+// without any risk of the page claiming an arm/disarm succeeded before the
+// partition itself reports it (the issue's fail-safe requirement). Gated on
+// s_secPendingId == s_secDetailId so a picker with more than one partition can't
+// show partition A's "sending..." while viewing partition B.
 static void secUpdateStatusLine(void)
 {
     if (!s_secStatusLbl) return;
-    if (!s_secPending) { lv_label_set_text(s_secStatusLbl, ""); return; }
+    if (!s_secPending || s_secPendingId != s_secDetailId) { lv_label_set_text(s_secStatusLbl, ""); return; }
     char buf[64];
     snprintf(buf, sizeof(buf), "Sending %s...", s_secPendingAction);
     lv_label_set_text(s_secStatusLbl, buf);
     lv_obj_set_style_text_color(s_secStatusLbl, lv_color_hex(C_SUBTLE), 0);
 }
 
+// Open the detail page for one partition (by id). Bounces back rather than
+// showing stale/garbage state for an id that no longer resolves -- same defensive
+// idiom as cmfDetailRebuild's "no longer in a fresh list" bail.
+static void secOpenDetail(int id)
+{
+    if (!s_secPanel) return;
+    s_secDetailId = id;
+    secRebuild();
+    if (s_secPickerPanel) lv_obj_add_flag(s_secPickerPanel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(s_secPanel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_secPanel);
+}
+
 static void secRebuild(void)
 {
     if (!s_secPanel) return;
+    partition_t *p = secFind(s_secDetailId);
+    if (!p) { onSecDetailBack(NULL); return; }
+
+    if (s_secTitleLbl) lv_label_set_text(s_secTitleLbl, (s_sec.n > 1 && p->title[0]) ? p->title : "");
+
     char stbuf[32];
-    lv_label_set_text(s_secStateLbl, secStateLabel(s_sec.state, stbuf, sizeof(stbuf)));
+    lv_label_set_text(s_secStateLbl, secStateLabel(p->state, stbuf, sizeof(stbuf)));
     lv_obj_set_style_text_color(s_secStateLbl,
-        lv_color_hex(secInAlarm() ? C_RED : (secIsArmed() ? C_RED : C_GREEN)), 0);
+        lv_color_hex(secInAlarm(p) ? C_RED : (secIsArmed(p) ? C_RED : C_GREEN)), 0);
 
     // Sub-line: entry/exit delay countdown, else the driver's DISPLAY_TEXT, else
     // an aggregate zone summary. Per-zone open/closed/bypassed status is NOT
@@ -2019,32 +2095,32 @@ static void secRebuild(void)
     // partition proxy has no polled zone list, only an unconfirmed notify push,
     // so this sticks to the two zone-shaped fields the driver actually mirrors.
     char sub[96];
-    if (secInDelay() && s_secDelayLeft >= 0) {
+    if (secInDelay(p) && s_secDelayLeft >= 0) {
         snprintf(sub, sizeof(sub), "%ds remaining", s_secDelayLeft);
-    } else if (s_sec.display[0]) {
-        snprintf(sub, sizeof(sub), "%s", s_sec.display);
-    } else if (s_sec.open_zones > 0) {
-        if (s_sec.last_faulted[0])
-            snprintf(sub, sizeof(sub), "%d zone%s open - %s", s_sec.open_zones,
-                     s_sec.open_zones == 1 ? "" : "s", s_sec.last_faulted);
+    } else if (p->display[0]) {
+        snprintf(sub, sizeof(sub), "%s", p->display);
+    } else if (p->open_zones > 0) {
+        if (p->last_faulted[0])
+            snprintf(sub, sizeof(sub), "%d zone%s open - %s", p->open_zones,
+                     p->open_zones == 1 ? "" : "s", p->last_faulted);
         else
-            snprintf(sub, sizeof(sub), "%d zone%s open", s_sec.open_zones, s_sec.open_zones == 1 ? "" : "s");
+            snprintf(sub, sizeof(sub), "%d zone%s open", p->open_zones, p->open_zones == 1 ? "" : "s");
     } else {
         snprintf(sub, sizeof(sub), "All zones secure");
     }
     lv_label_set_text(s_secSubLbl, sub);
 
     if (s_secTroubleLbl) {
-        setVis(s_secTroubleLbl, s_sec.trouble[0] != 0);
-        if (s_sec.trouble[0]) lv_label_set_text(s_secTroubleLbl, s_sec.trouble);
+        setVis(s_secTroubleLbl, p->trouble[0] != 0);
+        if (p->trouble[0]) lv_label_set_text(s_secTroubleLbl, p->trouble);
     }
     if (s_secBypassBtn) {
-        setVis(s_secBypassBtn, s_sec.open_zones > 0);
+        setVis(s_secBypassBtn, p->open_zones > 0);
         if (s_secBypassLbl) {
             char blabel[48];
             snprintf(blabel, sizeof(blabel), "%s Bypass %d faulted zone%s",
-                     s_secBypassWanted ? LV_SYMBOL_OK : "", s_sec.open_zones,
-                     s_sec.open_zones == 1 ? "" : "s");
+                     s_secBypassWanted ? LV_SYMBOL_OK : "", p->open_zones,
+                     p->open_zones == 1 ? "" : "s");
             lv_label_set_text(s_secBypassLbl, blabel);
         }
     }
@@ -2097,22 +2173,25 @@ static void onPinConfirm(lv_event_t *e)
     char pin[SEC_PIN_MAX + 1];
     snprintf(pin, sizeof(pin), "%s", s_pinBuf);
     bool isDisarm = s_pinIsDisarm;
+    int  partitionId = s_pinPartitionId;
     char armType[16]; snprintf(armType, sizeof(armType), "%s", s_pinArmType);
     bool bypass = s_pinBypass;
     secPinClose();
 
     s_secPending = true;
+    s_secPendingId = partitionId;
     s_secPendingSinceMs = millis();
     snprintf(s_secPendingAction, sizeof(s_secPendingAction), "%s", isDisarm ? "disarm" : "arm");
     secUpdateStatusLine();
-    if (isDisarm) net_security_disarm(pin);
-    else          net_security_arm(armType, pin, bypass);
+    if (isDisarm) net_security_disarm(partitionId, pin);
+    else          net_security_arm(partitionId, armType, pin, bypass);
     memset(pin, 0, sizeof(pin));   // done with our copy too
 }
 static void secOpenPin(const char *armType, bool isDisarm, bool bypass)
 {
     if (!s_pinPanel) return;
     s_pinIsDisarm = isDisarm;
+    s_pinPartitionId = s_secDetailId;   // whichever partition's detail page is open
     snprintf(s_pinArmType, sizeof(s_pinArmType), "%s", armType ? armType : "");
     s_pinBypass = bypass;
     memset(s_pinBuf, 0, sizeof(s_pinBuf));
@@ -2167,12 +2246,22 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_obj_set_style_bg_opa(s_secPanel, LV_OPA_COVER, 0);
     lv_obj_clear_flag(s_secPanel, LV_OBJ_FLAG_SCROLLABLE);
     if (smallP) {
-        lv_obj_t *back = iconBtnImg(s_secPanel, ICON_BACK, 30, 0, LV_OPA_TRANSP, 0xFFFFFF, onSecHome, NULL);
+        lv_obj_t *back = iconBtnImg(s_secPanel, ICON_BACK, 30, 0, LV_OPA_TRANSP, 0xFFFFFF, onSecDetailBack, NULL);
         lv_obj_align(back, LV_ALIGN_TOP_LEFT, 8, 8);
     } else {
-        x4PageHeader(s_secPanel, "Security", onSecHome);
+        x4PageHeader(s_secPanel, "Security", onSecDetailBack);
     }
     const int top = smallP ? 50 : (int)(120 * s);
+
+    // Partition name, shown only when this room has more than one (secRebuild
+    // leaves it blank text but the widget stays laid out) -- a single-partition
+    // room keeps the exact "Security" page-header-only look from before auto-
+    // discovery, since there's nothing to disambiguate.
+    s_secTitleLbl = lv_label_create(s_secPanel);
+    lv_obj_set_style_text_font(s_secTitleLbl, F16, 0);
+    lv_obj_set_style_text_color(s_secTitleLbl, lv_color_hex(C_SUBTLE), 0);
+    lv_label_set_text(s_secTitleLbl, "");
+    lv_obj_align(s_secTitleLbl, LV_ALIGN_TOP_MID, 0, top - (int)(24 * s));
 
     s_secStateLbl = lv_label_create(s_secPanel);
     lv_obj_set_style_text_font(s_secStateLbl, F32, 0);
@@ -2313,38 +2402,43 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
       lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "OK"); lv_obj_center(l); }
 }
 
-// Driver-pushed security partition state (`secstate`, PROTOCOL.md). NULL-ing
+// Driver-pushed security partition list (`secstate`, PROTOCOL.md). NULL-ing
 // `available` (rather than merely stale fields) is what makes the tile/page
-// disappear on a keypad instance whose SECURITY connection was never bound, or
-// got unbound (driver.lua OnBindingChanged) -- matches ic_available()'s "purely a
-// fact reported to us" gating.
+// disappear on a room where GET_SECURITY_DEVICES auto-discovered zero real
+// partitions -- matches ic_available()'s "purely a fact reported to us" gating.
 void ui_set_security(const security_state_t *sec)
 {
     if (!sec) return;
     s_sec = *sec;
     s_secAvailable = sec->available;
-    // Resync the local delay countdown from the driver's latest DELAY_TIME_REMAINING
-    // -- this only ticks visually between pushes (ui_tick_progress), it is never the
-    // source of truth for whether the delay is still running.
-    s_secDelayLeft = secInDelay() ? s_sec.delay_remaining : -1;
+    // Resync the local delay countdown from the currently-viewed partition's
+    // latest DELAY_TIME_REMAINING -- this only ticks visually between pushes
+    // (ui_tick_progress), it is never the source of truth for whether the delay
+    // is still running.
+    partition_t *cur = secFind(s_secDetailId);
+    s_secDelayLeft = secInDelay(cur) ? cur->delay_remaining : -1;
     s_secDelayTickMs = millis();
     // A confirming state arrived: whatever we were waiting on either happened or
     // didn't, but either way the driver-reported state is now authoritative again,
     // so drop the "sending..." status line. (Deliberately NOT keyed to matching the
     // requested action -- any fresh secstate is a real report, and holding the
     // spinner past that would itself be a small dishonesty.)
-    if (s_secPending) { s_secPending = false; s_secPendingAction[0] = 0; }
-    if (s_secPanel) secRebuild();
+    if (s_secPending) { s_secPending = false; s_secPendingId = -1; s_secPendingAction[0] = 0; }
+    if (s_secPanel && !lv_obj_has_flag(s_secPanel, LV_OBJ_FLAG_HIDDEN)) secRebuild();
+    if (s_secPickerPanel && !lv_obj_has_flag(s_secPickerPanel, LV_OBJ_FLAG_HIDDEN)) secPickerRebuild();
     if (s_home && sec_available() != s_secHomeShown) ui_request_rebuild();
 }
 
 // Delivery outcome for a secarm/secdisarm (`secresult`). ok==true means only "the
 // driver called SendToProxy", not "the partition armed" -- see security_result_t.
 // A false here IS a definitive failure worth surfacing immediately, since no
-// secstate confirming anything is coming.
+// secstate confirming anything is coming. Only touches the status line when the
+// result is for the partition currently on screen -- a stray result for a
+// partition the user has since navigated away from must not repaint this page.
 void ui_set_security_result(const security_result_t *res)
 {
     if (!res) return;
+    if (res->id != s_secDetailId) return;
     if (!res->ok) {
         s_secPending = false;
         if (s_secStatusLbl) {
@@ -2359,6 +2453,87 @@ void ui_set_security_result(const security_result_t *res)
     // ok==true: stay pending. secRebuild()'s status line keeps reading
     // "Sending..." until a secstate confirms it or SEC_PENDING_TIMEOUT_MS elapses
     // (ui_tick_progress) -- never flips to a success message on its own.
+}
+
+// ── Security page: partition picker ─────────────────────────────────────────
+// Only built/shown for a room with more than one auto-discovered partition (see
+// homeSecurity) -- same tile-grid idiom as cmfRebuildList just below.
+static void onSecPickerRow(lv_event_t *e)
+{
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (i < 0 || i >= s_sec.n) return;
+    secOpenDetail(s_sec.list[i].id);
+}
+static void secPickerRebuild(void)
+{
+    if (!s_secPickerList) return;
+    lv_obj_clean(s_secPickerList);
+    const float s = s_uiscale;
+    const int gap = (int)(14 * s);
+    const int dispW = lv_display_get_horizontal_resolution(NULL);
+    const bool portrait = (lv_display_get_vertical_resolution(NULL) > dispW);
+    const int pad = (s < 0.99f) ? 12 : (int)(28 * s);
+    const int W = dispW - 2 * pad;
+    int cols = portrait ? ((W + gap) / (190 + gap)) : ((W + gap) / (340 + gap));
+    if (cols < 1) cols = 1;
+    if (cols > 3) cols = 3;
+    if (portrait && cols > 2) cols = 2;
+    const int cw = (W - (cols - 1) * gap) / cols;
+    const int ch = (int)(76 * s);
+
+    lv_obj_set_flex_flow(s_secPickerList, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_column(s_secPickerList, gap, 0);
+    lv_obj_set_style_pad_row(s_secPickerList, gap, 0);
+
+    for (int i = 0; i < s_sec.n; i++) {
+        const partition_t *p = &s_sec.list[i];
+        char stbuf[32];
+        const char *sub = secStateLabel(p->state, stbuf, sizeof(stbuf));
+        bool alarm = secInAlarm(p), armed = secIsArmed(p) || alarm;
+        tileCard(s_secPickerList, ICON_INTERCOM, "Security", p->title[0] ? p->title : "Partition",
+                 sub, armed, alarm ? C_RED : 0x4CC9F0, onSecPickerRow, (void *)(intptr_t)i, cw, ch,
+                 NULL, NULL, NULL);
+    }
+    if (s_sec.n == 0) {
+        lv_obj_t *l = lv_label_create(s_secPickerList);
+        lv_obj_set_style_text_font(l, F16, 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(0x9AA5B1), 0);
+        lv_label_set_text(l, "No partitions");
+        lv_obj_set_style_pad_top(l, (int)(20 * s_uiscale), 0);
+    }
+}
+// Same full-screen-list-panel construction as the Comfort page's list page --
+// see there for the layout rationale (header + a flex-wrap tile grid).
+static void buildSecurityPickerPage(lv_obj_t *scr, int W, int H, bool smallP)
+{
+    const float s = s_uiscale;
+    s_secPickerPanel = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_secPickerPanel);
+    lv_obj_set_size(s_secPickerPanel, W, H);
+    lv_obj_set_pos(s_secPickerPanel, 0, 0);
+    lv_obj_add_flag(s_secPickerPanel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(s_secPickerPanel, lv_color_hex(HOME_BG_TOP), 0);
+    lv_obj_set_style_bg_grad_color(s_secPickerPanel, lv_color_hex(HOME_BG_BOT), 0);
+    lv_obj_set_style_bg_grad_dir(s_secPickerPanel, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(s_secPickerPanel, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(s_secPickerPanel, LV_OBJ_FLAG_SCROLLABLE);
+    int lTop;
+    if (smallP) {
+        lv_obj_t *back = iconBtnImg(s_secPickerPanel, ICON_BACK, 30, 0, LV_OPA_TRANSP, 0xFFFFFF, onSecPickerHome, NULL);
+        lv_obj_align(back, LV_ALIGN_TOP_LEFT, 8, 8);
+        lTop = 50;
+    } else {
+        x4PageHeader(s_secPickerPanel, "Security", onSecPickerHome);
+        lTop = (int)(120 * s);
+    }
+    const int lPad = (int)(28 * s);
+    s_secPickerList = lv_obj_create(s_secPickerPanel);
+    lv_obj_remove_style_all(s_secPickerList);
+    lv_obj_set_size(s_secPickerList, W - 2 * lPad, H - lTop - (int)(24 * s));
+    lv_obj_set_pos(s_secPickerList, lPad, lTop);
+    lv_obj_set_style_pad_all(s_secPickerList, 0, 0);
+    lv_obj_set_flex_flow(s_secPickerList, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_scroll_dir(s_secPickerList, LV_DIR_VER);
 }
 
 // ── Comfort page: list + detail ─────────────────────────────────────────────
@@ -2998,8 +3173,16 @@ static void build_home_tiles(int W, int H, bool smallP)
     // so the image fallback param is effectively unreachable in either theme, same
     // as ICON_INTERCOM's role for the "Bell" glyph tile just above.
     if (secAvail) {
-        bool alarm  = secInAlarm();
-        bool armed  = secIsArmed() || alarm;
+        // Aggregate across every auto-discovered partition for this room (Office
+        // has two, live-confirmed) -- ANY armed/alarm partition drives the home
+        // tile's badge; the picker/detail pages are where a specific one's state
+        // is seen individually.
+        bool alarm = false, armed = false;
+        for (int i = 0; i < s_sec.n; i++) {
+            if (secInAlarm(&s_sec.list[i])) alarm = true;
+            if (secIsArmed(&s_sec.list[i])) armed = true;
+        }
+        armed = armed || alarm;
         const char *sub = alarm ? "Alarm" : (armed ? "Armed" : NULL);
         tileCard(grid, ICON_INTERCOM, "Security", "Security", sub, armed,
                  alarm ? C_RED : 0x4CC9F0, homeSecurity, NULL, cw, ch, NULL, NULL, NULL);
@@ -3975,10 +4158,11 @@ void ui_begin(void)
     lv_obj_set_scroll_dir(s_favGrid, LV_DIR_VER);
     rebuildFavGrid();
 
-    // Security partition page + its PIN entry overlay. Built unconditionally (like
-    // the intercom picker, which exists even on boards with MMK_HAS_SIP off) --
-    // sec_available() just keeps its home tile from ever appearing until a
-    // secstate says a partition is actually bound.
+    // Security partition picker + detail page + its PIN entry overlay. Built
+    // unconditionally (like the intercom picker, which exists even on boards with
+    // MMK_HAS_SIP off) -- sec_available() just keeps its home tile from ever
+    // appearing until a secstate reports at least one auto-discovered partition.
+    buildSecurityPickerPage(scr, W, H, smallP);
     buildSecurityPage(scr, W, H, smallP);
 
     // Comfort page (list + detail). Built unconditionally, same reasoning as
