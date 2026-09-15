@@ -345,7 +345,6 @@ static bool thumb_step(void)
         // Work from LOCAL copies: once claimed, the slot may be recycled underneath
         // us by the next grid's art_thumb_add(), and s_th[i].buf would then be a
         // different tile's buffer.
-        uint16_t *mybuf = s_th[i].buf;
         const int mw = s_th[i].w, mh = s_th[i].h;
         char myurl[sizeof(s_th[i].url)];
         strncpy(myurl, s_th[i].url, sizeof(myurl) - 1); myurl[sizeof(myurl) - 1] = 0;
@@ -377,12 +376,18 @@ static bool thumb_step(void)
         // image) and marked it DONE, so its real artwork never appeared. That is
         // the "thumbnails corrupt or vanish" case.
         if (ep != s_thEpoch) {
-            // The grid was torn down mid-decode. art_thumb_clear() saw TH_BUSY and
-            // deliberately left this buffer alone, so freeing it is OUR job -- that
-            // is the ownership handoff that replaces the old "leak it and hope".
+            // The grid was torn down mid-decode. Every art_thumb_clear() call site
+            // bumps the epoch and THEN lv_obj_cleans the canvases' parent -- so by
+            // the time a decode notices its epoch is stale, mybuf's canvas has
+            // already been deleted and thumb_canvas_deleted() has already freed it.
+            // This used to free mybuf again here "to be safe": a guaranteed
+            // double-free every time a decode outlived its grid, corrupting the
+            // heap and crashing (intermittently, later, wherever the allocator next
+            // touched the damaged region) -- the "tlsf_free" panics chased earlier
+            // as an unfixable Espressif-internal bug. The canvas's own delete event
+            // is the sole owner now; this path only stops tracking the slot.
             ESP_LOGW(TAG, "thumb %d abandoned (grid rebuilt mid-decode)", i);
             thumb_report(i, false, jlen, mw, mh);   // decoded, but never displayed
-            heap_caps_free(mybuf);
             // Release the slot only if it has not already been recycled: if the next
             // grid re-queued it, the swap fails and its entry is left untouched.
             __sync_bool_compare_and_swap(&s_th[i].st, TH_BUSY, TH_FREE);
