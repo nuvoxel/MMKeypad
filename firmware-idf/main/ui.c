@@ -2335,7 +2335,24 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     } else {
         x4PageHeader(s_secPanel, "Security", onSecDetailBack);
     }
-    const int top = smallP ? 50 : (int)(120 * s);
+    // H (not smallP, a WIDTH-derived flag) is what decides whether this page's
+    // vertical stack fits: the office WS43 runs 800x480 LANDSCAPE, plenty wide
+    // (s_uiscale=1, smallP=false) but only 480px tall. The hero circle below was
+    // sized for the >=700px-tall layouts (WS43 portrait 480x800, P4 nano
+    // 1280x800) it was actually tested against, and at full size pushed the
+    // Disarm button and everything after it off the bottom of a 480px-tall
+    // screen entirely -- confirmed in the sim at 800x480 after the fact, which
+    // is what should have been checked before flashing.
+    //
+    // Three tiers, all folded into one `compact` level so every size below
+    // ladders off the SAME decision instead of two flags whose precedence could
+    // (and did, in an earlier draft of this fix) disagree with each other:
+    //   0 full    -- H>=700 (WS43 portrait, P4 nano)
+    //   1 short   -- H<700  (WS43 LANDSCAPE, the office panel's actual config)
+    //   2 tiny    -- smallP (the S3's 240px-tall classes; already extra-shrunk
+    //                by s_uiscale<1 on top of this)
+    const int compact = smallP ? 2 : (H < 700 ? 1 : 0);
+    const int top = compact == 2 ? 30 : compact == 1 ? 20 : (int)(120 * s);
 
     // Partition name, shown only when this room has more than one (secRebuild
     // leaves it blank text but the widget stays laid out) -- a single-partition
@@ -2352,7 +2369,7 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     // text -- ours was text-only. secSetHero() (called from secRebuild) drives
     // the ring color and lock/unlock glyph from the same tri-state read the home
     // tile's badge uses.
-    const int heroD = smallP ? (int)(100 * s) : (int)(150 * s);
+    const int heroD = compact == 2 ? (int)(60 * s) : compact == 1 ? (int)(84 * s) : (int)(150 * s);
     s_secHero = lv_obj_create(s_secPanel);
     lv_obj_remove_style_all(s_secHero);
     lv_obj_set_size(s_secHero, heroD, heroD);
@@ -2368,41 +2385,48 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     // FICON (24px), not FICONL: the 34px icon set only carries the three transport
     // glyphs (play/pause/stop) -- Lock/Unlock rendered as missing-glyph boxes
     // there (confirmed in the sim). Scaled up via transform since there's no
-    // larger bitmap asset, same approach as x4PageHeader's heading bump.
+    // larger bitmap asset, same approach as x4PageHeader's heading bump --
+    // scaled to roughly match heroD's own tier so the glyph doesn't overrun a
+    // shrunk ring.
     lv_obj_set_style_text_font(s_secHeroIcon, FICON, 0);
     lv_obj_set_style_text_color(s_secHeroIcon, lv_color_hex(C_GREEN), 0);
     lv_label_set_text(s_secHeroIcon, iconGlyph("Unlock"));
-    lv_obj_set_style_transform_scale(s_secHeroIcon, (int)(256 * 2.2f), 0);
+    float heroIconScale = compact ? 1.3f : 2.2f;
+    lv_obj_set_style_transform_scale(s_secHeroIcon, (int)(256 * heroIconScale), 0);
     lv_obj_center(s_secHeroIcon);
 
     s_secStateLbl = lv_label_create(s_secPanel);
-    lv_obj_set_style_text_font(s_secStateLbl, F32, 0);
+    lv_obj_set_style_text_font(s_secStateLbl, compact ? F24 : F32, 0);
     lv_label_set_text(s_secStateLbl, "Unknown");
-    lv_obj_align_to(s_secStateLbl, s_secHero, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(14 * s));
+    lv_obj_align_to(s_secStateLbl, s_secHero, LV_ALIGN_OUT_BOTTOM_MID, 0, compact ? 4 : (int)(14 * s));
 
     s_secSubLbl = lv_label_create(s_secPanel);
-    lv_obj_set_style_text_font(s_secSubLbl, F16, 0);
+    lv_obj_set_style_text_font(s_secSubLbl, F14, 0);
     lv_obj_set_style_text_color(s_secSubLbl, lv_color_hex(C_SUBTLE), 0);
     lv_label_set_text(s_secSubLbl, "");
-    lv_obj_align_to(s_secSubLbl, s_secStateLbl, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(8 * s));
+    lv_obj_align_to(s_secSubLbl, s_secStateLbl, LV_ALIGN_OUT_BOTTOM_MID, 0, compact ? 2 : (int)(8 * s));
 
     s_secTroubleLbl = lv_label_create(s_secPanel);
-    lv_obj_set_style_text_font(s_secTroubleLbl, F16, 0);
+    lv_obj_set_style_text_font(s_secTroubleLbl, F14, 0);
     lv_obj_set_style_text_color(s_secTroubleLbl, lv_color_hex(C_RED), 0);
     lv_label_set_text(s_secTroubleLbl, "");
-    lv_obj_align_to(s_secTroubleLbl, s_secSubLbl, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(6 * s));
+    lv_obj_align_to(s_secTroubleLbl, s_secSubLbl, LV_ALIGN_OUT_BOTTOM_MID, 0, compact ? 2 : (int)(6 * s));
     lv_obj_add_flag(s_secTroubleLbl, LV_OBJ_FLAG_HIDDEN);
 
     // Buttons chain off the trouble label's own box (hidden-but-laid-out, same as
     // before) rather than a fixed top+N offset, so the hero circle above can
-    // change size (smallP) without the button row drifting into or away from it.
-    const int bw = (int)(200 * s), bh = (int)(64 * s), bgap = (int)(16 * s);
+    // change size across tiers without the button row drifting into or away
+    // from it.
+    const int bw = compact ? ((W / 2) - (int)(28 * s)) : (int)(200 * s);
+    const int bh = compact == 2 ? 32 : compact == 1 ? 40 : (int)(64 * s);
+    const int bgap = compact ? (compact == 2 ? 4 : 8) : (int)(16 * s);
+    const int btnGapY = compact ? (compact == 2 ? 4 : 8) : (int)(24 * s);
     lv_obj_t *armHome = lv_button_create(s_secPanel);
     lv_obj_set_size(armHome, bw, bh);
     lv_obj_set_style_bg_color(armHome, lv_color_hex(0x2A2E37), 0);
     lv_obj_set_style_radius(armHome, (int)(14 * s), 0);
     lv_obj_add_event_cb(armHome, onSecArmHome, LV_EVENT_CLICKED, NULL);
-    lv_obj_align_to(armHome, s_secTroubleLbl, LV_ALIGN_OUT_BOTTOM_MID, -(bw + bgap) / 2, (int)(24 * s));
+    lv_obj_align_to(armHome, s_secTroubleLbl, LV_ALIGN_OUT_BOTTOM_MID, -(bw + bgap) / 2, btnGapY);
     { lv_obj_t *l = lv_label_create(armHome); lv_obj_set_style_text_font(l, F16, 0);
       lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Arm Home"); lv_obj_center(l); }
 
@@ -2411,7 +2435,7 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_obj_set_style_bg_color(armAway, lv_color_hex(0x2A2E37), 0);
     lv_obj_set_style_radius(armAway, (int)(14 * s), 0);
     lv_obj_add_event_cb(armAway, onSecArmAway, LV_EVENT_CLICKED, NULL);
-    lv_obj_align_to(armAway, s_secTroubleLbl, LV_ALIGN_OUT_BOTTOM_MID, (bw + bgap) / 2, (int)(24 * s));
+    lv_obj_align_to(armAway, s_secTroubleLbl, LV_ALIGN_OUT_BOTTOM_MID, (bw + bgap) / 2, btnGapY);
     { lv_obj_t *l = lv_label_create(armAway); lv_obj_set_style_text_font(l, F16, 0);
       lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Arm Away"); lv_obj_center(l); }
 
@@ -2430,7 +2454,7 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     // flag IS bypass-and-arm, there is no separate bypass call (see driver.lua).
     s_secBypassBtn = lv_button_create(s_secPanel);
     lv_obj_remove_style_all(s_secBypassBtn);
-    lv_obj_set_size(s_secBypassBtn, 2 * bw + bgap, (int)(40 * s));
+    lv_obj_set_size(s_secBypassBtn, 2 * bw + bgap, compact ? (compact == 2 ? 22 : 28) : (int)(40 * s));
     lv_obj_add_event_cb(s_secBypassBtn, onSecBypassToggle, LV_EVENT_CLICKED, NULL);
     lv_obj_align_to(s_secBypassBtn, disarm, LV_ALIGN_OUT_BOTTOM_MID, 0, bgap);
     lv_obj_add_flag(s_secBypassBtn, LV_OBJ_FLAG_HIDDEN);
