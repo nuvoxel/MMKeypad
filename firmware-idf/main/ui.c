@@ -377,6 +377,7 @@ static lv_obj_t *s_homeVol, *s_homeVolIcon;   // persistent volume on the home m
 static lv_obj_t *s_homeMiniNote;              // music-note placeholder over the art tile (no art)
 static lv_obj_t *s_homeBar;                   // mini-player bar (hidden when the room is off)
 static bool      s_homeIcShown;               // home Intercom card is currently shown (intercom available)
+static bool      s_homeBarShown;              // home mini-player bar occupied space on the last build_home_tiles
 static bool      s_homeAtHome = true;   // start on the home screen
 static lv_obj_t *s_homeTitle;           // landing-page title (the room name)
 static bool      s_hadSession;          // was a media session active on the last state?
@@ -3053,6 +3054,16 @@ static void onHomeBtn(lv_event_t *e)
     net_send_button(s_lastState.buttons[i].id);
 }
 
+// Same "is there a real session" condition the mini-player-bar visibility and
+// the home-panel auto-return check both use: room on, plus either a title or an
+// active "media" session type. Shared here so build_home_tiles can size the
+// grid around the bar's real state instead of always reserving its space.
+static bool homeBarWanted(void)
+{
+    return s_haveState && s_lastState.power &&
+           (s_lastState.title[0] || !strcmp(s_lastState.media_type, "media"));
+}
+
 // The room page: ONE bounded, scrolling, wrapping tile grid holding the room's
 // favourites and its keypad buttons. There is no separate keypad screen -- the
 // buttons ARE tiles here, which is how the Control4 app puts Exit Gate / Garage
@@ -3104,7 +3115,11 @@ static void build_home_tiles(int W, int H, bool smallP)
         else if (ntiles <= 4 && cols > 2) cols = 2;
     }
 
-    const int miniH = smallP ? 0 : (int)(104 * s) + (int)(24 * s);
+    // Only reserve the bar's band when it will actually show something -- an idle
+    // room (no title, no active media session) left an empty strip of wallpaper
+    // the height of the bar, room enough for another whole row of tiles.
+    s_homeBarShown = !smallP && homeBarWanted();
+    const int miniH = s_homeBarShown ? (int)(104 * s) + (int)(24 * s) : 0;
     int avail = H - miniH - (int)(16 * s) - cy;
 
     // Size the tiles to the space rather than fixing their height, then snap the
@@ -4363,7 +4378,15 @@ void ui_set_state(const media_state_t *st)
     // (no title, and not an active "media" session) left the mini-player bar reserving
     // its space with nothing in it. Same "is there a real session" condition as the
     // home-panel auto-return check above.
-    if (s_homeBar) setVis(s_homeBar, st->power && (st->title[0] || !strcmp(st->media_type, "media")));
+    bool wantBar = homeBarWanted();
+    if (s_homeBar) setVis(s_homeBar, wantBar);
+    // The bar toggling isn't just a show/hide -- build_home_tiles sized the grid
+    // around whether the bar's band was reserved, so playback starting or ending
+    // has to reflow the tiles too, not just swap the bar's visibility flag.
+    // Guarded on s_homeBar existing: on the tiny smallP panels there is no bar to
+    // begin with (s_homeBarShown stays permanently false there), so without this
+    // guard a playing smallP room would trigger a rebuild on every state update.
+    if (s_home && s_homeBar && wantBar != s_homeBarShown) ui_request_rebuild();
     if ((int)st->power != (int)s_lastPower) s_lastPower = st->power;
 }
 
