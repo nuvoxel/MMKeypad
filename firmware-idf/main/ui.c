@@ -3303,7 +3303,7 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
     // of floating chrome competing with the content. Top-right "more" is where the rest
     // of the UI already puts a menu (the now-playing card), so this is consistent, and
     // it frees the bottom of the page for real content.
-    { int gsz = smallP ? 34 : (int)(40 * s);
+    { int gsz = smallP ? 42 : (int)(50 * s);   // 25% up from 34/40 -- more next to the room name
       lv_obj_t *more = iconBtnImg(s_home, ICON_DOTS, gsz, 0x000000, LV_OPA_40,
                                   0xFFFFFF, onSettingsOpen, NULL);
       lv_obj_align(more, LV_ALIGN_TOP_RIGHT, -(int)(12 * s), (int)(28 * s));
@@ -3399,10 +3399,12 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
     // toward it lands on Intercom, Security, Comfort -- roughly rarest-to-most
     // reached for, dots (settings) last.
     if (icAvail || secAvail || cmfAvail) {
-        const int isz = smallP ? 34 : (int)(40 * s);
+        const int isz = smallP ? 42 : (int)(50 * s);   // matches the dots button's own 25% bump
         const int igap = (int)(10 * s);
         const int iy = (int)(28 * s);
-        int xoff = -(int)(12 * s) - isz - igap;   // just left of the "more" dots button
+        // The dots button is gsz-sized (same bump), so start one dots-width + gap in.
+        const int gsz = smallP ? 42 : (int)(50 * s);
+        int xoff = -(int)(12 * s) - gsz - igap;   // just left of the "more" dots button
 
         if (cmfAvail) {
             lv_obj_t *btn = topGlyphBtn(s_home, "Climate", isz, 0xFFFFFF, homeComfort, NULL);
