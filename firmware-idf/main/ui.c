@@ -1961,13 +1961,28 @@ static void onHomeVol(lv_event_t *e)
 static void x4PageHeader(lv_obj_t *parent, const char *title, lv_event_cb_t backCb)
 {
     const float s = s_uiscale;
-    lv_obj_t *back = iconBtnImg(parent, ICON_BACK, (int)(40 * s), 0, LV_OPA_TRANSP, 0xFFFFFF, backCb, NULL);
-    lv_obj_align(back, LV_ALIGN_TOP_LEFT, (int)(24 * s), (int)(26 * s));
+    // Matches the home page's own top-bar icons (topGlyphBtn/the settings gear,
+    // both bumped 25% to 50*s) -- this back chevron used to be a visibly smaller
+    // 40*s left over from before that bump, inconsistent on every sub-page.
+    const int bsz = (int)(50 * s);
+    lv_obj_t *back = iconBtnImg(parent, ICON_BACK, bsz, 0, LV_OPA_TRANSP, 0xFFFFFF, backCb, NULL);
+    lv_obj_align(back, LV_ALIGN_TOP_LEFT, (int)(24 * s), (int)(22 * s));
     lv_obj_t *t = lv_label_create(parent);
     lv_obj_set_style_text_font(t, F32, 0);
     lv_obj_set_style_text_color(t, lv_color_hex(C_TEXT), 0);
     lv_label_set_text(t, title);
-    lv_obj_align(t, LV_ALIGN_TOP_LEFT, (int)(84 * s), (int)(30 * s));
+    // F32 is the largest bitmap text asset this build has (WS43-class panels run
+    // at s_uiscale<=1, below the threshold where ui_apply_font_scale switches to
+    // TTF-rendered fonts that could just ask for a bigger point size) -- so a real
+    // size increase without a new font asset means scaling the rendered glyphs up
+    // via LVGL's transform, same idea as icon images already being recolored/
+    // scaled to fit. 1.2x reads as "matches the bigger icons" without the label's
+    // own bounding box (used for alignment) growing, which a font swap would need
+    // re-plumbed everywhere this header appears.
+    lv_obj_set_style_transform_scale(t, (int)(256 * 1.2f), 0);
+    lv_obj_set_style_transform_pivot_x(t, 0, 0);
+    lv_obj_set_style_transform_pivot_y(t, 0, 0);
+    lv_obj_align(t, LV_ALIGN_TOP_LEFT, (int)(24 * s) + bsz + (int)(20 * s), (int)(30 * s));
 }
 
 // ── Security partition page ─────────────────────────────────────────────────
