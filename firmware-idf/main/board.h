@@ -169,13 +169,18 @@
 // serial write, blocking LVGL's own task for the whole transfer, which is what
 // actually triggered the "task WDT reboot loop" this comment used to warn
 // about. Fixed to only hold the lock for the fast in-memory snapshot copy.
-// Tried live on the office bench unit (2026-09-15): the lock-scope fix above
-// works (no WDT reboot), but lv_snapshot_take() came back all-zero/solid black
-// every time, tap or no tap, on this board's DMA2D-composited flush path --
-// unconfirmed whether that's an LVGL/DMA2D snapshot incompatibility or
-// something else. Left disabled and unresolved rather than spending more of
-// this session chasing it; the sim (firmware-linux-t3/sim) is the verified
-// path for checking layouts pending a real fix here.
+// Tried live on the office bench unit TWICE (2026-09-15), two different fixes:
+//   1. The lock-scope fix above (no WDT reboot) -- still all-zero/solid black.
+//   2. Routing lv_snapshot_take() through lv_async_call() so it runs on LVGL's
+//      own task instead of cross-thread from snap_task (the theory: its
+//      internal lv_draw_dispatch_wait_for_request()/lv_draw_dispatch() loop
+//      expects to run where esp_lvgl_port's draw-unit workers can service it)
+//      -- also still all-zero/solid black.
+// Root cause remains unidentified; not a threading issue, at least not the one
+// theorized. Left disabled. The sim (firmware-linux-t3/sim) is the verified
+// path for checking layouts; real-device screenshots need dedicated follow-up
+// (serial-printed diagnostics on draw_task_head/top_obj inside
+// lv_snapshot_take_to_draw_buf would be the next step, not another guess).
 #define MMK_SNAPSHOT     0
 
 // C6 slave OTA (bench only): flip to 1 to run a ONE-SHOT OTA of the onboard
