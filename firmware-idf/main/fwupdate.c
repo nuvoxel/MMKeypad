@@ -35,9 +35,16 @@
 static const char *TAG = "fwupdate";
 
 // The releases API for this project. Override at build time if you fork.
+// per_page capped near FWU_MAX (not 30): GitHub's per-release JSON is verbose (full
+// asset metadata x5 SKUs), so this project's actual releases list grew from ~30KB
+// to 178KB over ten releases published in one day -- comfortably over the old
+// per_page=30 request's response size vs. FWU_BODYCAP, silently truncating the JSON
+// mid-object and turning into "bad response from GitHub" (cJSON_Parse fails on
+// truncated input). The device only ever shows FWU_MAX releases anyway; asking for
+// exactly that many keeps the response bounded as the release history keeps growing.
 #ifndef FWUPDATE_RELEASES_URL
 #define FWUPDATE_RELEASES_URL \
-  "https://api.github.com/repos/nuvoxel/MMKeypad/releases?per_page=30"
+  "https://api.github.com/repos/nuvoxel/MMKeypad/releases?per_page=16"
 #endif
 
 // Artifact this platform installs. The T3's updater takes a t3-bundle tar (app +
@@ -50,7 +57,10 @@ static const char *TAG = "fwupdate";
 #define FWU_EXT_LEN (sizeof(FWU_ASSET_EXT) - 1)
 
 #define FWU_MAX     16          // most versions we list
-#define FWU_BODYCAP (128 * 1024) // response cap; releases JSON is well under this
+#define FWU_BODYCAP (256 * 1024) // response cap -- see FWUPDATE_RELEASES_URL's
+                                  // comment; this is margin over today's real size
+                                  // (178KB for 10 releases), not a number the
+                                  // per_page cap above is expected to reach
 
 static volatile fwupdate_state_t s_state = FWU_IDLE;
 static fwupdate_rel_t s_rel[FWU_MAX];
@@ -165,6 +175,17 @@ static void fetch_task(void *arg) {
     return;
   }
   int n = http_get(FWUPDATE_RELEASES_URL, body, FWU_BODYCAP);
+  if (n == FWU_BODYCAP - 1) {
+    // http_get() stopping exactly at cap-1 means the body filled the buffer and got
+    // cut off mid-read, not that GitHub's response happened to be exactly this size --
+    // the ambiguous truncated-JSON parse failure this used to surface as ("bad
+    // response from GitHub") is exactly this, just diagnosed instead of guessed at.
+    snprintf(s_err, sizeof(s_err), "release list too large (%d KB) -- FWU_BODYCAP", n / 1024);
+    s_state = FWU_ERROR;
+    free(body);
+    vTaskDelete(NULL);
+    return;
+  }
   if (n <= 0) {
     snprintf(s_err, sizeof(s_err), "couldn't reach GitHub");
     s_state = FWU_ERROR;

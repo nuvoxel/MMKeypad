@@ -2044,7 +2044,12 @@ static const char *secStateLabel(const char *raw, char *buf, size_t n)
 }
 static bool secInDelay(const partition_t *p) { return p && p->state[0] && strstr(p->state, "DELAY"); }
 static bool secInAlarm(const partition_t *p) { return p && p->state[0] && strstr(p->state, "ALARM"); }
-static bool secIsArmed(const partition_t *p) { return p && p->state[0] && strstr(p->state, "ARMED") && !secInDelay(p); }
+// strstr(..., "ARMED") alone matches "DISARMED_READY" too -- "DISARMED" contains
+// "ARMED" as a substring. Must exclude the DISARMED_* states explicitly.
+static bool secIsArmed(const partition_t *p) {
+    return p && p->state[0] && strstr(p->state, "ARMED") &&
+           strncmp(p->state, "DISARMED", 8) != 0 && !secInDelay(p);
+}
 
 // One line of feedback for an in-flight secarm/secdisarm -- NEVER the big state
 // label above it. That label only ever mirrors the partition's driver-confirmed
