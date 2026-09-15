@@ -578,19 +578,19 @@ partition, same list-then-detail idiom as the Comfort page) when there is more
 than one, and skips straight to the single partition's detail page when there
 is exactly one — the common case, and the original issue #2 UX intent.
 
-> **NEEDS LIVE CONFIRMATION** (carried over from issue #2 — discovery is what
-> this follow-up confirmed, not the listener contract below). The partition
-> proxy's command vocabulary (`PARTITION_ARM`/`PARTITION_DISARM`/
-> `EXECUTE_EMERGENCY` and their params) was read from a live Director's proxy
-> dump and is high-confidence. The exact mechanism for receiving partition
-> **variable-changed** notifications (`C4:RegisterVariableListener` with a
-> variable *name* vs. a numeric id — see `driver.lua` `SECURITY_WATCH_VARS`) is
-> **not** confirmed the way the room variables above are, and per-zone
-> open/closed/bypassed status is not modeled on the wire at all — the
+> **RESOLVED**: the variable IDs were confirmed live via the Director REST API's
+> per-device `/variables` listing on a real partition (id 2685) — a clean,
+> documented, sequential numeric set (1000-1015; `PARTITION_STATE` is 1007),
+> not the string names an earlier draft guessed. Reading by string name
+> silently returned nil from `C4:GetDeviceVariable`, which is why every
+> partition showed `"UNKNOWN"` on-device until this was fixed — a real,
+> shipped bug, not just an unconfirmed assumption. `driver.lua`'s
+> `SEC_VAR_*` constants and `SECURITY_WATCH_VARS` now use these numeric ids,
+> matching every other variable read/listener in this file. Per-zone
+> open/closed/bypassed status is still not modeled on the wire at all — the
 > `SECURITY_PANEL` proxy exposes no polled zone list, only an unconfirmed
-> notify push. Treat both as needing verification against a live
-> Composer/Director with a **spare/test** partition before this ships to a
-> real panel — never against a production security system.
+> notify push — that piece remains a real gap, not this section's resolved
+> variable-id issue.
 
 ### `secstate` (driver → device) — partition list snapshot, sent on connect, on every room change, and on every real variable change
 
@@ -771,11 +771,10 @@ immediately. Instead it relies on `C4:RegisterVariableListener` on the thermosta
 five confirmed **numeric** variable ids (1101/1102/1103/1104/1105 — SCALE, 1100, isn't
 watched, since a units-preference change is rare and any other push would pick it up)
 firing `OnWatchedVariableChanged` the instant Control4 reports the real change, which
-triggers a fresh `comfortlist` push. This is more likely to actually work than the
-Security page's own listener attempt: Security's `SECURITY_WATCH_VARS` are **guessed
-variable NAMES** against an unconfirmed listener contract (see the Security section
-above), while thermostatV2's six variables above are documented, confirmed-live
-**numeric** ids — `C4:RegisterVariableListener`'s normal, expected contract.
+triggers a fresh `comfortlist` push. Security's `SECURITY_WATCH_VARS` use the same
+kind of confirmed-live **numeric** ids now (see the Security section above — this
+was originally guessed variable names, which is why every partition showed
+`"UNKNOWN"` until it was fixed).
 
 ---
 

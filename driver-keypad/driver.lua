@@ -2144,21 +2144,28 @@ end
 --
 -- Never sends PARTITION_ARM/PARTITION_DISARM/EXECUTE_EMERGENCY as part of
 -- discovery -- GET_SECURITY_DEVICES and GetDeviceVariable are read-only.
+-- RESOLVED (was "NEEDS LIVE CONFIRMATION" through issue #2 and its first follow-up):
+-- confirmed live via the Director REST per-device /variables listing on the real
+-- Office partition (id 2685) -- a clean, sequential, documented set of NUMERIC ids,
+-- not the string names an earlier draft guessed (which silently read back nil from
+-- C4:GetDeviceVariable, showing "Unknown" for every partition's state on-device).
+-- PARTITION_STATE (1007) read "DISARMED_READY" live.
+local SEC_VAR_PARTITION_STATE   = 1007
+local SEC_VAR_DISPLAY_TEXT      = 1004
+local SEC_VAR_TROUBLE_TEXT      = 1005
+local SEC_VAR_OPEN_ZONE_COUNT   = 1010
+local SEC_VAR_DELAY_TIME_TOTAL  = 1008
+local SEC_VAR_DELAY_TIME_REMAIN = 1009
+local SEC_VAR_ALARM_TYPE        = 1011
+local SEC_VAR_ARMED_TYPE        = 1012
+local SEC_VAR_LAST_ZONE_FAULTED = 1015
+local SEC_VAR_LAST_ARM_FAILED   = 1014
 local SECURITY_WATCH_VARS = {
-  "PARTITION_STATE", "DISPLAY_TEXT", "TROUBLE_TEXT", "OPEN_ZONE_COUNT",
-  "DELAY_TIME_TOTAL", "DELAY_TIME_REMAINING", "ALARM_TYPE", "ARMED_TYPE",
-  "LAST_ZONE_FAULTED", "LAST_ARM_FAILED",
+  SEC_VAR_PARTITION_STATE, SEC_VAR_DISPLAY_TEXT, SEC_VAR_TROUBLE_TEXT,
+  SEC_VAR_OPEN_ZONE_COUNT, SEC_VAR_DELAY_TIME_TOTAL, SEC_VAR_DELAY_TIME_REMAIN,
+  SEC_VAR_ALARM_TYPE, SEC_VAR_ARMED_TYPE, SEC_VAR_LAST_ZONE_FAULTED,
+  SEC_VAR_LAST_ARM_FAILED,
 }
--- NEEDS LIVE CONFIRMATION (carried over from issue #2, still unresolved by this
--- follow-up -- discovery was the thing confirmed this session, not the listener
--- contract): these variable NAMES come from a live Director dump of the SECURITY
--- partition proxy, but every other listener in this file (ROOM_VAR, AGG_WATCH_VARS,
--- COMFORT_WATCH_VARS) watches a documented NUMERIC variable id, and
--- C4:RegisterVariableListener's normal contract is a numeric id -- passing a
--- string name here is the best available guess, not confirmed for SECURITY
--- specifically. If a discovered partition never fires OnWatchedVariableChanged for
--- these, this list -- and whether it needs numeric ids instead -- is the first
--- thing to check. Never re-probe this against the live 2684/2685 partitions.
 local SECURITY_MAX = 4   -- sanity ceiling (net.h NET_MAX_PARTITIONS); live max seen is 2 (room 2434)
 
 -- (Un)register the per-partition variable listeners so a real Control4-side
@@ -2200,22 +2207,22 @@ function BuildSecurityList()
       local id = tonumber(src:match("<id>(%d+)</id>") or "")
       if id and #out < SECURITY_MAX then
         local name = DeviceName(id)
-        local function v(varName)
-          local okv, val = pcall(C4.GetDeviceVariable, C4, id, varName)
+        local function v(varId)
+          local okv, val = pcall(C4.GetDeviceVariable, C4, id, varId)
           return okv and val or nil
         end
         out[#out + 1] = {
           id             = id,
           title          = name ~= "" and Normalize(name) or "",
-          state          = tostring(v("PARTITION_STATE") or "UNKNOWN"),
-          display        = tostring(v("DISPLAY_TEXT") or ""),
-          trouble        = tostring(v("TROUBLE_TEXT") or ""),
-          openZones      = tonumber(v("OPEN_ZONE_COUNT")) or 0,
-          delayTotal     = tonumber(v("DELAY_TIME_TOTAL")) or 0,
-          delayRemaining = tonumber(v("DELAY_TIME_REMAINING")) or 0,
-          alarmType      = tostring(v("ALARM_TYPE") or ""),
-          armedType      = tostring(v("ARMED_TYPE") or ""),
-          lastFaulted    = tostring(v("LAST_ZONE_FAULTED") or ""),
+          state          = tostring(v(SEC_VAR_PARTITION_STATE) or "UNKNOWN"),
+          display        = tostring(v(SEC_VAR_DISPLAY_TEXT) or ""),
+          trouble        = tostring(v(SEC_VAR_TROUBLE_TEXT) or ""),
+          openZones      = tonumber(v(SEC_VAR_OPEN_ZONE_COUNT)) or 0,
+          delayTotal     = tonumber(v(SEC_VAR_DELAY_TIME_TOTAL)) or 0,
+          delayRemaining = tonumber(v(SEC_VAR_DELAY_TIME_REMAIN)) or 0,
+          alarmType      = tostring(v(SEC_VAR_ALARM_TYPE) or ""),
+          armedType      = tostring(v(SEC_VAR_ARMED_TYPE) or ""),
+          lastFaulted    = tostring(v(SEC_VAR_LAST_ZONE_FAULTED) or ""),
         }
         newWatch[id] = true
       end
