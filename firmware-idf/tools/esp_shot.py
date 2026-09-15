@@ -41,9 +41,15 @@ def snapshot():
     s.reset_input_buffer()
     s.write(b"\x02")   # request a fresh snapshot (firmware also auto-dumps after boot)
     s.flush()
-    deadline = time.time() + 30
+    # Header-search deadline is separate from (and much shorter than) the body
+    # read below: a single shared 30s deadline covered BOTH here, which was
+    # nowhere near enough for a large frame's body (a WS43 800x480 RGB565 frame
+    # is stride*h = 768000 bytes -- at 115200 baud that alone is ~65s, so the
+    # old code reliably reported "short read" past the header). The header
+    # itself always arrives within a couple seconds of the request.
+    hdr_deadline = time.time() + 10
     buf = b""
-    while time.time() < deadline:
+    while time.time() < hdr_deadline:
         buf += s.read(256)
         m = hdr.search(buf)
         if m:
@@ -55,8 +61,12 @@ def snapshot():
     else:
         print("timeout: no <<SNAP>> header (is MMK_SNAPSHOT flashed? try again)"); sys.exit(1)
     need = stride * h
+    # Budget the body read from the ACTUAL byte count at 115200 baud (~11.5
+    # KB/s), plus generous slack -- not a flat constant that happens to fit
+    # small boards but not this one.
+    body_deadline = time.time() + max(30, need / 9000 + 15)
     data = buf
-    while len(data) < need and time.time() < deadline:
+    while len(data) < need and time.time() < body_deadline:
         data += s.read(min(4096, need - len(data)))
     if len(data) < need:
         print(f"short read: {len(data)}/{need}"); sys.exit(1)

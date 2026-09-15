@@ -3729,7 +3729,7 @@ home_chrome:
 #include "esp_lvgl_port.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "others/snapshot/lv_snapshot.h"
+#include "draw/snapshot/lv_snapshot.h"   // moved from others/ in this LVGL version
 // s_injStage counts down: >1 = held PRESSED this many more reads, ==1 = the
 // RELEASE read (completes the click), 0 = idle. Holding the press for a few
 // poll cycles makes it register as a clean click (a 1-cycle blip can miss).

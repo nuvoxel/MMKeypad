@@ -169,6 +169,13 @@
 // serial write, blocking LVGL's own task for the whole transfer, which is what
 // actually triggered the "task WDT reboot loop" this comment used to warn
 // about. Fixed to only hold the lock for the fast in-memory snapshot copy.
+// Tried live on the office bench unit (2026-09-15): the lock-scope fix above
+// works (no WDT reboot), but lv_snapshot_take() came back all-zero/solid black
+// every time, tap or no tap, on this board's DMA2D-composited flush path --
+// unconfirmed whether that's an LVGL/DMA2D snapshot incompatibility or
+// something else. Left disabled and unresolved rather than spending more of
+// this session chasing it; the sim (firmware-linux-t3/sim) is the verified
+// path for checking layouts pending a real fix here.
 #define MMK_SNAPSHOT     0
 
 // C6 slave OTA (bench only): flip to 1 to run a ONE-SHOT OTA of the onboard
