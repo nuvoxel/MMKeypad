@@ -163,7 +163,13 @@
 // that already store a value. 50 => the driver's 100% is half power.
 #define HALO_BRIGHT_SCALE 50
 
-#define MMK_SNAPSHOT     0   // OFF: on the 480x800 panel the framebuffer-over-serial dump starves LVGL -> task WDT reboot loop. Dev-only; flip to 1 on the bench.
+// OFF by default -- still dev-only (a full 800x480 RGB565 frame is ~768KB, on
+// the order of a minute over 115200 baud serial) -- but safe to flip to 1 on
+// the bench now: snap_task used to hold lvgl_port_lock() across that entire
+// serial write, blocking LVGL's own task for the whole transfer, which is what
+// actually triggered the "task WDT reboot loop" this comment used to warn
+// about. Fixed to only hold the lock for the fast in-memory snapshot copy.
+#define MMK_SNAPSHOT     0
 
 // C6 slave OTA (bench only): flip to 1 to run a ONE-SHOT OTA of the onboard
 // ESP32-C6 esp_hosted slave from the `model` partition on the next boot (see

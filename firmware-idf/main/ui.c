@@ -3758,23 +3758,32 @@ static void snap_task(void *arg)
         int c = trig ? 0x02 : getchar();
         trig = false;
         if (c == 0x02) {
+            // The lock must cover ONLY the snapshot COPY, not the serial write below.
+            // This used to hold lvgl_port_lock() across the fwrite() too -- at 115200
+            // baud, a WS43 800x480 RGB565 frame (768000 bytes) takes on the order of a
+            // minute to drain, and LVGL's own task sat blocked on this same mutex the
+            // whole time, unable to service anything (including whatever keeps its task
+            // fed for the watchdog) -- which is exactly the "starves LVGL -> task WDT
+            // reboot loop" board.h documented and disabled MMK_SNAPSHOT over. The
+            // snapshot itself (an in-memory copy) is fast; only THAT needs the lock.
+            lv_draw_buf_t *b = NULL;
             if (lvgl_port_lock(4000)) {
                 // Overlays (Settings / intercom picker) live on lv_layer_top(), which is
                 // NOT part of the active screen — snapshot the top layer when it has an
                 // open (full-screen, opaque) overlay so those pages are captured too.
                 lv_obj_t *top = lv_layer_top();
                 lv_obj_t *tgt = (lv_obj_get_child_count(top) > 0) ? top : lv_screen_active();
-                lv_draw_buf_t *b = lv_snapshot_take(tgt, LV_COLOR_FORMAT_RGB565);
-                if (b) {
-                    printf("\n<<SNAP %d %d %d>>\n", (int)b->header.w, (int)b->header.h, (int)b->header.stride);
-                    fwrite(b->data, 1, b->data_size, stdout);
-                    fflush(stdout);
-                    printf("\n<<SNAPEND>>\n");
-                    lv_draw_buf_destroy(b);
-                } else {
-                    printf("<<SNAPERR take>>\n");
-                }
+                b = lv_snapshot_take(tgt, LV_COLOR_FORMAT_RGB565);
                 lvgl_port_unlock();
+            }
+            if (b) {
+                printf("\n<<SNAP %d %d %d>>\n", (int)b->header.w, (int)b->header.h, (int)b->header.stride);
+                fwrite(b->data, 1, b->data_size, stdout);
+                fflush(stdout);
+                printf("\n<<SNAPEND>>\n");
+                lv_draw_buf_destroy(b);
+            } else {
+                printf("<<SNAPERR take>>\n");
             }
         } else if (c == 0x03) {
             int xh = getc_blk(), xl = getc_blk(), yh = getc_blk(), yl = getc_blk();
