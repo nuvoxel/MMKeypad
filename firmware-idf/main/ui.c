@@ -15,6 +15,7 @@
 #include "lvgl.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
+#include "esp_system.h"   // esp_restart() — Diagnostics' "Reboot panel" button
 #include "lodepng.h"
 #include <stdio.h>
 #include <string.h>
@@ -1089,6 +1090,10 @@ static lv_obj_t         *s_netNoteLbl;  // "Restart to apply", hidden until touc
 // top-level object and must be torn down explicitly).
 static lv_timer_t *s_micTestTimer;
 static lv_obj_t   *s_micTestLbl;
+// "Reconnect to driver" label auto-revert -- same cosmetic-timing/teardown
+// discipline as the mic test; net_force_disconnect() doesn't report back either.
+static lv_timer_t *s_reconnTimer;
+static lv_obj_t   *s_reconnLbl;
 // "Check for update" label auto-revert. device_ota_check_now() is fire-and-forget
 // (no result callback), so without this the button label sticks on "Checking…"
 // forever when we're already current. Same teardown discipline as the mic test.
@@ -1110,6 +1115,8 @@ static void onSettingsClose(lv_event_t *e) {
     (void)e;
     if (s_micTestTimer) { lv_timer_delete(s_micTestTimer); s_micTestTimer = NULL; }
     s_micTestLbl = NULL;
+    if (s_reconnTimer) { lv_timer_delete(s_reconnTimer); s_reconnTimer = NULL; }
+    s_reconnLbl = NULL;
     if (s_fwCheckTimer) { lv_timer_delete(s_fwCheckTimer); s_fwCheckTimer = NULL; }
     s_fwCheckLbl = NULL;
     if (s_netTimer) { lv_timer_delete(s_netTimer); s_netTimer = NULL; }
@@ -1286,6 +1293,31 @@ static void onMicTest(lv_event_t *e) {
     // loopback ~= 9s); the T3 path finishes sooner and just reverts early.
     s_micTestTimer = lv_timer_create(onMicTestDone, 9500, NULL);
     lv_timer_set_repeat_count(s_micTestTimer, 1);
+}
+
+// Drops the driver link so the Director dials back in fresh -- same recovery a
+// power-cycle gives you for a wedged :6700 socket, without the reboot.
+// net_force_disconnect() doesn't report back, so the label revert is cosmetic
+// timing, same as the mic test above.
+static void onReconnectDone(lv_timer_t *t) {
+    (void)t;
+    s_reconnTimer = NULL;
+    if (s_reconnLbl) lv_label_set_text(s_reconnLbl, "Reconnect to driver");
+}
+static void onReconnectDriver(lv_event_t *e) {
+    if (s_reconnTimer) return;   // already running
+    lv_obj_t *btn = lv_event_get_target(e);
+    lv_obj_t *lbl = btn ? lv_obj_get_child(btn, 0) : NULL;
+    if (lbl) lv_label_set_text(lbl, "Reconnecting\xE2\x80\xA6");
+    s_reconnLbl = lbl;
+    net_force_disconnect();
+    s_reconnTimer = lv_timer_create(onReconnectDone, 2500, NULL);
+    lv_timer_set_repeat_count(s_reconnTimer, 1);
+}
+
+static void onRebootPanel(lv_event_t *e) {
+    (void)e;
+    esp_restart();
 }
 
 static void onCycle(lv_event_t *e) {
@@ -1489,6 +1521,8 @@ static lv_obj_t *settings_card_page(lv_obj_t *ov, int page, const char *title) {
 static void settings_teardown(void) {
     if (s_micTestTimer) { lv_timer_delete(s_micTestTimer); s_micTestTimer = NULL; }
     s_micTestLbl = NULL;
+    if (s_reconnTimer) { lv_timer_delete(s_reconnTimer); s_reconnTimer = NULL; }
+    s_reconnLbl = NULL;
     if (s_fwCheckTimer) { lv_timer_delete(s_fwCheckTimer); s_fwCheckTimer = NULL; }
     s_fwCheckLbl = NULL;
     if (s_netTimer) { lv_timer_delete(s_netTimer); s_netTimer = NULL; }
@@ -1814,6 +1848,32 @@ static void ui_show_settings(void) {
             lv_obj_add_event_cb(btn, onMicTest, LV_EVENT_CLICKED, NULL);
             lv_obj_t *l = lv_label_create(btn);
             lv_label_set_text(l, "Test mic");
+            lv_obj_center(l);
+            lv_obj_set_style_text_font(l, F16, 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
+        }
+        {
+            lv_obj_t *btn = lv_button_create(card);
+            lv_obj_set_width(btn, LV_PCT(100));
+            lv_obj_set_style_bg_color(btn, lv_color_hex(C_BTN), 0);
+            lv_obj_set_style_pad_ver(btn, 10, 0);
+            lv_obj_add_event_cb(btn, onReconnectDriver, LV_EVENT_CLICKED, NULL);
+            lv_obj_t *l = lv_label_create(btn);
+            lv_label_set_text(l, "Reconnect to driver");
+            lv_obj_center(l);
+            lv_obj_set_style_text_font(l, F16, 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
+        }
+        {   // Destructive-ish (drops now-playing/calls), so it gets the red treatment
+            // the rest of Diagnostics doesn't -- not a two-tap arm/confirm dance like
+            // the firmware picker, since a reboot is cheap and fully recoverable.
+            lv_obj_t *btn = lv_button_create(card);
+            lv_obj_set_width(btn, LV_PCT(100));
+            lv_obj_set_style_bg_color(btn, lv_color_hex(0xC85050), 0);
+            lv_obj_set_style_pad_ver(btn, 10, 0);
+            lv_obj_add_event_cb(btn, onRebootPanel, LV_EVENT_CLICKED, NULL);
+            lv_obj_t *l = lv_label_create(btn);
+            lv_label_set_text(l, "Reboot panel");
             lv_obj_center(l);
             lv_obj_set_style_text_font(l, F16, 0);
             lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);

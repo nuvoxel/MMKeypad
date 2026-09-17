@@ -211,6 +211,11 @@ typedef struct {
 // Start the TCP server (the DEVICE listens; the Control4 driver dials in).
 void net_start(uint16_t port, const net_callbacks_t *cb);
 bool net_connected(void);
+// Drops the current driver link (if any) so the Director dials back in fresh --
+// e.g. an on-screen "Reconnect to driver" button. Async: closes the socket out
+// from under serve_client()'s blocking recv(), which does its own cleanup and
+// fires on_disconnect; there is nothing else to wait on here.
+void net_force_disconnect(void);
 void net_get_ip(char *buf, size_t n);   // primary local IPv4 string ("" if offline)
 const char *net_active_transport(void); // "Ethernet" / "Wi-Fi" / "" when nothing is addressed
 int  net_driver_proto(void);            // driver's protocol version (0 = unknown/offline)

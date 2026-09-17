@@ -268,6 +268,17 @@ void net_report_halo(void)
 }
 
 bool net_connected(void) { return s_conn >= 0; }
+
+void net_force_disconnect(void)
+{
+    xSemaphoreTake(s_tx_mtx, portMAX_DELAY);
+    int fd = s_conn;
+    xSemaphoreGive(s_tx_mtx);
+    // shutdown(), not close(): serve_client() still owns the fd and does its own
+    // close()/s_conn cleanup once this wakes its blocking recv(). Closing it here
+    // too would race that cleanup onto a reused fd number.
+    if (fd >= 0) shutdown(fd, SHUT_RDWR);
+}
 int  net_driver_proto(void) { return s_driver_proto; }
 const char *net_peer_ip(void) { return s_peer_ip; }
 const char *net_current_room(void) { return s_last_room; }

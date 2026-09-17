@@ -40,6 +40,11 @@ void bsp_apply_orientation(uint8_t orient) { (void)orient; }
 
 /* ── net: pretend the Control4 driver is connected, canned addresses ──────── */
 bool  net_connected(void)              { return true; }
+void  net_force_disconnect(void)       { }
+
+/* ── esp_system: no-op -- a static snapshot never actually taps the button,
+ * but the linker still needs the symbol Diagnostics' "Reboot panel" calls. */
+void  esp_restart(void)                { }
 int   net_driver_proto(void)           { return NET_PROTO_VERSION; }
 const char *net_peer_ip(void)          { return "192.168.1.220"; }   /* "Director" */
 void  net_get_ip(char *buf, size_t n)  { if (buf && n) { strncpy(buf, "192.168.1.50", n - 1); buf[n - 1] = 0; } }

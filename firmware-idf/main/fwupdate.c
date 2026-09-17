@@ -84,7 +84,12 @@ static void running_core(char *out, size_t cap) {
 }
 
 // Read the whole response body into buf (NUL-terminated). Returns length, or -1.
-static int http_get(const char *url, char *buf, int cap) {
+// *out_status is the HTTP status code (0 if we never got a response at all) --
+// GitHub's unauthenticated rate limit (60/hr, shared across the whole LAN's
+// egress IP) returns a 403/429 with a JSON *object* body ({"message":...}),
+// which used to reach the caller indistinguishable from any other non-array
+// response and get reported as the generic "bad response from GitHub".
+static int http_get(const char *url, char *buf, int cap, int *out_status) {
   esp_http_client_config_t cfg = {
       .url = url,
       .crt_bundle_attach = esp_crt_bundle_attach,
@@ -97,6 +102,7 @@ static int http_get(const char *url, char *buf, int cap) {
   int total = -1;
   if (esp_http_client_open(cli, 0) == ESP_OK) {
     esp_http_client_fetch_headers(cli);
+    *out_status = esp_http_client_get_status_code(cli);
     total = 0;
     int r;
     while (total < cap - 1 &&
@@ -111,7 +117,9 @@ static int http_get(const char *url, char *buf, int cap) {
 }
 
 // Parse the releases JSON, filling s_rel with the assets that match our SKU.
-static void parse_releases(const char *body) {
+// `status` is the HTTP status http_get() saw, purely to make a non-array body
+// (rate limit, GitHub outage) diagnosable instead of a bare "bad response".
+static void parse_releases(const char *body, int status) {
   char sku[48];
   snprintf(sku, sizeof(sku), "%s-", device_fw_image_id());  // "mmk-s3-" / "mmk-t3-"
   size_t skulen = strlen(sku);
@@ -121,8 +129,20 @@ static void parse_releases(const char *body) {
   cJSON *root = cJSON_Parse(body);
   s_count = 0;
   if (!cJSON_IsArray(root)) {
+    // A 403/429 body is a JSON OBJECT ({"message":"API rate limit exceeded..."}),
+    // valid JSON that just isn't the array we expect -- surface the status (and
+    // GitHub's own message, if it parsed) instead of the old undifferentiated
+    // "bad response", which this and a GitHub-side outage both looked like.
+    cJSON *msg = cJSON_IsObject(root) ? cJSON_GetObjectItem(root, "message") : NULL;
+    if (status == 403 || status == 429)
+      snprintf(s_err, sizeof(s_err), "GitHub rate-limited us (%d)%s%s", status,
+               cJSON_IsString(msg) ? ": " : "", cJSON_IsString(msg) ? msg->valuestring : "");
+    else if (status && status != 200)
+      snprintf(s_err, sizeof(s_err), "GitHub returned HTTP %d", status);
+    else
+      snprintf(s_err, sizeof(s_err), "bad response from GitHub");
+    ESP_LOGW(TAG, "releases parse failed, status=%d body[0..120]=%.120s", status, body);
     cJSON_Delete(root);
-    snprintf(s_err, sizeof(s_err), "bad response from GitHub");
     s_state = FWU_ERROR;
     return;
   }
@@ -174,7 +194,8 @@ static void fetch_task(void *arg) {
     vTaskDelete(NULL);
     return;
   }
-  int n = http_get(FWUPDATE_RELEASES_URL, body, FWU_BODYCAP);
+  int status = 0;
+  int n = http_get(FWUPDATE_RELEASES_URL, body, FWU_BODYCAP, &status);
   if (n == FWU_BODYCAP - 1) {
     // http_get() stopping exactly at cap-1 means the body filled the buffer and got
     // cut off mid-read, not that GitHub's response happened to be exactly this size --
@@ -190,8 +211,8 @@ static void fetch_task(void *arg) {
     snprintf(s_err, sizeof(s_err), "couldn't reach GitHub");
     s_state = FWU_ERROR;
   } else {
-    ESP_LOGI(TAG, "releases: %d bytes", n);
-    parse_releases(body);
+    ESP_LOGI(TAG, "releases: %d bytes, status=%d", n, status);
+    parse_releases(body, status);
   }
   free(body);
   vTaskDelete(NULL);
