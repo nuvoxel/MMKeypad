@@ -2183,6 +2183,16 @@ static bool secIsArmed(const partition_t *p) {
 // text-only. secRebuild() calls this with the same tri-state read as the home
 // tile's badge (see build_home_tiles' old tileCard call): alarm beats armed beats
 // delay beats disarmed-ready.
+//
+// "Unlock"'s ink sits a few px right of the glyph box's own center (measured on
+// the office WS43: ~3-4 device px at the compact tier's 1.3x icon scale) --
+// small enough to be borderline-imperceptible and arguably just how an open
+// padlock reads, but nudged left here since it's a one-line fix. Scales with
+// heroIconScale (the icon's own render magnification, set once per page build
+// in buildSecurityPage), not heroD, since the same base glyph asset at the same
+// transform_scale carries the same absolute pixel asymmetry regardless of how
+// big the ring around it is. "Lock" (closed) measured centered -- no nudge.
+static float s_secHeroIconScale = 1.0f;
 static void secSetHero(const partition_t *p)
 {
     if (!s_secHero || !s_secHeroIcon) return;
@@ -2192,6 +2202,8 @@ static void secSetHero(const partition_t *p)
     lv_obj_set_style_border_color(s_secHero, lv_color_hex(ring), 0);
     lv_label_set_text(s_secHeroIcon, iconGlyph(locked ? "Lock" : "Unlock"));
     lv_obj_set_style_text_color(s_secHeroIcon, lv_color_hex(ring), 0);
+    int dx = locked ? 0 : -(int)(2.6f * s_secHeroIconScale);
+    lv_obj_align(s_secHeroIcon, LV_ALIGN_CENTER, dx, 0);
 }
 
 // One line of feedback for an in-flight secarm/secdisarm -- NEVER the big state
@@ -2457,8 +2469,9 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_obj_set_style_text_color(s_secHeroIcon, lv_color_hex(C_GREEN), 0);
     lv_label_set_text(s_secHeroIcon, iconGlyph("Unlock"));
     float heroIconScale = compact ? 1.3f : 2.2f;
+    s_secHeroIconScale = heroIconScale;
     lv_obj_set_style_transform_scale(s_secHeroIcon, (int)(256 * heroIconScale), 0);
-    lv_obj_center(s_secHeroIcon);
+    lv_obj_align(s_secHeroIcon, LV_ALIGN_CENTER, -(int)(2.6f * heroIconScale), 0);
 
     s_secStateLbl = lv_label_create(s_secPanel);
     lv_obj_set_style_text_font(s_secStateLbl, compact ? F24 : F32, 0);
