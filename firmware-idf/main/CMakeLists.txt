@@ -1,18 +1,20 @@
 # One source tree builds multiple boards, selected by the MMK_BOARD cache var
-# (pass -D MMK_BOARD=<name>; defaults to the S3 lcdwiki keypad). The value is also
+# (pass -D MMK_BOARD=<name>; defaults to ws43, the primary panel). The value is also
 # turned into a MMK_BOARD_<UPPER> compile definition that board.h keys off.
-#   s3_lcdwiki  — lcdwiki 2.8" ESP32-S3 (SPI ILI9341 + FT6336), WiFi, audio
+#   ws43        — Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 (480x800 DSI, WiFi, audio)
+#   p4_nano     — Waveshare ESP32-P4-NANO KIT-D (10.1" DSI, Ethernet, audio)
 #   p4_poe_eth  — Waveshare ESP32-P4-POE-ETH-NH (headless, Ethernet, audio)
+#   s3_matrix   — ESP32-S3 + 64x64 HUB75 LED matrix (album art only, own slim UI)
 # IDF collects REQUIRES by evaluating this file in a scripting-mode SUBPROCESS
 # ("early expansion") where -D cache vars don't exist — only the environment
 # survives. board.sh exports MMK_BOARD as well as passing -D, so per-board
 # requirements resolve correctly in both passes. (A bare idf.py build without
-# the env var silently expands as the s3 default — use board.sh.)
+# the env var silently expands as the ws43 default — use board.sh.)
 if(NOT DEFINED MMK_BOARD)
     if(DEFINED ENV{MMK_BOARD})
         set(MMK_BOARD "$ENV{MMK_BOARD}")
     else()
-        set(MMK_BOARD "s3_lcdwiki")
+        set(MMK_BOARD "ws43")
     endif()
 endif()
 message(STATUS "main: MMK_BOARD='${MMK_BOARD}'")
@@ -32,7 +34,7 @@ set(reqs   nvs_flash esp_netif esp_event lwip json esp_hw_support
 # could reach. Recoverable from git if the browse work resumes.
 set(ui_srcs "ui.c" "art.c" "lodepng.c"
             "mmk_text_14.c" "mmk_text_16.c" "mmk_text_24.c" "mmk_text_32.c"
-            "mmk_icons_24.c" "mmk_icons_34.c" "mmk_c4icons.c" "mmk_ha_icons.c")
+            "mmk_icons_24.c" "mmk_icons_34.c" "mmk_icons_48.c")
 # Audio/SIP intercom sources shared by the audio boards (s3 + p4_poe_eth).
 set(audio_srcs "audio.c" "sip.c")
 set(audio_reqs esp_driver_i2s espressif__media_lib_sal)
@@ -96,7 +98,7 @@ elseif(MMK_BOARD STREQUAL "p4_poe_eth")
 elseif(MMK_BOARD STREQUAL "s3_matrix")
     # ESP32-S3 + 64x64 HUB75 RGB LED matrix — album-art-only display (no touch,
     # no audio). Reuses the whole net/protocol/art stack: only the display layer
-    # (bsp_matrix.cpp) and a slim UI (ui_matrix.c) differ from s3_lcdwiki. Art is
+    # (bsp_matrix.cpp) and a slim UI (ui_matrix.c) differ from the display boards. Art is
     # art.c (JPEG/PNG decode + scale) rendered into a 64x64 LVGL canvas that
     # flushes to the panel. WiFi via the softAP captive portal (wifi.c). The
     # `hub75` DMA driver (esphome/esp-hub75, MIT) is gated to this board in
@@ -106,13 +108,7 @@ elseif(MMK_BOARD STREQUAL "s3_matrix")
     list(APPEND srcs "bsp_matrix.cpp" "bsp_matrix_disp.c" "ui_matrix.c" "wifi.c" "art.c" "lodepng.c")
     list(APPEND reqs esp_wifi esphome__esp-hub75)
 else()
-    # s3_lcdwiki — display + touch UI, WiFi, audio/SIP intercom, halo RGB LED.
-    # NO BLE provisioning: native NimBLE doesn't fit the S3's internal RAM alongside
-    # WiFi + LVGL (crash/OOM — see board.h), so the S3 is softAP-captive-portal only.
-    # BLE provisioning is a C6-board feature (ws43).
-    list(APPEND srcs "wifi.c" "bsp.c" "halo.c" ${ui_srcs} ${audio_srcs})
-    list(APPEND reqs esp_wifi espressif__led_strip ${audio_reqs})
-    list(APPEND embeds ${audio_embeds} ${ui_embeds})
+    message(FATAL_ERROR "main: unsupported MMK_BOARD='${MMK_BOARD}' (ws43, p4_nano, p4_poe_eth, s3_matrix)")
 endif()
 
 idf_component_register(SRCS ${srcs} INCLUDE_DIRS "." REQUIRES ${reqs} EMBED_FILES ${embeds})
@@ -122,9 +118,9 @@ string(TOUPPER "${MMK_BOARD}" _board_uc)
 target_compile_definitions(${COMPONENT_LIB} PUBLIC "MMK_BOARD_${_board_uc}=1")
 
 # Display boards: LVGL font include form + vendored lodepng decoder-only flags.
-if(MMK_BOARD STREQUAL "s3_lcdwiki" OR MMK_BOARD STREQUAL "p4_nano" OR MMK_BOARD STREQUAL "ws43")
+if(MMK_BOARD STREQUAL "p4_nano" OR MMK_BOARD STREQUAL "ws43")
     set_source_files_properties(mmk_text_14.c mmk_text_16.c mmk_text_24.c mmk_text_32.c
-                                mmk_icons_24.c mmk_icons_34.c PROPERTIES
+                                mmk_icons_24.c mmk_icons_34.c mmk_icons_48.c PROPERTIES
         COMPILE_DEFINITIONS "LV_LVGL_H_INCLUDE_SIMPLE")
     set_source_files_properties(lodepng.c PROPERTIES COMPILE_DEFINITIONS
         "LODEPNG_NO_COMPILE_ENCODER;LODEPNG_NO_COMPILE_DISK;LODEPNG_NO_COMPILE_ALLOCATORS;LODEPNG_NO_COMPILE_CPP;LODEPNG_NO_COMPILE_ERROR_TEXT"

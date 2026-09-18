@@ -11,7 +11,6 @@ repo="nuvoxel/MMKeypad"
 ver="${tag#v}"
 
 expected=(
-  "mmk-s3-${ver}.bin"
   "mmk-poe-${ver}.bin"
   "mmk-nano-${ver}.bin"
   "mmk-ws43-${ver}.bin"

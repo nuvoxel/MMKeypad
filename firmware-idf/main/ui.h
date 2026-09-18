@@ -40,6 +40,7 @@ void ui_show_security_panel(void);   // open the Security page (sim/preview + pr
                                       // the picker if this room has >1 partition, else its
                                       // one detail page directly
 void ui_show_security_detail(int id); // open one partition's detail page (sim/preview only)
+void ui_show_security_pin(void);      // open the arm-code PIN pad (sim/preview only)
 
 // Comfort page (driver-pushed `comfortlist`; comfort_state_t is in net.h).
 // ui_set_comfort(available:false) hides the tile, same idea as ui_set_security.

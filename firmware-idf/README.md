@@ -14,8 +14,8 @@ audio) the SIP/RTP intercom stack (`esp_media_protocols`), the ES8311 codec
 driver (`esp_codec_dev`), and on-device AEC (`esp-sr`).
 
 ESP-IDF **v5.4** (`~/esp/esp-idf`). Reference panel: Waveshare
-ESP32-P4-WIFI6-Touch-LCD-4.3 (`ws43`). The lcdwiki 2.8" ESP32-S3 (`s3`) and the
-other boards are also supported — see the boards table below for the full set.
+ESP32-P4-WIFI6-Touch-LCD-4.3 (`ws43`). The other boards are also supported —
+see the boards table below for the full set.
 Pinmap in [`main/board.h`](main/board.h) — the single source of truth for pins,
 per-board sections.
 
@@ -29,7 +29,6 @@ the matching sources and managed components.
 
 | Target    | Board (`board.sh` alias)       | Net      | Display | Audio        |
 |-----------|--------------------------------|----------|---------|--------------|
-| `esp32s3` | lcdwiki 2.8" (ILI9341 + FT6336) — `s3` | WiFi | yes | ES8311 + FM8002E + SIP |
 | `esp32s3` | ESP32-S3 + 64×64 HUB75 LED matrix — `matrix` | WiFi | 64×64 art-only | none |
 | `esp32p4` | Waveshare ESP32-P4-POE-ETH-NH — `poe` | Ethernet | headless| ES8311 + NS4150B + SIP |
 | `esp32p4` | Waveshare ESP32-P4-NANO KIT-D (10.1" 800×1280 DSI) — `nano` | Ethernet (PoE) + WiFi | yes | ES8311 + ES7210 (dual-mic + HW AEC) + SIP |
@@ -69,7 +68,6 @@ cd firmware-idf
 ./board.sh poe -p /dev/cu.usbmodemYYYY flash monitor
 
 ./board.sh nano build                     # P4-NANO 10.1" DSI kit
-./board.sh s3 build                       # lcdwiki 2.8" ESP32-S3 keypad
 ./board.sh matrix build                   # S3 + HUB75 LED matrix (art-only)
 ```
 

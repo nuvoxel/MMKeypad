@@ -722,7 +722,7 @@ all 6 real thermostats in this project (ids 2929/2931/2933/2935/2937/2548):
 ### `comfortlist` (driver → device) — thermostat list snapshot, sent on connect/hello, on a `Show Comfort` property change, and on any real variable change
 
 ```json
-{"t":"comfortlist","available":true,"list":[
+{"t":"comfortlist","available":true,"room":2931,"outdoor":58,"list":[
   {"id":2929,"title":"Front Hall Thermostat","temp":74,"mode":"off","fan":"auto","scale":"F"},
   {"id":2931,"title":"Back Hall Thermostat","temp":68,"heat":70,"mode":"heat","fan":"auto","scale":"F"},
   {"id":2933,"title":"Front Hall Radiant","temp":76,"cool":74,"mode":"cool","fan":"on","scale":"F"}
@@ -733,9 +733,11 @@ all 6 real thermostats in this project (ids 2929/2931/2933/2935/2937/2548):
 | field | meaning |
 |---|---|
 | `available` | `false` when the `Show Comfort` dealer property is Hidden — the device hides the Comfort tile/page entirely (feature-detect, matches `secstate.available`). `list` is omitted/ignored when `available` is `false`. |
+| `room` | **Optional.** The `list[].id` of the thermostat that belongs to the panel's own room. The list is house-wide, so this is how the panel knows which reading is "here" for its status line ("72° in"). The Control4 driver resolves it from the room's thermostat binding; a Home Assistant integration sends whichever climate entity it maps to the panel's area. Omitted when the controller cannot tell — the panel then shows no indoor reading rather than guessing. Ignored by firmware that predates it. |
+| `outdoor` | **Optional.** Outdoor temperature in whole degrees, in the same units as the `room` thermostat's `scale`. Omitted when there is no `room` or no outdoor reading. Ignored by firmware that predates it. |
 | `list[].id` | The thermostat's Control4 device id — sent back verbatim in a `comfortcmd` to control this exact unit. |
 | `list[].title` | Display name (`DeviceName`). |
-| `list[].temp` | Current temperature, already converted to whole degrees in `scale`'s units (see the unit-conversion callout above). |
+| `list[].temp` | Current temperature, already converted to whole degrees in `scale`'s units (see the unit-conversion callout above). **Omitted** when the thermostat has no reading (confirmed live: a thermostat that is in the project but not reporting reads raw `0`, which would otherwise convert to a believable 32°F) — the device shows a dash, never a number. |
 | `list[].heat` / `.cool` | Setpoint, same units as `temp`. **Omitted entirely** (not `0`, not `null` — the key is absent) when the thermostat reports no setpoint at all (confirmed live for an "off"-mode unit) — the device must treat a missing field as "no setpoint", never as `0°`. |
 | `list[].mode` | `HVAC_MODE`, lower-cased by the driver for a consistent wire vocabulary: `off` \| `heat` \| `cool` \| `auto` (the live enum's own `"Auto"` is normalized down; `DoComfortCmd` maps back to the real casing when firing `SET_MODE_HVAC`). |
 | `list[].fan` | Raw `FAN_MODE` string — confirmed live values `on` \| `auto`. Display-only in this version; there is no fan control on the wire. |

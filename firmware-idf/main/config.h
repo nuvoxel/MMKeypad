@@ -17,7 +17,7 @@ typedef struct {
     uint8_t  orientation;      // 0=landscape 1=portrait 2=landscape180 3=portrait180
     uint8_t  layout;           // 0=Cover 1=Fit 2=Compact
     uint8_t  bg_preset;        // background gradient: 0=Navigator 1=Ocean 2=Dusk 3=Graphite
-    uint8_t  theme;            // 0=Control4 (X4)  1=Home Assistant — see ui.c THEME_X4/THEME_HA
+    uint8_t  theme;            // UNUSED by the UI (one look, generic wording). Kept so stored NVS blobs stay valid.
     uint8_t  ringer_volume;    // 0..100 chime/announcement/ring loudness (panel speaker)
     uint8_t  muted;            // 0/1 mute the panel's own audio output (forces ringer -> 0)
     // Which transport to bring up. 0=Auto keeps the shipping behaviour (wired

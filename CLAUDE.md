@@ -15,7 +15,7 @@ SDK templates, and its own Director-access notes. Nothing here depends on it.
 
 ## The shape
 
-- `firmware-idf/` — ESP-IDF + LVGL, one tree, five boards via `./board.sh <b>`.
+- `firmware-idf/` — ESP-IDF + LVGL, one tree, four boards via `./board.sh <b>`.
   A bare `idf.py build` is wrong: each board needs its own `MMK_BOARD`, target
   and sdkconfig, and they clobber each other's build dir otherwise.
 - `firmware-linux-t3/` — the same UI and protocol code cross-compiled for

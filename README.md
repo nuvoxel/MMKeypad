@@ -21,7 +21,7 @@ and [`esphome-intercom`](https://github.com/n-IA-hane/esphome-intercom), as well
 
 | Part | Path | What it is |
 |------|------|------------|
-| ESP32 firmware | [`firmware-idf/`](firmware-idf/) | Native ESP-IDF + LVGL, one source tree, five boards (`s3` / `poe` / `nano` / `ws43` / `matrix` via `./board.sh`). **The device is the TCP server** (`:6700`); the driver dials it. |
+| ESP32 firmware | [`firmware-idf/`](firmware-idf/) | Native ESP-IDF + LVGL, one source tree, four boards (`ws43` / `nano` / `poe` / `matrix` via `./board.sh`). **The device is the TCP server** (`:6700`); the driver dials it. |
 | Linux firmware | [`firmware-linux-t3/`](firmware-linux-t3/) | A from-scratch musl/BusyBox Linux + LVGL app for ARM panel hardware, sharing the same UI and protocol code as the ESP build. Includes a **headless simulator** that renders the real UI to PNGs on a desktop. |
 | Keypad driver | [`driver-keypad/`](driver-keypad/) | DriverWorks Lua `.c4z` — multi-proxy: primary `keypad` proxy (now-playing, buttons, LEDs) plus an `intercomproxy` sub-proxy, sharing one device connection. |
 | Intercom driver | [`driver-intercom/`](driver-intercom/) | Standalone intercom endpoint driver. **Requires files from Control4's DriverWorks SDK that are not in this repo** — see [`driver-intercom/README.md`](driver-intercom/README.md). |

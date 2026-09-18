@@ -241,11 +241,11 @@ static void scale_icon_into_work(const unsigned char *rgba, int dw, int dh)
 // PSRAM allocators (below). Decoded WITH alpha and composited over the screen gradient.
 static bool decode_png(int len)
 {
-    unsigned char *rgba = NULL;
     unsigned w = 0, h = 0;
-    if (lodepng_decode32(&rgba, &w, &h, s_jpeg, (size_t)len) != 0 || !rgba) return false;
+    unsigned char *rgba = art_png_decode_rgba(s_jpeg, (size_t)len, &w, &h);
+    if (!rgba) return false;
     scale_icon_into_work(rgba, (int)w, (int)h);
-    lodepng_free(rgba);
+    free(rgba);
     return true;
 }
 

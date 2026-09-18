@@ -1,7 +1,6 @@
 // MMKeypad — native ESP-IDF firmware.
-// Wires the ported stack together. Two board profiles share this entry point,
-// selected at compile time via board.h feature flags:
-//   • s3-lcdwiki  — display + touch UI, WiFi, audio/SIP intercom.
+// Wires the ported stack together. Every board shares this entry point; the
+// subsystems are selected at compile time via board.h feature flags, e.g.:
 //   • p4-poe-eth  — headless wired node: Ethernet + the TCP/protocol server
 //                   and SDDP discovery. (Display + audio off.)
 

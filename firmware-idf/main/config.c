@@ -10,13 +10,11 @@ settings_t g_settings = {
     .brightness = 80,
     .screensaver_sec = 30,   // dim the backlight 30s after the last touch (when idle)
     .dim_brightness = 5,     // idle level after the timeout (0 = screen fully off)
-    // Portrait wall keypads (2.8" lcdwiki S3 @ 240x320, 4.3" ws43 @ 480x800) default
-    // to portrait; the landscape CrowPanel/nano boards keep 0. Only the compiled
+    // The 4.3" ws43 wall keypad (480x800) defaults to portrait; the landscape
+    // nano keeps 0. Only the compiled
     // default differs — a saved orientation (driver Display Orientation / web UI)
     // still overrides on any board.
-#if defined(MMK_BOARD_S3_LCDWIKI)
-    .orientation = 3,        // portrait flipped (180°): S3 panel is inverted in the housing
-#elif defined(MMK_BOARD_WS43)
+#if defined(MMK_BOARD_WS43)
     .orientation = 1,        // portrait
 #else
     .orientation = 0,        // landscape

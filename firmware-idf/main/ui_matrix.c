@@ -85,3 +85,10 @@ void ui_snapshot_start(void)        { /* MMK_SNAPSHOT is off on this board */ }
 void ui_announce(const char *text)  { (void)text; /* TODO: scroll as a marquee */ }
 void ui_call(const char *event, const char *peer) { (void)event; (void)peer; }
 void ui_set_endpoints(const intercom_target_t *eps, int n) { (void)eps; (void)n; }
+// Driver pushes the art-only matrix has nowhere to show. net.c delivers them to
+// every board, so they must exist here or the image does not link.
+void ui_set_rooms(const room_t *rooms, int n)         { (void)rooms; (void)n; }
+void ui_set_favorites(const favorite_t *favs, int n)  { (void)favs; (void)n; }
+void ui_set_security(const security_state_t *sec)     { (void)sec; }
+void ui_set_security_result(const security_result_t *res) { (void)res; }
+void ui_set_comfort(const comfort_state_t *cmf)       { (void)cmf; }

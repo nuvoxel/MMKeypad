@@ -1,4 +1,4 @@
-# ── lcdwiki 2.8" ESP32-S3-WROOM-1 N16R8 (display keypad) ─────────────────────
+# ── ESP32-S3-WROOM-1 N16R8 (s3_matrix LED-matrix board) ─────────────────────
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 

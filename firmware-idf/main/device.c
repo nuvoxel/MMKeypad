@@ -28,7 +28,6 @@ static nv_identity_t s_id;
 // Map the compiled board to its platform SKU.
 static const char *device_sku(void) {
   const char *b = MMK_BOARD_NAME;
-  if (strcmp(b, "s3-lcdwiki") == 0) return "mmk-s3";
   if (strcmp(b, "p4-nano") == 0) return "mmk-nano";
   if (strcmp(b, "p4-poe-eth") == 0) return "mmk-poe";
   if (strcmp(b, "ws43") == 0) return "mmk-ws43";
@@ -99,7 +98,6 @@ const char *device_driver_version(void) { return s_driver_ver; }
 
 const char *device_model_name(void) {
   const char *b = MMK_BOARD_NAME;
-  if (strcmp(b, "s3-lcdwiki") == 0) return "M Keypad 2.8\"";
   if (strcmp(b, "p4-nano") == 0) return "M Keypad Nano";
   if (strcmp(b, "p4-poe-eth") == 0) return "M Keypad PoE";
   if (strcmp(b, "ws43") == 0) return "M Keypad 4.3\"";

@@ -134,6 +134,7 @@ typedef struct {
 typedef struct {
     int  id;
     char title[64];
+    bool has_temp;   // false: the thermostat reports no reading (wire omits `temp`)
     int  temp;
     bool has_heat; int heat;
     bool has_cool; int cool;
@@ -153,6 +154,12 @@ typedef struct {
     bool available;
     comfort_t list[NET_MAX_COMFORT];
     int  n;
+    // Optional (PROTOCOL.md `comfortlist`): which entry of the house-wide list is
+    // THIS panel's room (from the room's own thermostat binding), and the outdoor
+    // reading in that thermostat's scale. 0 / false when the driver sent neither.
+    int  room_id;
+    bool has_outdoor;
+    int  outdoor;
 } comfort_state_t;
 
 // A `comfortcmd` request outcome would be nice, but unlike secarm/secdisarm there is

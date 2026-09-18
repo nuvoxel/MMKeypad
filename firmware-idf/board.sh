@@ -2,22 +2,20 @@
 # Build/flash a board variant with the right MMK_BOARD + per-board sdkconfig.
 # Each board uses its own build dir + sdkconfig so switching never clobbers another.
 #
-# Usage:  ./board.sh <s3|poe|nano|ws43|matrix> [idf.py args...]
+# Usage:  ./board.sh <ws43|nano|poe|matrix> [idf.py args...]
 # Examples:
 #   ./board.sh poe build
-#   ./board.sh s3  build
 #   ./board.sh ws43 -p /dev/cu.wchusbserial410 flash monitor
 set -euo pipefail
 cd "$(dirname "$0")"
 
 board="${1:-}"; shift || true
 case "$board" in
-  s3)  MMK=s3_lcdwiki; B=build;     TGT=esp32s3; DEFS="sdkconfig.defaults;sdkconfig.defaults.esp32s3" ;;
   poe) MMK=p4_poe_eth; B=build.poe; TGT=esp32p4; DEFS="sdkconfig.defaults;sdkconfig.defaults.p4_poe_eth" ;;
   nano) MMK=p4_nano;   B=build.nano; TGT=esp32p4; DEFS="sdkconfig.defaults;sdkconfig.defaults.p4_nano" ;;
   ws43) MMK=ws43;      B=build.ws43; TGT=esp32p4; DEFS="sdkconfig.defaults;sdkconfig.defaults.ws43" ;;
   matrix) MMK=s3_matrix; B=build.matrix; TGT=esp32s3; DEFS="sdkconfig.defaults;sdkconfig.defaults.esp32s3" ;;
-  *) echo "usage: $0 <s3|poe|nano|ws43|matrix> [idf.py args...]"; exit 1 ;;
+  *) echo "usage: $0 <ws43|nano|poe|matrix> [idf.py args...]"; exit 1 ;;
 esac
 
 # Release hardening: MMK_RELEASE=1 layers sdkconfig.release (logs/asserts/error

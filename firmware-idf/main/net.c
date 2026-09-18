@@ -726,6 +726,10 @@ static void handle_line(const char *line)
         comfort_state_t cmf;
         memset(&cmf, 0, sizeof(cmf));
         cmf.available = get_bool(d, "available", false);
+        cmf.room_id = get_int(d, "room", 0);
+        const cJSON *od = cJSON_GetObjectItem(d, "outdoor");
+        cmf.has_outdoor = cJSON_IsNumber(od);
+        if (cmf.has_outdoor) cmf.outdoor = od->valueint;
         const cJSON *arr = cJSON_GetObjectItem(d, "list");
         if (cmf.available && cJSON_IsArray(arr)) {
             const cJSON *it;
@@ -734,7 +738,9 @@ static void handle_line(const char *line)
                 comfort_t *c = &cmf.list[cmf.n];
                 c->id = get_int(it, "id", 0);
                 get_str(it, "title", c->title, sizeof(c->title));
-                c->temp = get_int(it, "temp", 0);
+                const cJSON *tp = cJSON_GetObjectItem(it, "temp");
+                c->has_temp = cJSON_IsNumber(tp);   // omitted = the thermostat has no reading
+                if (c->has_temp) c->temp = tp->valueint;
                 const cJSON *hp = cJSON_GetObjectItem(it, "heat");
                 c->has_heat = cJSON_IsNumber(hp);
                 if (c->has_heat) c->heat = hp->valueint;

@@ -2,8 +2,7 @@
 #include "sdkconfig.h"   // CONFIG_IDF_TARGET_* — must be visible before the checks below
 // MMKeypad board pinmap + feature flags. One source tree, multiple boards. The
 // board is chosen by a MMK_BOARD_<NAME> compile define passed from CMake (via
-// -D MMK_BOARD=<name>); it defaults to the S3 lcdwiki keypad when none is set.
-//   s3_lcdwiki  — lcdwiki 2.8" ESP32-S3 (SPI ILI9341 + FT6336), WiFi, audio
+// -D MMK_BOARD=<name>); there is no default -- an unset board is a build error.
 //   p4_poe_eth  — Waveshare ESP32-P4-POE-ETH-NH (headless, Ethernet, audio)
 //   p4_nano     — Waveshare ESP32-P4-NANO KIT-D (10.1" 800x1280 DSI + PoE + audio)
 //   ws43        — Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 (480x800 ST7701 DSI + GT911)
@@ -297,7 +296,7 @@
 #define MMK_SNAPSHOT     0   // no serial-framebuffer snapshot on this board
 // No MMK_MAX_BUTTONS override: 64x64 of LEDs is an art canvas, not a touch target,
 // and MMK_HAS_TOUCH 0 already makes device.c report caps.buttons = 0.
-// No BLE prov (same S3 RAM constraint as s3_lcdwiki) — softAP captive portal.
+// No BLE prov (NimBLE doesn't fit the S3's internal RAM next to WiFi) — softAP captive portal.
 // No live rotation UI: orientation is a build-time HUB75 config, not runtime.
 
 // ── HUB75 64x64 panel (1/32 scan, 5 address lines A–E) ───────────────────────
@@ -330,100 +329,28 @@
 #define MATRIX_SHIFT_FM6126A 1
 
 // ─────────────────────────────────────────────────────────────────────────────
-#else
-// ── lcdwiki 2.8" ESP32-S3 Display (ESP32-S3-WROOM-1 N16R8) — default ─────────
-// Single source of truth for the Arduino build lives in ../firmware/include/board.h
-// — keep these in sync until the Arduino tree is retired.
-// The Control4 T3 (RK3188 Linux port) has no board macro of its own and lands
-// here, harmlessly reusing the S3 pin/LCD defaults (its real bring-up is native
-// Linux). But it is WIRED, so its net/identity flags must NOT take the S3 wlan0
-// defaults — the app would then report/probe wlan0 instead of eth0. The T3 build
-// passes -DMMK_BOARD_T3 (lvgl-app/Makefile) so EVERY translation unit overrides
-// consistently; a plain -I "shadow" board.h couldn't, since headers that pull
-// "board.h" from this directory bypass the shadow. Values match platform/board.h
+#elif defined(MMK_BOARD_T3)
+// ── Control4 T3 (RK3188 Linux port) ──────────────────────────────────────────
+// The T3's real bring-up is native Linux (fbdev/evdev/ALSA) and its app code
+// reads platform/board.h, which shadows this file. But sources compiled straight
+// out of this directory (and headers here that pull "board.h") bypass that
+// shadow, so the T3 build passes -DMMK_BOARD_T3 (lvgl-app/Makefile) and lands
+// here. Feature flags only -- no pins. Values match platform/board.h
 // byte-for-byte so the two definitions coexist without a redefinition warning.
-#if defined(MMK_BOARD_T3)
+// It is WIRED: it must never report/probe wlan0.
 #define MMK_BOARD_NAME   "t3-7"
-#else
-#define MMK_BOARD_NAME   "s3-lcdwiki"
-#endif
 #define MMK_HAS_DISPLAY  1
 #define MMK_HAS_TOUCH    1
 #define MMK_HAS_AUDIO    1
-#if defined(MMK_BOARD_T3)
 #define MMK_NET_WIFI     0
 #define MMK_NET_ETH      1
+#define MMK_MAX_BUTTONS  8   // the keypad grid validated on T3 glass
+
 #else
-#define MMK_NET_WIFI     1
-#define MMK_NET_ETH      0
-#endif
-// Use the FACTORY WiFi MAC (wifi.c defaults the override to 1, which is a C6/
-// esp_hosted-only workaround). On the S3's native WiFi the override gave the softAP
-// an invalid derived AP MAC and it never beaconed (SSID absent from every scan).
-#define MMK_WIFI_MAC_OVERRIDE 0
-#define MMK_SNAPSHOT     0   // OFF for production (dev framebuffer-over-serial dump; flip to 1 on the bench). tools/esp_shot.py
-// NO BLE Wi-Fi provisioning on the S3: the on-chip NimBLE controller doesn't fit
-// alongside WiFi + LVGL in the S3's ~512KB internal RAM — native BLE crashes/OOMs
-// (INTERNAL crash-loops, EXTERNAL isn't discoverable, WiFi-in-PSRAM → HCI init fails).
-// The C6 boards (ws43) do BLE fine because the controller is a separate chip. The S3
-// uses the softAP captive portal for Wi-Fi setup (works). (MMK_HAS_BLE_PROV undefined.)
-#define MMK_CAN_ROTATE   1   // SPI panel: live SW rotation → show the Orientation setting
-
-// ── Display: ILI9341V, 320x240, SPI @ 40 MHz ───────────────────────────────
-#define LCD_WIDTH        320
-#define LCD_HEIGHT       240
-
-// 6 programmable buttons. 320x240 landscape → 4 columns, so 6 is a row of 4 plus a
-// row of 2, and the grid gets ~72x86 px tiles. Going to 8 would fill both rows but
-// on a 2.8" diagonal that is ~13x15 mm per tile — at/below the point where a
-// fingertip starts hitting neighbours. Geometry, not the driver, is the limit here.
-// (T3 overrides to 8 to match platform/board.h — the keypad grid validated on glass.)
-#if defined(MMK_BOARD_T3)
-#define MMK_MAX_BUTTONS  8
-#else
-#define MMK_MAX_BUTTONS  6
-#endif
-
-#define LCD_SPI_FREQ_HZ  40000000
-#define LCD_SPI_HOST     SPI2_HOST
-
-#define PIN_LCD_SCK      12
-#define PIN_LCD_MOSI     11
-#define PIN_LCD_MISO     13
-#define PIN_LCD_CS       10
-#define PIN_LCD_DC       46
-#define PIN_LCD_RST      -1   // no dedicated reset; tied to chip EN
-#define PIN_LCD_BL       45   // backlight, active HIGH
-
-// ── Capacitive touch: FT6336G on I2C @ 0x38 (FT5x06 protocol) ───────────────
-#define TOUCH_I2C_ADDR   0x38
-#define PIN_TOUCH_SDA    16
-#define PIN_TOUCH_SCL    15
-#define PIN_TOUCH_INT    17   // active LOW when touched
-#define PIN_TOUCH_RST    18   // active LOW reset
-#define TOUCH_I2C_PORT   0
-
-// ── "Halo": onboard WS2812B RGB LED (single-wire). lcdwiki IO table: IO42. ───
-// Used as a nightlight / design accent (idle solid color) + a status pulse
-// (e.g. blue breathing while a call rings). See halo.c.
-#define PIN_RGB_LED      42
-
-// ── Audio: ES8311 codec + FM8002E amp (Phase 3) ────────────────────────────
-// The codec shares the touch I2C bus (created in bsp.c), so no PIN_AUDIO_SDA/SCL
-// here — audio.c calls bsp_i2c_bus(). AUDIO_I2C_PORT must match the touch port.
-#define ES8311_I2C_ADDR  0x18   // confirmed on hardware (chip id 0x83/0x11 @ 0x18)
-#define AUDIO_I2C_PORT   TOUCH_I2C_PORT
-#define PIN_I2S_MCLK     4
-#define PIN_I2S_BCLK     5
-// GPIO6/8 are swapped vs the lcdwiki IO table (which names them from the codec's
-// side). Verified on hardware: these values capture mic + play speaker; swapping
-// kills both. dout=ESP->codec DSDIN (speaker), din=codec ASDOUT->ESP (mic).
-#define PIN_I2S_DOUT     8
-#define PIN_I2S_LRCLK    7
-#define PIN_I2S_DIN      6
-#define PIN_AMP_ENABLE   1    // FM8002E enable; drive LOW to ENABLE the amp
-#define AMP_ACTIVE_LOW   1    // FM8002E: drive LOW to ENABLE the amp
-
+// There is deliberately no default board. This used to fall through to the
+// lcdwiki 2.8" ESP32-S3 (320x240), which is no longer a target: the shared UI
+// needs a short side of >=480px. Build through ./board.sh, which sets MMK_BOARD.
+#error "MMK_BOARD is not set to a supported board (ws43, p4_nano, p4_poe_eth, s3_matrix) -- build with ./board.sh <board>"
 #endif
 
 // SIP intercom capability. Defaults to "has audio" — a board can override to 0

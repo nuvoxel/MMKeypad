@@ -15,7 +15,6 @@ the unit.
 
 | `board.sh` | Board | SoC | Network | Display | Audio | Buy |
 |------------|-------|-----|---------|---------|-------|-----|
-| `s3` | lcdwiki 2.8" ESP32-S3 Display | ESP32-S3-WROOM-1 N16R8 | Wi-Fi | ILI9341V 320×240, FT6336G touch | ES8311 + FM8002E + mic, SIP | [lcdwiki](https://www.lcdwiki.com/2.8inch_ESP32-S3_Display) |
 | `ws43` | Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 | ESP32-P4 (+ C6 for Wi-Fi) | Wi-Fi 6 via onboard ESP32-C6 (`esp_hosted`) | 480×800 portrait DSI, touch | ES8311 + ES7210 dual-mic + HW AEC, SIP | [Waveshare](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4.3.htm) |
 | `nano` | Waveshare ESP32-P4-NANO + 10.1" DSI | ESP32-P4 | Ethernet (PoE) + Wi-Fi | 800×1280 DSI, touch | ES8311 + ES7210 dual-mic + HW AEC, SIP | [Waveshare](https://www.waveshare.com/esp32-p4-nano.htm) |
 | `poe` | Waveshare ESP32-P4-POE-ETH-NH | ESP32-P4 | Ethernet (802.3af PoE) | headless | ES8311 + NS4150B + mic, SIP | [Waveshare](https://www.waveshare.com/esp32-p4-poe-eth.htm) |
@@ -29,8 +28,6 @@ Notes:
   the most complete intercom keypad.
 - **`nano`** is the large 10.1" panel — the same P4 dual-mic + AEC audio, wired
   (PoE) with Wi-Fi also available.
-- **`s3`** is the smallest, most self-contained unit — a 2.8" touch board with a
-  single ES8311 codec, amp, and mic. Good where a compact keypad is all you need.
 - **`poe`** is a headless wired node — no display, just the protocol server, SDDP
   discovery, the settings/OTA web server, and the ES8311 + SIP audio path. Use it
   where you want a room's intercom/announcement endpoint without a screen.
@@ -66,11 +63,6 @@ produces, not mockups. The same code reflows from a 10" landscape panel down to 
 ### 4.3" portrait — `ws43` (480×800)
 
 ![MMKeypad UI on a 480×800 portrait panel](img/ui-ws43-480x800.png)
-
-### 2.8" — `s3` (320×240 landscape and 240×320 portrait)
-
-![MMKeypad UI at 320×240](img/ui-s3-320x240.png)
-![MMKeypad UI at 240×320](img/ui-s3-240x320.png)
 
 To regenerate these on your own machine:
 

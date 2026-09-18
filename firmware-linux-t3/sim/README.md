@@ -10,22 +10,23 @@ cd firmware-linux-t3/sim
 open shots/            # (macOS) eyeball them
 ```
 
-`render.sh` emits one PNG per layout "flavor" `ui.c` picks by resolution. Flavor
-follows ORIENTATION, not board identity -- the WS43's "Screen Rotation" driver
-property makes both of its rows real, deployed configs (the office install
-runs landscape), not "one canonical layout plus a hypothetical rotation." A
-hero-circle layout that overflowed a 480px-tall screen shipped to that exact
-panel unnoticed because this table used to test WS43 portrait only -- always
-render every orientation a board can actually be set to, not just the one it
-happened to be tested in.
+`render.sh` renders **every page on every supported panel** (`shots/<panel>-<page>.png`).
+Layout follows ORIENTATION, not board identity: portrait is a single column,
+landscape is two columns, and `s_uiscale` carries the size. The WS43's "Screen
+Rotation" driver property makes both of its rows real, deployed configs (the
+office install runs landscape) -- a hero-circle layout that overflowed a
+480px-tall screen shipped to that exact panel unnoticed when only portrait was
+rendered. Always look at every orientation a board can be set to.
 
-| file                    | logical size | ui.c flavor | real panel            |
-| ----------------------- | ------------ | ----------- | --------------------- |
-| `shots/nano-landscape`  | 1280×800     | `x4L`       | P4 nano 10.1"         |
-| `shots/ws43-portrait`   | 480×800      | `x4P`       | Waveshare 4.3"        |
-| `shots/ws43-landscape`  | 800×480      | `x4L`       | Waveshare 4.3" (rot)  |
-| `shots/s3-landscape`    | 320×240      | `x4Ls`      | lcdwiki 2.8" (rot)    |
-| `shots/s3-portrait`     | 240×320      | `smallP`    | lcdwiki 2.8"          |
+| prefix            | logical size | ui.c layout | real panel                          |
+| ----------------- | ------------ | ----------- | ----------------------------------- |
+| `ws43-portrait`   | 480×800      | portrait    | Waveshare 4.3" (primary target)     |
+| `ws43-landscape`  | 800×480      | landscape   | Waveshare 4.3" rotated              |
+| `t3-landscape`    | 1280×800     | landscape   | T3 7"/10", P4 nano 10.1"            |
+
+The T3 has no portrait layout: `bsp_linux.c` rotates a portrait framebuffer
+(the 7") into landscape itself, so `ui.c` only ever sees 1280×800 there. The
+240×320 S3 panel is no longer a UI target.
 
 ## One-off render
 
@@ -44,13 +45,15 @@ Tweak the mock state/settings without touching code:
 
 | env            | values                              | effect                          |
 | -------------- | ----------------------------------- | ------------------------------- |
-| `MMK_THEME`    | 0 Control4 X4 / 1 Home Assistant    | `g_settings.theme`              |
 | `MMK_LAYOUT`   | 0 Cover / 1 Fit / 2 Compact         | `g_settings.layout`             |
 | `MMK_BG`       | 0 Navigator / 1 Ocean / 2 Dusk / 3 Graphite | `g_settings.bg_preset`  |
 | `MMK_PLAYING`  | 1 playing / 0 idle                  | now-playing vs powered-down     |
+| `MMK_PIN`      | 1 (with `MMK_SEC_PANEL=1`)          | open the arm-code PIN pad       |
+| `MMK_SEC_ID`   | partition id (with `MMK_SEC=2`)     | open one partition's page; 2685 is the armed sample |
+| `MMK_CHURN`    | 1 replay pushes / 2 also force rebuilds | regression check for update fights: flips a favourite, a button LED and playback WHILE a page is open (the page must survive), and prints the top-layer object count across rebuilds (must not grow) |
 
 ```sh
-MMK_HOME=1 MMK_THEME=1 ./build/mmk-sim 480 800 shots/keypad-ha.png
+MMK_PLAYING=0 ./build/mmk-sim 480 800 shots/idle.png
 ```
 
 ## How it works (and its limits)

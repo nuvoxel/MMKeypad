@@ -9,7 +9,7 @@
 #ifdef PIN_RGB_LED
 #include "halo.h"
 #endif
-#include "sddp.h"   // sddp_host() — the name Settings shows as "Discovery name"
+#include "sddp.h"   // sddp_host() — the name Settings shows as "Device name"
 #include "sip.h"
 #include "audio.h"
 #include "lvgl.h"
@@ -33,69 +33,44 @@ extern const lv_font_t mmk_text_32;
 // replacing the built-in FontAwesome symbols. 24px for keypad/transport, 34px play.
 extern const lv_font_t mmk_icons_24;
 extern const lv_font_t mmk_icons_34;
+extern const lv_font_t mmk_icons_48;
 
-// Real Control4 X4 icons (A8 alpha masks, mmk_c4icons.c), tinted at render time.
-extern const lv_image_dsc_t icon_play, icon_pause, icon_skip_next, icon_skip_prev;
-extern const lv_image_dsc_t icon_thumb_up, icon_thumb_down, icon_shuffle;
-extern const lv_image_dsc_t icon_vol_up, icon_vol_mute, icon_dots;
-extern const lv_image_dsc_t icon_info, icon_close, icon_queue, icon_intercom, icon_call;
-extern const lv_image_dsc_t icon_group, icon_door, icon_mic, icon_settings, icon_power;
-// icon_light/fan/shade/scene/cool/heat below: extracted but never wired to anything
-// (grepped -- no consumer besides this declaration and their own definition in
-// mmk_c4icons.c, and no icon_ha_* counterpart exists for them either). Favorite/
-// button device glyphs go through iconGlyph()'s Lucide font table instead (see
-// ICONS[] and G_* below) -- confirmed correct, not a bug: light favorites already
-// render iconGlyph("Lights") at the right codepoint (U+E1C2, present in mmk_icons_24's
-// generated glyph set) with the amber on-state accent. Leaving these bitmaps in place
-// rather than deleting them -- not touching partner-licensed assets without a reason.
-extern const lv_image_dsc_t icon_light, icon_fan, icon_shade, icon_scene, icon_cool, icon_heat;
-extern const lv_image_dsc_t icon_security, icon_camera, icon_speaker, icon_tv, icon_home;
-extern const lv_image_dsc_t icon_garage, icon_stop, icon_bell, icon_wifi, icon_heart;
-extern const lv_image_dsc_t icon_audio, icon_video, icon_unlock, icon_lock, icon_moon, icon_media;
-extern const lv_image_dsc_t icon_repeat, icon_chevron_down, icon_keypad, icon_room_add, icon_back;
-
-// Home Assistant equivalents (mmk_ha_icons.c) — Material Design Icons (Pictogrammers,
-// Apache-2.0, generated via tools/icons/gen-ha-icons.sh from @mdi/svg). The C4 bitmaps
-// above are Control4's own extracted assets (partner-agreement licensed, see
-// mmk_c4icons.c) and aren't appropriate to show under a non-Control4 skin — every
-// icon actually used at a fixed UI location (not the driver-driven keypad-button
-// name lookup, which already uses the free Lucide font) has an MDI counterpart here.
-extern const lv_image_dsc_t icon_ha_media, icon_ha_keypad, icon_ha_intercom, icon_ha_room_add;
-extern const lv_image_dsc_t icon_ha_back, icon_ha_chevron_down, icon_ha_power;
-extern const lv_image_dsc_t icon_ha_vol_up, icon_ha_vol_mute;
-extern const lv_image_dsc_t icon_ha_thumb_up, icon_ha_thumb_down;
-extern const lv_image_dsc_t icon_ha_shuffle, icon_ha_repeat, icon_ha_dots, icon_ha_close;
-extern const lv_image_dsc_t icon_ha_info, icon_ha_group, icon_ha_door;
-extern const lv_image_dsc_t icon_ha_skip_prev, icon_ha_skip_next, icon_ha_play, icon_ha_pause;
-// Theme-aware icon pick — one macro per logical icon, used everywhere the C4 bitmap
-// used to be referenced directly. g_settings.theme is checked directly (not g_theme,
-// which carries colors only) since it's read at call time, not just at rebuild.
-#define UI_HA (g_settings.theme == 1)
-#define ICON_MEDIA        (UI_HA ? &icon_ha_media        : &icon_media)
-#define ICON_KEYPAD       (UI_HA ? &icon_ha_keypad       : &icon_keypad)
-#define ICON_INTERCOM     (UI_HA ? &icon_ha_intercom     : &icon_intercom)
-// Phone mark for mobile/remote endpoints. No HA variant exists, so both themes
-// use the Control4 glyph rather than shipping a mismatched stand-in.
-#define ICON_CALL         (&icon_call)
-#define ICON_ROOM_ADD     (UI_HA ? &icon_ha_room_add     : &icon_room_add)
-#define ICON_BACK         (UI_HA ? &icon_ha_back         : &icon_back)
-#define ICON_CHEVRON_DOWN (UI_HA ? &icon_ha_chevron_down : &icon_chevron_down)
-#define ICON_POWER        (UI_HA ? &icon_ha_power        : &icon_power)
-#define ICON_VOL_UP       (UI_HA ? &icon_ha_vol_up       : &icon_vol_up)
-#define ICON_VOL_MUTE     (UI_HA ? &icon_ha_vol_mute     : &icon_vol_mute)
-#define ICON_THUMB_UP     (UI_HA ? &icon_ha_thumb_up     : &icon_thumb_up)
-#define ICON_THUMB_DOWN   (UI_HA ? &icon_ha_thumb_down   : &icon_thumb_down)
-#define ICON_SHUFFLE      (UI_HA ? &icon_ha_shuffle      : &icon_shuffle)
-#define ICON_REPEAT       (UI_HA ? &icon_ha_repeat       : &icon_repeat)
-#define ICON_DOTS         (UI_HA ? &icon_ha_dots         : &icon_dots)
-#define ICON_CLOSE        (UI_HA ? &icon_ha_close        : &icon_close)
-#define ICON_INFO         (UI_HA ? &icon_ha_info         : &icon_info)
-#define ICON_GROUP        (UI_HA ? &icon_ha_group        : &icon_group)
-#define ICON_DOOR         (UI_HA ? &icon_ha_door         : &icon_door)
-#define ICON_SKIP_PREV    (UI_HA ? &icon_ha_skip_prev    : &icon_skip_prev)
-#define ICON_SKIP_NEXT    (UI_HA ? &icon_ha_skip_next    : &icon_skip_next)
-#define ICON_PLAY         (UI_HA ? &icon_ha_play         : &icon_play)
-#define ICON_PAUSE        (UI_HA ? &icon_ha_pause        : &icon_pause)
+// ── Icons: Lucide, and only Lucide ───────────────────────────────────────────
+// Every icon in the UI is a glyph from the Lucide font (tools/fonts/gen-icons.sh),
+// drawn as a label. There used to be three sources -- PNG-derived image sets, one
+// per theme (Control4's own marks under X4, Material Design under Home Assistant),
+// plus Lucide for the driver-named button icons -- which is why a tile's icon and
+// the chevron beside it never quite matched in weight, and why a glyph could come
+// out as a missing box at one size but not another. One set, one stroke weight,
+// the same glyph list at every size (FICON 24 / FICONL 34 / FICONXL 48).
+#define ICON_MEDIA         "\xEE\x84\xA2"   // music
+#define ICON_KEYPAD        "\xEE\x83\xA9"   // grid-3x3
+#define ICON_INTERCOM      "\xEE\x81\x99"   // bell
+#define ICON_CALL          "\xEE\x84\xB3"   // phone
+#define ICON_ROOM_ADD      "\xEE\x97\xB1"   // house-plus
+#define ICON_BACK          "\xEE\x81\xAE"   // chevron-left
+#define ICON_CHEVRON_RIGHT "\xEE\x81\xAF"   // chevron-right
+#define ICON_CHEVRON_DOWN  "\xEE\x81\xAD"   // chevron-down
+#define ICON_POWER         "\xEE\x85\x80"   // power
+#define ICON_VOL_UP        "\xEE\x86\xAB"   // volume-2
+#define ICON_VOL_MUTE      "\xEE\x86\xAC"   // volume-x
+#define ICON_THUMB_UP      "\xEE\x86\x8A"   // thumbs-up
+#define ICON_THUMB_DOWN    "\xEE\x86\x89"   // thumbs-down
+#define ICON_SHUFFLE       "\xEE\x85\x9E"   // shuffle
+#define ICON_REPEAT        "\xEE\x85\x86"   // repeat
+#define ICON_DOTS          "\xEE\x82\xB7"   // ellipsis-vertical
+#define ICON_CLOSE         "\xEE\x86\xB2"   // x
+#define ICON_INFO          "\xEE\x83\xB9"   // info
+#define ICON_GROUP         "\xEE\x86\xA4"   // users
+#define ICON_DOOR          "\xEE\x8F\x96"   // door-open
+#define ICON_SKIP_PREV     "\xEE\x85\x9F"   // skip-back
+#define ICON_SKIP_NEXT     "\xEE\x85\xA0"   // skip-forward
+#define ICON_PLAY          "\xEE\x84\xBC"   // play
+#define ICON_PAUSE         "\xEE\x84\xAE"   // pause
+#define ICON_DELETE        "\xEE\x82\xAE"   // delete
+#define ICON_MINUS         "\xEE\x84\x9C"   // minus
+#define ICON_PLUS          "\xEE\x84\xBD"   // plus
+#define ICON_CHECK         "\xEE\x81\xAC"   // check
 
 // Resolution-aware font roles. The fixed bitmap sizes above were tuned for a
 // mid-size ESP panel (~480px short side); on larger panels (P4 720, T3 800+)
@@ -108,12 +83,14 @@ static const lv_font_t *g_fTitle  = &mmk_text_24;   // now-playing title (Medium
 static const lv_font_t *g_fHead   = &mmk_text_32;   // big / clock (Medium)
 static const lv_font_t *g_fIcon   = &mmk_icons_24;
 static const lv_font_t *g_fIconL  = &mmk_icons_34;
+static const lv_font_t *g_fIconXL = &mmk_icons_48;
 #define F14 (g_fSmall)
 #define F16 (g_fBody)
 #define F24 (g_fTitle)
 #define F32 (g_fHead)
 #define FICON  (g_fIcon)
 #define FICONL (g_fIconL)
+#define FICONXL (g_fIconXL)
 
 // Glyphs (UTF-8) used directly by the transport/overlay UI.
 #define G_PLAY  "\xEE\x84\xBC"   // play
@@ -174,67 +151,66 @@ static const char *favDeviceGlyph(const char *kind)
     return NULL;
 }
 
-// ── Theme tokens ─────────────────────────────────────────────────────────────
-// The layout is theme-agnostic: it reads all colors from the ACTIVE theme, so a
-// non-Control4 skin (e.g. Home Assistant colors) is just a second theme_t with the
-// SAME layout. The palette macros below resolve through g_theme, so every existing
-// call site (lv_color_hex(C_TEXT) etc.) is theme-driven with no change.
-typedef struct {
-    uint32_t bg_top, bg_bot;   // home / now-playing shared gradient
-    uint32_t text;             // primary text (c4White)
-    uint32_t subtle;           // secondary text (c4Silver)
-    uint32_t muted;            // tertiary text (c4Grey)
-    uint32_t accent;           // signature accent (c4Blue)
-    uint32_t on;               // active/on state (c4GreenBright)
-    uint32_t danger;           // decline / end call (c4Red)
-    uint32_t chip;             // elevated chip/card surface
-    uint32_t btn;              // button surface
-} theme_t;
+// ── Design system ────────────────────────────────────────────────────────────
+// ONE palette, one surface, one button, for every page and both platforms. This
+// UI serves Control4 and Home Assistant alike: it is inspired by Control4's X4
+// (the indigo-to-blue ground, glass tiles) but is its own thing, tuned for wall
+// glass in a dim room. Nothing in the UI asks which platform it is talking to:
+// wording is generic ("controller"), and g_settings.theme (once the X4/HA skin
+// switch, then a platform switch) is no longer read here at all.
+//
+// Rules the rest of this file follows:
+//   - no colour literals outside this block; everything reads a C_* token
+//   - anything tappable-and-rectangular is uiBtn()/uiBtnStyle()
+//   - anything that is a tile, card or panel is uiSurface()
+//   - circular icon/keypad buttons are uiRoundStyle()
+#define HOME_BG_TOP 0x1F1B47   // ground gradient: deep indigo ...
+#define HOME_BG_BOT 0x16395C   // ... to deep blue
+#define C_TEXT      0xFFFFFF   // primary text
+#define C_SUBTLE    0xC9CFDC   // secondary text
+#define C_MUTED     0x8C95A8   // tertiary text, placeholders
+#define C_ACCENT    0x5AC8FA   // interactive tint: icons, rings, selected values
+#define C_GREEN     0x3DDC97   // good / secure / on-air
+#define C_RED       0xFF5A5F   // alarm / trouble / destructive (as TEXT or ring)
+#define C_WARN      0xFFC14D   // a lit load: lights on, shade open
+#define C_HEAT      0xFF8A3D   // heat setpoint (cool uses C_ACCENT)
+#define C_GLASS     0xFFFFFF   // surfaces are this at low opacity, never a grey
+#define C_CARD_TOP  0x0E1120   // the now-playing card's own dark gradient
+#define C_CARD_BOT  0x121A30
+#define C_SCRIM     0x0B0D12   // modal backdrop (PIN pad)
+#define C_SHADE     0x000000   // darkening layer at low opacity (wells, scrims over art)
+#define C_TRACK     0x3A4060   // slider / progress track
+// Filled buttons carry white text, so their fills are darker than the tints above
+// (white on C_ACCENT is ~2:1; on these it clears 4.5:1).
+#define C_FILL_PRIMARY 0x1D7FD6
+#define C_FILL_SUCCESS 0x17905A
+#define C_FILL_DANGER  0xD13C3C
 
-// Default theme: Control4 X4 / Navigator palette (extracted from C4UIKit Assets.car).
-static const theme_t THEME_X4 = {
-    .bg_top = 0x312B63, .bg_bot = 0x235E97,
-    .text = 0xFFFFFF, .subtle = 0xDCDEE0, .muted = 0x9C9C9C,
-    .accent = 0x32B4E5, .on = 0x00BD00, .danger = 0xE0211D,
-    .chip = 0x242424, .btn = 0x404040,
-};
-// Home Assistant dark-frontend palette: near-flat near-black (HA doesn't do C4's
-// purple/blue gradient), HA blue accent, Material red/green for danger/on.
-static const theme_t THEME_HA = {
-    .bg_top = 0x1C1C1C, .bg_bot = 0x111111,
-    .text = 0xFFFFFF, .subtle = 0xADADAD, .muted = 0x727272,
-    .accent = 0x03A9F4, .on = 0x4CAF50, .danger = 0xF44336,
-    .chip = 0x262626, .btn = 0x333333,
-};
-// Active theme pointer — selected from g_settings.theme (see ui_apply_theme).
-static const theme_t *g_theme = &THEME_X4;
-static void ui_apply_theme(void) { g_theme = (g_settings.theme == 1) ? &THEME_HA : &THEME_X4; }
+#define OPA_SURFACE        20   // ~8%  resting tile / card
+#define OPA_SURFACE_ACTIVE 46   // ~18% an "on" tile, a selected row
+#define OPA_SURFACE_PRESS  64   // ~25% finger down
 
-#define HOME_BG_TOP (g_theme->bg_top)
-#define HOME_BG_BOT (g_theme->bg_bot)
-#define C_TEXT   (g_theme->text)
-#define C_SUBTLE (g_theme->subtle)
-#define C_MUTED  (g_theme->muted)
-#define C_ACCENT (g_theme->accent)
-#define C_GREEN  (g_theme->on)
-#define C_RED    (g_theme->danger)
-#define C_CHIP   (g_theme->chip)
-#define C_BTN    (g_theme->btn)
-
-// X4 "glass" card treatment: a translucent black fill + a hairline light
-// border over the background, matching Navigator's surface look (built from the
-// c4Black/c4White opacity ramps in the asset catalog). glassify() keeps every
-// card consistent; radius scales with the display so cards look right on any
-// panel. Used for list rows, panels, and overlays.
-static inline void glassify(lv_obj_t *o, int radius) {
-    lv_obj_set_style_bg_color(o, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(o, LV_OPA_40, 0);                 // c4BlackOpacity40 glass
-    lv_obj_set_style_bg_opa(o, LV_OPA_60, LV_STATE_PRESSED);  // darken on press
-    lv_obj_set_style_border_color(o, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_border_opa(o, LV_OPA_20, 0);             // c4WhiteOpacity20 hairline
-    lv_obj_set_style_border_width(o, 1, 0);
+// Tile / card / panel surface.
+static inline void uiSurface(lv_obj_t *o, int radius, bool active) {
+    lv_obj_set_style_bg_color(o, lv_color_hex(C_GLASS), 0);
+    lv_obj_set_style_bg_opa(o, active ? OPA_SURFACE_ACTIVE : OPA_SURFACE, 0);
+    lv_obj_set_style_bg_opa(o, OPA_SURFACE_PRESS, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(o, 0, 0);
     lv_obj_set_style_radius(o, radius, 0);
 }
+static inline void glassify(lv_obj_t *o, int radius) { uiSurface(o, radius, false); }
+
+typedef enum { BTN_NEUTRAL, BTN_PRIMARY, BTN_SUCCESS, BTN_DANGER } btn_kind_t;
+
+// THE button style. Strips LVGL's default theme (its shadow, gradient and
+// asymmetric padding are what made labels sit off-centre) and applies ours.
+// Callers own size and content; uiBtn() below is the common text case.
+static void uiBtnStyle(lv_obj_t *b, btn_kind_t kind);
+static void uiBtnFill(lv_obj_t *b, btn_kind_t kind);
+static lv_obj_t *uiBtn(lv_obj_t *parent, const char *text, btn_kind_t kind, bool large,
+                       lv_event_cb_t cb, void *ud);
+// Circular icon / keypad button.
+static void uiRoundStyle(lv_obj_t *b, int size, bool ghost);
 
 static uint32_t millis(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
@@ -242,7 +218,6 @@ static lv_obj_t *s_scrim, *s_title, *s_artist, *s_time, *s_bar, *s_ppIcon;
 static lv_obj_t *s_timeTot;   // X4: total-time label at the progress bar's right end
 static lv_obj_t *s_play, *s_prev, *s_next, *s_thumbUp, *s_thumbDown, *s_shufBtn, *s_repBtn;
 static lv_obj_t *s_shufIcon, *s_repIcon;      // shuffle/repeat glyphs (for on/off retint)
-static bool      s_x4;                        // large-landscape X4 card layout (T3/nano)
 static lv_obj_t *s_npCard, *s_npVol, *s_npVolIcon;  // X4 now-playing card + its persistent volume
 static lv_obj_t *s_roomsPanel, *s_roomsVol, *s_roomsVolIcon, *s_roomsList;  // X4 add-rooms right panel
 static lv_obj_t *s_npRoomLbl, *s_roomsRowLbl;   // "Playing in <room>" + the room-list row name
@@ -283,6 +258,7 @@ static int       s_nFavs;
 // bound Composer connection -- see driver.lua BuildSecurityList.
 static lv_obj_t *s_secPanel, *s_secTitleLbl, *s_secStateLbl, *s_secSubLbl, *s_secTroubleLbl, *s_secStatusLbl;
 static lv_obj_t *s_secBypassBtn, *s_secBypassLbl;
+static lv_obj_t *s_secArmHomeBtn, *s_secArmAwayBtn, *s_secDisarmBtn;   // emphasis follows state (secSetActions)
 static lv_obj_t *s_secHero, *s_secHeroIcon;   // hero circle (ring + lock glyph) -- the Navigator app's own
                                                // Security page look, see secSetHero()
 static lv_obj_t *s_secPickerPanel, *s_secPickerList;   // list page (partition rows), only built/shown when s_sec.n > 1
@@ -385,6 +361,8 @@ static bool      s_homeIcShown;               // home Intercom card is currently
 static bool      s_homeBarShown;              // home mini-player bar occupied space on the last build_home_tiles
 static bool      s_homeAtHome = true;   // start on the home screen
 static lv_obj_t *s_homeTitle;           // landing-page title (the room name)
+static lv_obj_t *s_homeStatus;          // status line under it (security state)
+static lv_obj_t *s_homeGrid;            // the tile grid -- rebuilt alone by homeTilesRefresh()
 static bool      s_hadSession;          // was a media session active on the last state?
 // Keypad grid: up to MMK_MAX_BUTTONS driver buttons (a per-board constant — the
 // panel's geometry decides, see board.h), plus (in Keypad-primary mode) 2 synthetic
@@ -405,6 +383,13 @@ static bool      s_showTitle = true, s_showArtist = true, s_showInfo = true, s_s
 static bool s_lastPlaying;
 static bool s_ppExpect;
 static uint32_t s_ppHoldUntil;
+// Same idea for volume. After the user lets go of a slider we have SENT a value
+// but the next `state` push may well predate it; writing that into the slider
+// snaps the knob back to where it was, then forward again when the real value
+// lands. Hold the user's value until the driver echoes it, or the window lapses.
+static uint32_t s_volHoldUntil;
+static int      s_volExpect = -1;
+static void volSent(int v) { s_volExpect = v; s_volHoldUntil = millis() + 2000; net_set_volume(v); }
 static lv_obj_t *s_call;   // intercom call overlay (NULL when no call); keeps display lit
 static bool s_keepAwake;
 static uint32_t s_loadUntil;
@@ -481,7 +466,7 @@ static void onThumbDown(lv_event_t *e) { (void)e; net_cmd("thumbsdown"); }
 // letting the authoritative state reconcile (see ui_set_state).
 static void styleToggle(lv_obj_t *icon, bool on)
 {
-    if (icon) lv_obj_set_style_image_recolor(icon, lv_color_hex(on ? C_GREEN : 0xFFFFFF), 0);
+    if (icon) lv_obj_set_style_text_color(icon, lv_color_hex(on ? C_GREEN : C_TEXT), 0);
 }
 static void onShuffle(lv_event_t *e) { (void)e; s_shufOn = !s_shufOn; s_shufTapMs = millis(); styleToggle(s_shufIcon, s_shufOn); net_cmd("shuffle"); }
 static void onRepeat(lv_event_t *e)  { (void)e; s_repOn  = !s_repOn;  s_repTapMs  = millis(); styleToggle(s_repIcon,  s_repOn);  net_cmd("repeat"); }
@@ -492,8 +477,8 @@ static void onPlayPause(lv_event_t *e)
     s_lastPlaying = !s_lastPlaying;
     s_ppExpect = s_lastPlaying;
     s_ppHoldUntil = millis() + 3000;
-    if (s_ppIcon) lv_image_set_src(s_ppIcon, s_lastPlaying ? ICON_PAUSE : ICON_PLAY);
-    if (s_homeMiniPP) lv_image_set_src(s_homeMiniPP, s_lastPlaying ? ICON_PAUSE : ICON_PLAY);
+    if (s_ppIcon) lv_label_set_text(s_ppIcon, s_lastPlaying ? ICON_PAUSE : ICON_PLAY);
+    if (s_homeMiniPP) lv_label_set_text(s_homeMiniPP, s_lastPlaying ? ICON_PAUSE : ICON_PLAY);
     net_cmd(s_lastPlaying ? "play" : "pause");
 }
 // X4 card's persistent volume slider (no pop-up overlay).
@@ -501,8 +486,8 @@ static void onNpVol(lv_event_t *e)
 {
     if (!s_npVol) return;
     int v = lv_slider_get_value(s_npVol);
-    if (s_npVolIcon) lv_image_set_src(s_npVolIcon, v == 0 ? ICON_VOL_MUTE : ICON_VOL_UP);
-    if (lv_event_get_code(e) == LV_EVENT_RELEASED) net_set_volume(v);
+    if (s_npVolIcon) lv_label_set_text(s_npVolIcon, v == 0 ? ICON_VOL_MUTE : ICON_VOL_UP);
+    if (lv_event_get_code(e) == LV_EVENT_RELEASED) volSent(v);
 }
 // X4 card right panel: exactly one of {info, rooms} is visible (or neither).
 static void npShowRight(int which)   // 1=info, 2=rooms, 0=none
@@ -532,8 +517,8 @@ static void onRoomsVol(lv_event_t *e)
 {
     if (!s_roomsVol) return;
     int v = lv_slider_get_value(s_roomsVol);
-    if (s_roomsVolIcon) lv_image_set_src(s_roomsVolIcon, v == 0 ? ICON_VOL_MUTE : ICON_VOL_UP);
-    if (lv_event_get_code(e) == LV_EVENT_RELEASED) net_set_volume(v);   // group vol TBD
+    if (s_roomsVolIcon) lv_label_set_text(s_roomsVolIcon, v == 0 ? ICON_VOL_MUTE : ICON_VOL_UP);
+    if (lv_event_get_code(e) == LV_EVENT_RELEASED) volSent(v);   // group vol TBD
 }
 static void onInfo(lv_event_t *e)
 {
@@ -542,36 +527,180 @@ static void onInfo(lv_event_t *e)
     bool opening = lv_obj_has_flag(s_infoPanel, LV_OBJ_FLAG_HIDDEN);
     if (opening) lv_obj_clear_flag(s_infoPanel, LV_OBJ_FLAG_HIDDEN);
     else         lv_obj_add_flag(s_infoPanel, LV_OBJ_FLAG_HIDDEN);
-    if (s_x4 && opening && s_roomsPanel) lv_obj_add_flag(s_roomsPanel, LV_OBJ_FLAG_HIDDEN);  // info replaces rooms
+    if (opening && s_roomsPanel) lv_obj_add_flag(s_roomsPanel, LV_OBJ_FLAG_HIDDEN);  // info replaces rooms
 }
 static void expandListen(lv_event_t *e);   // → now-playing
 static void homeIntercom(lv_event_t *e);   // → intercom picker
 
 
-// Circular button carrying a C4 image icon (recolored + scaled to fit), the
-// image-based twin of iconBtn(). The icon is ~60% of the button; A8 masks take
-// iconColor as their fill so the same asset works white on art or accent when
-// active. imgOut returns the image obj (swap its src for play/pause).
-static lv_obj_t *iconBtnImg(lv_obj_t *parent, const lv_image_dsc_t *img, int size,
-                            uint32_t bg, lv_opa_t bgOpa, uint32_t iconColor,
-                            lv_event_cb_t cb, lv_obj_t **imgOut)
+// The icon font whose nominal size best fits a `px` box. px is in layout pixels
+// (already scaled); the fonts are 24/34/48 * s_uiscale, so compare unscaled.
+static const lv_font_t *iconFont(int px)
+{
+    const float n = (float)px / (s_uiscale > 0.01f ? s_uiscale : 1.0f);
+    return n < 30 ? FICON : (n < 42 ? FICONL : FICONXL);
+}
+
+// One icon: a Lucide glyph centred in a px-square box. Returned object is the
+// label itself, so swapping the glyph later is just lv_label_set_text().
+static lv_obj_t *iconCreate(lv_obj_t *parent, const char *glyph, int px, uint32_t color, lv_opa_t opa)
+{
+    const lv_font_t *f = iconFont(px);
+    const int lh = lv_font_get_line_height(f);
+    if (px < lh) px = lh;                       // never clip the glyph
+    lv_obj_t *ic = lv_label_create(parent);
+    lv_obj_set_style_text_font(ic, f, 0);
+    lv_obj_set_style_text_color(ic, lv_color_hex(color), 0);
+    lv_obj_set_style_text_opa(ic, opa, 0);
+    lv_obj_set_style_text_align(ic, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_size(ic, px, px);
+    lv_obj_set_style_pad_top(ic, (px - lh) / 2, 0);
+    lv_label_set_text(ic, glyph);
+    return ic;
+}
+
+// Just the fill. Safe to call again on a live button to change its kind (a
+// selected mode pill, an armed "tap again" row): unlike uiBtnStyle() it leaves the
+// button's size and flex settings alone.
+static void uiBtnFill(lv_obj_t *b, btn_kind_t kind)
+{
+    if (kind == BTN_NEUTRAL) {
+        lv_obj_set_style_bg_color(b, lv_color_hex(C_GLASS), 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(C_GLASS), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(b, 36, 0);                       // a step above a tile
+        lv_obj_set_style_bg_opa(b, OPA_SURFACE_PRESS + 16, LV_STATE_PRESSED);
+    } else {
+        const uint32_t fill = kind == BTN_PRIMARY ? C_FILL_PRIMARY
+                            : kind == BTN_SUCCESS ? C_FILL_SUCCESS : C_FILL_DANGER;
+        lv_obj_set_style_bg_color(b, lv_color_hex(fill), 0);
+        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(b, lv_color_darken(lv_color_hex(fill), 50), LV_STATE_PRESSED);
+    }
+}
+
+static void uiBtnStyle(lv_obj_t *b, btn_kind_t kind)
+{
+    lv_obj_remove_style_all(b);
+    lv_obj_set_style_radius(b, (int)(16 * s_uiscale), 0);
+    lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_opa(b, LV_OPA_40, LV_STATE_DISABLED);
+    uiBtnFill(b, kind);
+}
+
+// A text button: 56px tall (68 `large`, for the call screen's glance-and-hit
+// actions), label centred. Width is the caller's: set it, or flex-grow it.
+static lv_obj_t *uiBtn(lv_obj_t *parent, const char *text, btn_kind_t kind, bool large,
+                       lv_event_cb_t cb, void *ud)
 {
     lv_obj_t *b = lv_button_create(parent);
+    uiBtnStyle(b, kind);
+    lv_obj_set_height(b, (int)((large ? 68 : 56) * s_uiscale));
+    lv_obj_t *l = lv_label_create(b);
+    lv_label_set_text(l, text);
+    lv_obj_set_style_text_font(l, large ? F24 : F16, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
+    lv_obj_center(l);
+    if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, ud);
+    return b;
+}
+
+// `ghost` = no resting fill (chrome floating over art or a header); it still
+// shows the press.
+static void uiRoundStyle(lv_obj_t *b, int size, bool ghost)
+{
     lv_obj_remove_style_all(b);
     lv_obj_set_size(b, size, size);
-    lv_obj_set_style_radius(b, size / 2, 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(bg), 0);
-    lv_obj_set_style_bg_opa(b, bgOpa, 0);
-    lv_obj_t *im = lv_image_create(b);
-    lv_image_set_src(im, img);
-    int iconPx = size * 3 / 5;
-    lv_image_set_scale(im, iconPx * 256 / (int)img->header.w);
-    lv_obj_set_style_image_recolor(im, lv_color_hex(iconColor), 0);
-    lv_obj_set_style_image_recolor_opa(im, LV_OPA_COVER, 0);
-    lv_obj_center(im);
+    lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
+    lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(b, lv_color_hex(C_GLASS), 0);
+    lv_obj_set_style_bg_opa(b, ghost ? LV_OPA_TRANSP : 30, 0);
+    lv_obj_set_style_bg_opa(b, OPA_SURFACE_PRESS, LV_STATE_PRESSED);
+}
+
+// Circular icon button. The icon is ~60% of the button. iconOut returns the icon
+// label (lv_label_set_text() it to swap play/pause).
+static lv_obj_t *iconBtnImg(lv_obj_t *parent, const char *glyph, int size,
+                            uint32_t bg, lv_opa_t bgOpa, uint32_t iconColor,
+                            lv_event_cb_t cb, lv_obj_t **iconOut)
+{
+    lv_obj_t *b = lv_button_create(parent);
+    (void)bg;   // one round-button fill; callers only choose filled vs ghost
+    uiRoundStyle(b, size, bgOpa == LV_OPA_TRANSP);
+    lv_obj_t *ic = iconCreate(b, glyph, size * 3 / 5, iconColor, LV_OPA_COVER);
+    lv_obj_center(ic);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
-    if (imgOut) *imgOut = im;
+    if (iconOut) *iconOut = ic;
     return b;
+}
+
+static void homeTilesRefresh(void);    // fwd
+static lv_obj_t *mkLabel(lv_obj_t *p, const lv_font_t *f, uint32_t color, int w, bool scroll);   // fwd
+
+// A list row: icon, name over an optional state line, and optionally a big value
+// and/or a chevron at the right. The list pages (Comfort, Security, Intercom,
+// Settings) are made of these. They used to reuse the home grid's half-width
+// tile, which left two or three orphaned tiles in the top corner of an otherwise
+// empty page and had nowhere to put the one number you came for (the temperature).
+// Everything inside is flex, so a long name ellipsises instead of overlapping.
+#define ROW_CHEVRON 1
+static lv_obj_t *rowCard(lv_obj_t *parent, const char *glyph, const char *name, const char *sub,
+                         bool on, uint32_t accent, const char *right, int flags,
+                         lv_event_cb_t cb, void *ud, int w)
+{
+    const float s = s_uiscale;
+    lv_obj_t *c = lv_button_create(parent);
+    lv_obj_remove_style_all(c);
+    uiSurface(c, (int)(18 * s), on);
+    lv_obj_set_size(c, w, LV_SIZE_CONTENT);
+    lv_obj_set_style_min_height(c, (int)(72 * s), 0);
+    lv_obj_set_style_pad_hor(c, (int)(16 * s), 0);
+    lv_obj_set_style_pad_ver(c, (int)(12 * s), 0);
+    lv_obj_set_style_pad_column(c, (int)(14 * s), 0);
+    lv_obj_set_flex_flow(c, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+    if (cb) lv_obj_add_event_cb(c, cb, LV_EVENT_CLICKED, ud);
+
+    iconCreate(c, glyph, (int)(28 * s), on ? accent : C_TEXT, LV_OPA_COVER);
+
+    lv_obj_t *box = lv_obj_create(c);
+    lv_obj_remove_style_all(box);
+    lv_obj_set_height(box, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(box, 1);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);   // taps go to the row
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(box, (int)(2 * s), 0);
+    lv_obj_t *l = mkLabel(box, F16, C_TEXT, LV_PCT(100), false);
+    lv_obj_set_height(l, lv_font_get_line_height(F16));    // one line, then "..."
+    lv_label_set_text(l, name);
+    if (sub && sub[0]) {
+        lv_obj_t *sl = mkLabel(box, F14, on ? accent : C_SUBTLE, LV_PCT(100), false);
+        lv_obj_set_height(sl, lv_font_get_line_height(F14));
+        lv_label_set_text(sl, sub);
+    }
+    if (right && right[0]) {
+        lv_obj_t *r = lv_label_create(c);
+        lv_obj_set_style_text_font(r, F24, 0);
+        lv_obj_set_style_text_color(r, lv_color_hex(C_TEXT), 0);
+        lv_label_set_text(r, right);
+    }
+    if (flags & ROW_CHEVRON) iconCreate(c, ICON_CHEVRON_RIGHT, (int)(22 * s), C_MUTED, LV_OPA_COVER);
+    return c;
+}
+
+// Row-list geometry: one column in portrait, two in landscape (three on the big
+// 1280-class panels). `list` becomes a wrapping flex; returns the row width.
+static int rowListLayout(lv_obj_t *list, int sidePad)
+{
+    const float s = s_uiscale;
+    const int gap = (int)(12 * s);
+    const int dispW = lv_display_get_horizontal_resolution(NULL);
+    const bool portrait = (lv_display_get_vertical_resolution(NULL) > dispW);
+    const int cols = portrait ? 1 : ((float)dispW / s >= 1000 ? 3 : 2);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_column(list, gap, 0);
+    lv_obj_set_style_pad_row(list, gap, 0);
+    return (dispW - 2 * sidePad - (cols - 1) * gap) / cols;
 }
 
 // Same shape as iconBtnImg(), but for the Lucide-font glyphs (iconGlyph()) that
@@ -585,12 +714,7 @@ static lv_obj_t *topGlyphBtn(lv_obj_t *parent, const char *glyphName, int size,
                               uint32_t iconColor, lv_event_cb_t cb, lv_obj_t **dotOut)
 {
     lv_obj_t *b = lv_button_create(parent);
-    lv_obj_remove_style_all(b);
-    lv_obj_set_size(b, size, size);
-    lv_obj_set_style_radius(b, size / 2, 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(b, LV_OPA_40, 0);
-    lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    uiRoundStyle(b, size, false);
     lv_obj_t *ic = lv_label_create(b);
     lv_obj_set_style_text_font(ic, FICON, 0);
     lv_label_set_text(ic, iconGlyph(glyphName));
@@ -606,7 +730,7 @@ static lv_obj_t *topGlyphBtn(lv_obj_t *parent, const char *glyphName, int size,
         lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(dot, 2, 0);
-        lv_obj_set_style_border_color(dot, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_border_color(dot, lv_color_hex(C_SHADE), 0);
         lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_align(dot, LV_ALIGN_TOP_RIGHT, 2, -2);
@@ -670,12 +794,9 @@ void ui_splash(void)
 {
     extern const uint8_t splash_png_start[] asm("_binary_splash_png_start");
     extern const uint8_t splash_png_end[]   asm("_binary_splash_png_end");
-    unsigned char *rgba = NULL; unsigned iw = 0, ih = 0;
-    if (lodepng_decode32(&rgba, &iw, &ih, splash_png_start,
-                         (size_t)(splash_png_end - splash_png_start)) != 0 || !rgba) {
-        if (rgba) free(rgba);
-        return;
-    }
+    unsigned iw = 0, ih = 0;
+    unsigned char *rgba = art_png_decode_rgba(splash_png_start, (size_t)(splash_png_end - splash_png_start), &iw, &ih);
+    if (!rgba) return;
     lv_obj_t *scr = lv_screen_active();
     int Wd = lv_obj_get_width(scr), Hd = lv_obj_get_height(scr);
     s_splashBuf = heap_caps_malloc((size_t)Wd * Hd * 2, MALLOC_CAP_SPIRAM);
@@ -716,7 +837,7 @@ static void goHomeFrom(lv_obj_t *panel) { if (panel) lv_obj_add_flag(panel, LV_O
 static void onIcHome(lv_event_t *e) { (void)e; goHomeFrom(s_icPanel); }
 // Defined further down with the room page; the intercom picker uses the same tile
 // so the two pages share one visual language.
-static lv_obj_t *tileCard(lv_obj_t *p, const lv_image_dsc_t *icon, const char *glyph,
+static lv_obj_t *tileCard(lv_obj_t *p, const char *icon, const char *glyph,
                           const char *name, const char *sub, bool on, uint32_t accent,
                           lv_event_cb_t cb, void *ud, int w, int h, lv_obj_t **iconOut,
                           int *iconX, int *iconSize);
@@ -725,28 +846,9 @@ static void rebuildIcList(void)
 {
     if (!s_icList) return;
     lv_obj_clean(s_icList);                                    // drop old rows
-    const float s = s_uiscale;
-    const int gap = (int)(14 * s);
-    // Derive the usable width rather than reading it back: rebuildIcList runs from
-    // ui_begin before any layout pass, where lv_obj_get_width() is still 0 -- which
-    // sized every tile to nothing and rendered an empty page.
-    const int dispW = lv_display_get_horizontal_resolution(NULL);
-    const bool portrait = (lv_display_get_vertical_resolution(NULL) > dispW);
-    const int icPad = (s < 0.99f) ? 12 : (int)(28 * s);   // matches s_icList's inset
-    const int W = dispW - 2 * icPad;
-    // Same column rule as the room page (raw-pixel targets). This was a
-    // single full-width column of dividers, which on the 10" showed five of
-    // eight targets and left two thirds of the panel empty.
-    int cols = portrait ? ((W + gap) / (190 + gap)) : ((W + gap) / (340 + gap));
-    if (cols < 1) cols = 1;
-    if (cols > 4) cols = 4;
-    if (portrait && cols > 2) cols = 2;
-    const int cw = (W - (cols - 1) * gap) / cols;
-    const int ch = (int)(76 * s);
-
-    lv_obj_set_flex_flow(s_icList, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_style_pad_column(s_icList, gap, 0);
-    lv_obj_set_style_pad_row(s_icList, gap, 0);
+    // Width is derived, not read back: this runs from ui_begin before any layout
+    // pass, where lv_obj_get_width() is still 0.
+    const int rw = rowListLayout(s_icList, (int)(28 * s_uiscale));
 
     for (int i = 0; i < s_nEps; i++) {
         // Doors are the targets that ring YOU, so they carry the accent; groups
@@ -755,7 +857,7 @@ static void rebuildIcList(void)
         // arbitrary rather than meaningful.
         const bool door   = s_eps[i].door;
         const bool mobile = s_eps[i].mobile;
-        const lv_image_dsc_t *ei = s_eps[i].group ? ICON_GROUP
+        const char *ei = s_eps[i].group ? ICON_GROUP
                                  : (door ? ICON_DOOR
                                  : (mobile ? ICON_CALL : ICON_INTERCOM));
         // A plain room gets the Lucide speaker mark: the intercom image icon is a
@@ -767,14 +869,13 @@ static void rebuildIcList(void)
                         : (mobile ? "Mobile" : (s_eps[i].group ? "Group" : NULL));
         // Tinted like a door station so the non-room entries stand out, but in a
         // different colour so the two are not confused at a glance.
-        tileCard(s_icList, ei, gi, s_eps[i].name, sub, door || mobile,
-                 mobile ? C_GREEN : C_ACCENT,
-                 onIcRow, (void *)(intptr_t)i, cw, ch, NULL, NULL, NULL);
+        rowCard(s_icList, (gi && iconGlyph(gi)) ? iconGlyph(gi) : ei, s_eps[i].name, sub, door || mobile,
+                mobile ? C_GREEN : C_ACCENT, NULL, 0, onIcRow, (void *)(intptr_t)i, rw);
     }
     if (s_nEps == 0) {
         lv_obj_t *l = lv_label_create(s_icList);
         lv_obj_set_style_text_font(l, F16, 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(0x9AA5B1), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(C_MUTED), 0);
         lv_label_set_text(l, "No intercom targets");
         lv_obj_set_style_pad_top(l, (int)(20 * s_uiscale), 0);
     }
@@ -819,7 +920,7 @@ void ui_set_rooms(const room_t *rooms, int n)
         lv_obj_set_height(row, (int)(54 * s));
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
-        lv_obj_set_style_border_color(row, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_border_color(row, lv_color_hex(C_GLASS), 0);
         lv_obj_set_style_border_opa(row, LV_OPA_20, 0);
         lv_obj_set_style_border_width(row, 1, 0);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
@@ -831,12 +932,7 @@ void ui_set_rooms(const room_t *rooms, int n)
         int lx = 0;
         if (rooms[i].playing) {
             const int spk = (int)(20 * s);
-            lv_obj_t *sp = lv_image_create(row);
-            lv_image_set_src(sp, ICON_VOL_UP);
-            lv_obj_set_size(sp, spk, spk);
-            lv_image_set_inner_align(sp, LV_IMAGE_ALIGN_CONTAIN);
-            lv_obj_set_style_image_recolor(sp, lv_color_hex(C_TEXT), 0);
-            lv_obj_set_style_image_recolor_opa(sp, LV_OPA_70, 0);
+            lv_obj_t *sp = iconCreate(row, ICON_VOL_UP, spk, C_TEXT, LV_OPA_70);
             lv_obj_align(sp, LV_ALIGN_LEFT_MID, 0, 0);
             lx = spk + (int)(10 * s);
         }
@@ -921,13 +1017,12 @@ static void rebuildFavGrid(void)
     art_thumb_clear();          // release the previous grid's thumbnails first
     lv_obj_clean(s_favGrid);
     const float s = s_uiscale;
-    const bool small = (s < 0.99f);
-    // Two columns everywhere: tiles are wide enough for a wrapped title on the narrow
-    // 2.8" glass, and comfortable on the big X4 panels.
+    // Two columns everywhere: wide enough for a wrapped title on a portrait WS43,
+    // and comfortable on the big landscape panels.
     const int gap = (int)(14 * s);
     const int gw  = lv_obj_get_content_width(s_favGrid);
     const int tw  = (gw - gap) / 2;
-    const int th  = small ? 84 : (int)(112 * s);
+    const int th  = (int)(112 * s);
     for (int i = 0; i < s_nFavs; i++) {
         lv_obj_t *tile = lv_button_create(s_favGrid);
         lv_obj_remove_style_all(tile);
@@ -945,7 +1040,7 @@ static void rebuildFavGrid(void)
         bool hasOnState = devGlyph && (!strcmp(s_favs[i].kind, "light") || !strcmp(s_favs[i].kind, "fan") || !strcmp(s_favs[i].kind, "shade"));
         int artsz = 0;
         if (s_favs[i].art_url[0] || devGlyph) {
-            artsz = th - (small ? 34 : (int)(38 * s));
+            artsz = th - ((int)(38 * s));
             int maxw = tw - (int)(24 * s);
             if (artsz > maxw) artsz = maxw;
             if (artsz < 24) artsz = 0;
@@ -961,7 +1056,7 @@ static void rebuildFavGrid(void)
             lv_obj_t *ic = lv_label_create(tile);
             lv_obj_set_style_text_font(ic, FICON, 0);
             lv_label_set_text(ic, iconGlyph(devGlyph));
-            lv_obj_set_style_text_color(ic, lv_color_hex((hasOnState && s_favs[i].on) ? 0xFFD166 : C_TEXT), 0);
+            lv_obj_set_style_text_color(ic, lv_color_hex((hasOnState && s_favs[i].on) ? C_WARN : C_TEXT), 0);
             lv_obj_set_width(ic, artsz);
             lv_obj_set_style_text_align(ic, LV_TEXT_ALIGN_CENTER, 0);
             lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, (int)(8 * s));
@@ -973,7 +1068,7 @@ static void rebuildFavGrid(void)
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
         lv_obj_set_width(lbl, tw - (int)(20 * s));
         lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_font(lbl, (small || artsz > 0) ? F16 : F24, 0);
+        lv_obj_set_style_text_font(lbl, (artsz > 0) ? F16 : F24, 0);
         lv_obj_set_style_text_color(lbl, lv_color_hex(C_TEXT), 0);
         lv_label_set_text(lbl, s_favs[i].title);
         if (artsz > 0) lv_obj_align(lbl, LV_ALIGN_BOTTOM_MID, 0, -(int)(6 * s));
@@ -989,7 +1084,7 @@ static void rebuildFavGrid(void)
     if (s_nFavs == 0) {
         lv_obj_t *l = lv_label_create(s_favGrid);
         lv_obj_set_style_text_font(l, F16, 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(0x9AA5B1), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(C_MUTED), 0);
         lv_label_set_text(l, "No favorites");
         lv_obj_set_style_pad_top(l, (int)(20 * s), 0);
     }
@@ -1027,9 +1122,10 @@ void ui_set_favorites(const favorite_t *favs, int n)
     if (n > 0) memcpy(s_favs, favs, (size_t)n * sizeof(favorite_t));
     s_nFavs = n;
     rebuildFavGrid();
-    // The landing page renders favourites as rows, so a changed list means rebuilding
-    // it. Guarded on an actual change: the driver re-sends this list on every sync.
-    if (changed && s_home) ui_request_rebuild();
+    // The landing page renders favourites as tiles, so a changed list repaints the
+    // grid -- only the grid (see homeTilesRefresh). Guarded on an actual change: the
+    // driver re-sends this list on every sync.
+    if (changed) homeTilesRefresh();
 }
 
 void ui_set_endpoints(const intercom_target_t *eps, int n)
@@ -1057,7 +1153,6 @@ static int s_ncyc;
 #ifdef MMK_CAN_ROTATE
 static const char *const OPT_ORIENT[] = { "Landscape", "Portrait", "Landscape flipped", "Portrait flipped" };
 #endif
-static const char *const OPT_PLATFORM[] = { "Control4", "Home Assistant" };
 // Idle brightness: the cycler stores an INDEX, but dim_brightness is the actual
 // backlight %, so map index -> value in onCycle (apply==4). s_idleIdx mirrors it.
 static const char *const OPT_IDLE[]     = { "Screen off", "5%", "10%", "25%", "50%" };
@@ -1106,8 +1201,8 @@ static int s_setPage;          // which page is open; PG_HOME = the tile grid
 static lv_obj_t *s_tileVal[PG_COUNT];   // per-tile live value label (NULL when closed)
 static lv_obj_t   *s_netIpLbl;     // "IP address" value (NULL when the page is closed)
 static lv_obj_t   *s_netLinkLbl;   // "Link" value
-static lv_obj_t   *s_netC4Lbl;     // "Control4" value, C4 theme only
-static lv_obj_t   *s_netSddpLbl;   // "Discovery name" value — what Control4 binds against
+static lv_obj_t   *s_netC4Lbl;     // "Controller" Connected/Offline value
+static lv_obj_t   *s_netSddpLbl;   // "Device name" value — what Control4 binds against
 static lv_timer_t *s_netTimer;
 
 static void onSettingsBack(lv_event_t *e);
@@ -1170,7 +1265,7 @@ static void onFwuPick(lv_event_t *e) {
     }
     s_fwuArmed = idx;                            // first tap: arm + confirm
     if (lbl) lv_label_set_text(lbl, "Tap again to install");
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0xC85050), 0);
+    uiBtnFill(btn, BTN_DANGER);                  // armed: the next tap installs
 }
 
 static void fwu_render(fwupdate_state_t st) {
@@ -1180,7 +1275,7 @@ static void fwu_render(fwupdate_state_t st) {
     if (st == FWU_FETCHING) {
         fwu_note("Checking GitHub for updates\xE2\x80\xA6", C_SUBTLE);
     } else if (st == FWU_ERROR) {
-        fwu_note(fwupdate_error()[0] ? fwupdate_error() : "Update check failed", 0xC85050);
+        fwu_note(fwupdate_error()[0] ? fwupdate_error() : "Update check failed", C_RED);
     } else if (st == FWU_APPLYING) {
         fwu_note("Downloading and installing\xE2\x80\xA6\nThe panel will restart when done.", C_TEXT);
     } else if (st == FWU_READY) {
@@ -1189,9 +1284,10 @@ static void fwu_render(fwupdate_state_t st) {
             const fwupdate_rel_t *r = fwupdate_get(i);
             if (!r) continue;
             lv_obj_t *b = lv_button_create(s_fwuCard);
+            uiBtnStyle(b, BTN_NEUTRAL);
             lv_obj_set_width(b, LV_PCT(100));
-            lv_obj_set_style_bg_color(b, lv_color_hex(r->current ? 0x203040 : C_BTN), 0);
-            lv_obj_set_style_pad_ver(b, 10, 0);
+            if (r->current) lv_obj_set_style_bg_opa(b, OPA_SURFACE, 0);   // installed: recedes
+            lv_obj_set_style_pad_ver(b, (int)(14 * s_uiscale), 0);
             lv_obj_add_event_cb(b, onFwuPick, LV_EVENT_CLICKED, (void *)(intptr_t)i);
             lv_obj_t *l = lv_label_create(b);
             char txt[80];
@@ -1247,8 +1343,8 @@ static void onCheckFirmware(lv_event_t *e) {
     {
         // Matches the home page's own top-bar icons/gear (topGlyphBtn, 25% bumped
         // to 42/50*s) -- this was a visibly smaller leftover from before that bump.
-        int bsz = (s_uiscale < 0.99f) ? 42 : (int)(50 * s_uiscale);
-        lv_obj_t *back = iconBtnImg(hdr, ICON_BACK, bsz, C_BTN, LV_OPA_COVER, 0xFFFFFF,
+        int bsz = (int)(50 * s_uiscale);
+        lv_obj_t *back = iconBtnImg(hdr, ICON_BACK, bsz, C_GLASS, LV_OPA_COVER, C_TEXT,
                                     onFwuClose, NULL);
         if (back) lv_obj_set_ext_click_area(back, (int)(12 * s_uiscale));
     }
@@ -1389,9 +1485,9 @@ static void settingsCycler(lv_obj_t *parent, const char *name,
     lv_obj_set_style_text_color(lbl, lv_color_hex(C_TEXT), 0);
     lv_obj_set_style_text_font(lbl, F16, 0);
     lv_obj_t *btn = lv_button_create(row);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(C_BTN), 0);
-    lv_obj_set_style_pad_hor(btn, 14, 0);
-    lv_obj_set_style_pad_ver(btn, 8, 0);
+    uiBtnStyle(btn, BTN_NEUTRAL);
+    lv_obj_set_style_pad_hor(btn, (int)(16 * s_uiscale), 0);
+    lv_obj_set_style_pad_ver(btn, (int)(10 * s_uiscale), 0);
     lv_obj_t *val = lv_label_create(btn);
     lv_label_set_text(val, opts[*field]);
     lv_obj_set_style_text_color(val, lv_color_hex(C_ACCENT), 0);
@@ -1411,9 +1507,8 @@ static lv_obj_t *settings_card(lv_obj_t *parent, const char *title) {
     lv_obj_set_width(card, LV_PCT(100));
     lv_obj_set_height(card, LV_SIZE_CONTENT);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(card, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(card, LV_OPA_40, 0);
-    lv_obj_set_style_radius(card, (int)(16 * s_uiscale), 0);
+    uiSurface(card, (int)(18 * s_uiscale), false);
+    lv_obj_set_style_bg_opa(card, OPA_SURFACE, LV_STATE_PRESSED);   // a card is not a button
     lv_obj_set_style_pad_all(card, (int)(16 * s_uiscale), 0);
     lv_obj_set_style_pad_row(card, (int)(9 * s_uiscale), 0);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
@@ -1472,7 +1567,7 @@ static void onNetPoll(lv_timer_t *t) {
     const char *host = sddp_host();
     set_row(s_netSddpLbl, host[0] ? host : "—", host[0] ? C_TEXT : C_SUBTLE);
     bool up = net_connected();
-    set_row(s_netC4Lbl, up ? "Connected" : "Offline", up ? C_GREEN : 0xC85050);
+    set_row(s_netC4Lbl, up ? "Connected" : "Offline", up ? C_GREEN : C_RED);
 
     // Tile values. Same timer, same cadence -- the grid should never disagree with
     // the page behind it, which is the whole reason these are polled and not stamped.
@@ -1598,8 +1693,8 @@ static void ui_show_settings(void) {
     {
         // Matches the home page's own top-bar icons/gear (topGlyphBtn, 25% bumped
         // to 42/50*s) -- this was a visibly smaller leftover from before that bump.
-        int bsz = (s_uiscale < 0.99f) ? 42 : (int)(50 * s_uiscale);
-        lv_obj_t *back = iconBtnImg(hdr, ICON_BACK, bsz, C_BTN, LV_OPA_COVER, 0xFFFFFF,
+        int bsz = (int)(50 * s_uiscale);
+        lv_obj_t *back = iconBtnImg(hdr, ICON_BACK, bsz, C_GLASS, LV_OPA_COVER, C_TEXT,
                                     onSettingsBack, NULL);
         // Touch target beyond the drawn circle -- cheap insurance on the smaller panels.
         if (back) lv_obj_set_ext_click_area(back, (int)(12 * s_uiscale));
@@ -1609,75 +1704,34 @@ static void ui_show_settings(void) {
     lv_obj_set_style_text_color(t, lv_color_hex(C_TEXT), 0);   // X4 titles are white, not green
     lv_obj_set_style_text_font(t, F24, 0);
 
-    // ── Landing: a grid of large tiles ──────────────────────────────────────────
-    // Sized by available width rather than by panel model, so one rule covers the
-    // 4.3" in portrait (2 columns) and landscape (3), and the T3 7"/10" (3-4). The
-    // minimum is what a finger needs, not what the text needs.
+    // ── Landing: one row per section, live value underneath, chevron at the right.
+    // The value is what makes this page worth looking at: brightness, volume and
+    // link state are readable without opening anything, and they track changes
+    // while you stand there. (These were two-up tiles, which truncated
+    // "Diagnostics" and gave the value a caption-sized afterthought of a line.)
     if (s_setPage == PG_HOME) {
-        static const struct { const char *name; const char *glyph; int page; } TILES[] = {
+        static const struct { const char *name; const char *glyph; int page; } ROWS[] = {
             { "Display",     G_SUN,   PG_DISPLAY },
             { "Sound",       G_VOL,   PG_SOUND   },
             { "Network",     G_WIFI,  PG_NETWORK },
             { "Diagnostics", G_TOOLS, PG_DIAG    },
             { "About",       G_INFO,  PG_ABOUT   },
         };
-        lv_obj_t *grid = lv_obj_create(ov);
-        lv_obj_remove_style_all(grid);
-        lv_obj_set_width(grid, LV_PCT(100));
-        lv_obj_set_height(grid, LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-        lv_obj_set_style_pad_row(grid, (int)(12 * s_uiscale), 0);
-        lv_obj_set_style_pad_column(grid, (int)(12 * s_uiscale), 0);
-        lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *list = lv_obj_create(ov);
+        lv_obj_remove_style_all(list);
+        lv_obj_set_width(list, LV_PCT(100));
+        lv_obj_set_height(list, LV_SIZE_CONTENT);
+        lv_obj_clear_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+        const int rw = rowListLayout(list, (int)(18 * s_uiscale));   // ov's own side padding
 
-        int avail = lv_display_get_horizontal_resolution(NULL) - (int)(36 * s_uiscale);
-        int minTile = (int)(190 * s_uiscale);
-        int cols = avail / (minTile + (int)(12 * s_uiscale));
-        if (cols < 2) cols = 2;                 // never one giant column
-        if (cols > 4) cols = 4;
-        int gap = (int)(12 * s_uiscale);
-        int tileW = (avail - gap * (cols - 1)) / cols;
-        int tileH = (int)(96 * s_uiscale);
-
-        for (unsigned i = 0; i < sizeof(TILES) / sizeof(TILES[0]); i++) {
-            lv_obj_t *b = lv_button_create(grid);
-            lv_obj_set_size(b, tileW, tileH);
-            lv_obj_set_style_bg_color(b, lv_color_hex(0x000000), 0);
-            lv_obj_set_style_bg_opa(b, LV_OPA_40, 0);
-            lv_obj_set_style_radius(b, (int)(16 * s_uiscale), 0);
-            lv_obj_set_style_border_width(b, 0, 0);
-            lv_obj_set_style_pad_all(b, (int)(14 * s_uiscale), 0);
-            lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN);
-            lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-            lv_obj_add_event_cb(b, onSettingsTile, LV_EVENT_CLICKED, (void *)(intptr_t)TILES[i].page);
-
-            // Icon + name on one row, live value beneath. The value is what makes the
-            // grid worth looking at: brightness, volume and link state are readable
-            // without opening anything, and they track changes while you stand there.
-            lv_obj_t *top = lv_obj_create(b);
-            lv_obj_remove_style_all(top);
-            lv_obj_set_width(top, LV_PCT(100));
-            lv_obj_set_height(top, LV_SIZE_CONTENT);
-            lv_obj_set_flex_flow(top, LV_FLEX_FLOW_ROW);
-            lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-            lv_obj_set_style_pad_column(top, (int)(9 * s_uiscale), 0);
-            lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
-
-            lv_obj_t *g = lv_label_create(top);
-            lv_label_set_text(g, TILES[i].glyph);
-            lv_obj_set_style_text_font(g, FICON, 0);
-            lv_obj_set_style_text_color(g, lv_color_hex(C_ACCENT), 0);
-
-            lv_obj_t *n = lv_label_create(top);
-            lv_label_set_text(n, TILES[i].name);
-            lv_obj_set_style_text_color(n, lv_color_hex(C_TEXT), 0);
-            lv_obj_set_style_text_font(n, F24, 0);
-
-            lv_obj_t *sub = lv_label_create(b);
-            lv_label_set_text(sub, "");
-            lv_obj_set_style_text_color(sub, lv_color_hex(C_SUBTLE), 0);
-            lv_obj_set_style_text_font(sub, F16, 0);
-            if (TILES[i].page >= 0 && TILES[i].page < PG_COUNT) s_tileVal[TILES[i].page] = sub;
+        for (unsigned i = 0; i < sizeof(ROWS) / sizeof(ROWS[0]); i++) {
+            lv_obj_t *r = rowCard(list, ROWS[i].glyph, ROWS[i].name, " ", true, C_ACCENT, NULL,
+                                  ROW_CHEVRON, onSettingsTile, (void *)(intptr_t)ROWS[i].page, rw);
+            uiSurface(r, (int)(18 * s_uiscale), false);   // accent icon, but a resting surface
+            // rowCard: child 1 is the text column, whose child 1 is the state line.
+            lv_obj_t *val = lv_obj_get_child(lv_obj_get_child(r, 1), 1);
+            lv_obj_set_style_text_color(val, lv_color_hex(C_SUBTLE), 0);
+            if (ROWS[i].page >= 0 && ROWS[i].page < PG_COUNT) s_tileVal[ROWS[i].page] = val;
         }
         if (!s_netTimer) s_netTimer = lv_timer_create(onNetPoll, 1000, NULL);
         onNetPoll(NULL);   // fill the values now; do not show a blank line for a second
@@ -1687,30 +1741,14 @@ static void ui_show_settings(void) {
     {
         char ip[24]; net_get_ip(ip, sizeof(ip));
         bool up = net_connected();
-        bool isC4 = (g_settings.theme == 0);
         lv_obj_t *card = settings_card_page(ov, PG_NETWORK, "Device & Connection");
-        // Control4-specific fields (link status, Room, Director IP, driver protocol
-        // version) only mean something when paired with a Control4 driver — the HA
-        // theme has no Director to show, so this card is just the generic device
-        // identity (IP/firmware/device) there.
-        if (isC4) {
-            s_netC4Lbl = settings_info_row(card, "Control4", up ? "Connected" : "Offline",
-                                           up ? C_GREEN : 0xC85050);
-            if (up && s_lastState.room[0]) settings_info_row(card, "Room", s_lastState.room, C_TEXT);
-            if (up && net_peer_ip()[0])    settings_info_row(card, "Director", net_peer_ip(), C_TEXT);
-            // Just "v1" (the wire-protocol version). Only if a paired driver
-            // reports a DIFFERENT proto do we surface the mismatch — hiding it
-            // would defeat the point of having a protocol version at all.
-            char proto[40];
-            int dp = net_driver_proto();
-            if (up && dp && dp != NET_PROTO_VERSION)
-                snprintf(proto, sizeof(proto), "v%d (driver v%d)", NET_PROTO_VERSION, dp);
-            else
-                snprintf(proto, sizeof(proto), "v%d", NET_PROTO_VERSION);
-            // Protocol version and driver version deliberately NOT shown: both are
-            // driver-side facts, visible in Composer and the portal, and they were
-            // noise on a panel someone walks up to.
-        }
+        // Worded for whatever is on the other end of the link -- a Control4 Director
+        // or Home Assistant. The panel does not know or care which; "controller" is
+        // true of both, so there is no platform setting to get wrong.
+        s_netC4Lbl = settings_info_row(card, "Controller", up ? "Connected" : "Offline",
+                                       up ? C_GREEN : C_RED);
+        if (up && s_lastState.room[0]) settings_info_row(card, "Room", s_lastState.room, C_TEXT);
+        if (up && net_peer_ip()[0])    settings_info_row(card, "Controller address", net_peer_ip(), C_TEXT);
         {   // Which interface is carrying us, above the address it carries.
             const char *tr = net_active_transport();
             s_netLinkLbl = settings_info_row(card, "Link", tr[0] ? tr : "none",
@@ -1722,7 +1760,7 @@ static void ui_show_settings(void) {
             // disagrees with the stored binding, the panel is on the network and
             // still undiscoverable — and there is otherwise nowhere to read it.
             const char *host = sddp_host();
-            s_netSddpLbl = settings_info_row(card, "Discovery name", host[0] ? host : "—",
+            s_netSddpLbl = settings_info_row(card, "Device name", host[0] ? host : "—",
                                              host[0] ? C_TEXT : C_SUBTLE);
         }
         // 1 s is plenty: this tracks DHCP and link changes, not anything the eye
@@ -1739,14 +1777,10 @@ static void ui_show_settings(void) {
             lv_obj_add_flag(s_netNoteLbl, LV_OBJ_FLAG_HIDDEN);
         }
 #endif
-        // Firmware and the updater moved to About: this page is about the LINK,
-        // and a version string is something you look up, not something you watch.
-        // Model / Device ID / MAC / link type / power source are all shown by the
-        // Control4 driver, so they are not repeated here. What stays is what you need
-        // while
-        // STANDING AT the panel: is it talking to Control4, which room, what address,
-        // what firmware (and can I update it), and is it licensed.
-        settingsCycler(card, "Platform", OPT_PLATFORM, 2, &g_settings.theme, 3);
+        // Firmware and the updater live on About: this page is about the LINK, and a
+        // version string is something you look up, not something you watch. What stays
+        // is what you need while STANDING AT the panel: is it talking to its
+        // controller, which room, what address.
     }
 
     // ── Display card (X4 glass): brightness + the appearance options that apply ──
@@ -1829,54 +1863,22 @@ static void ui_show_settings(void) {
     {
         lv_obj_t *card = settings_card_page(ov, PG_DIAG, "Diagnostics");
         {
-            lv_obj_t *btn = lv_button_create(card);
+            lv_obj_t *btn = uiBtn(card, "Play test tone", BTN_NEUTRAL, false, onPlayTestTone, NULL);
             lv_obj_set_width(btn, LV_PCT(100));
-            lv_obj_set_style_bg_color(btn, lv_color_hex(C_BTN), 0);
-            lv_obj_set_style_pad_ver(btn, 10, 0);
-            lv_obj_add_event_cb(btn, onPlayTestTone, LV_EVENT_CLICKED, NULL);
-            lv_obj_t *l = lv_label_create(btn);
-            lv_label_set_text(l, "Play test tone");
-            lv_obj_center(l);
-            lv_obj_set_style_text_font(l, F16, 0);
-            lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
         }
         {
-            lv_obj_t *btn = lv_button_create(card);
+            lv_obj_t *btn = uiBtn(card, "Test mic", BTN_NEUTRAL, false, onMicTest, NULL);
             lv_obj_set_width(btn, LV_PCT(100));
-            lv_obj_set_style_bg_color(btn, lv_color_hex(C_BTN), 0);
-            lv_obj_set_style_pad_ver(btn, 10, 0);
-            lv_obj_add_event_cb(btn, onMicTest, LV_EVENT_CLICKED, NULL);
-            lv_obj_t *l = lv_label_create(btn);
-            lv_label_set_text(l, "Test mic");
-            lv_obj_center(l);
-            lv_obj_set_style_text_font(l, F16, 0);
-            lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
         }
         {
-            lv_obj_t *btn = lv_button_create(card);
+            lv_obj_t *btn = uiBtn(card, "Reconnect to driver", BTN_NEUTRAL, false, onReconnectDriver, NULL);
             lv_obj_set_width(btn, LV_PCT(100));
-            lv_obj_set_style_bg_color(btn, lv_color_hex(C_BTN), 0);
-            lv_obj_set_style_pad_ver(btn, 10, 0);
-            lv_obj_add_event_cb(btn, onReconnectDriver, LV_EVENT_CLICKED, NULL);
-            lv_obj_t *l = lv_label_create(btn);
-            lv_label_set_text(l, "Reconnect to driver");
-            lv_obj_center(l);
-            lv_obj_set_style_text_font(l, F16, 0);
-            lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
         }
         {   // Destructive-ish (drops now-playing/calls), so it gets the red treatment
             // the rest of Diagnostics doesn't -- not a two-tap arm/confirm dance like
             // the firmware picker, since a reboot is cheap and fully recoverable.
-            lv_obj_t *btn = lv_button_create(card);
+            lv_obj_t *btn = uiBtn(card, "Reboot panel", BTN_DANGER, false, onRebootPanel, NULL);
             lv_obj_set_width(btn, LV_PCT(100));
-            lv_obj_set_style_bg_color(btn, lv_color_hex(0xC85050), 0);
-            lv_obj_set_style_pad_ver(btn, 10, 0);
-            lv_obj_add_event_cb(btn, onRebootPanel, LV_EVENT_CLICKED, NULL);
-            lv_obj_t *l = lv_label_create(btn);
-            lv_label_set_text(l, "Reboot panel");
-            lv_obj_center(l);
-            lv_obj_set_style_text_font(l, F16, 0);
-            lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
         }
     }
 
@@ -1886,16 +1888,8 @@ static void ui_show_settings(void) {
         settings_info_row(card, "Model",    device_model_name(), C_TEXT);
         settings_info_row(card, "Firmware", fw_version(), C_TEXT);
         {   // Same updater the old page had, just no longer competing for attention.
-            lv_obj_t *fwbtn = lv_button_create(card);
+            lv_obj_t *fwbtn = uiBtn(card, "Check for update", BTN_NEUTRAL, false, onCheckFirmware, NULL);
             lv_obj_set_width(fwbtn, LV_PCT(100));
-            lv_obj_set_style_bg_color(fwbtn, lv_color_hex(C_BTN), 0);
-            lv_obj_set_style_pad_ver(fwbtn, 10, 0);
-            lv_obj_add_event_cb(fwbtn, onCheckFirmware, LV_EVENT_CLICKED, NULL);
-            lv_obj_t *fwlbl = lv_label_create(fwbtn);
-            lv_label_set_text(fwlbl, "Check for update");
-            lv_obj_center(fwlbl);
-            lv_obj_set_style_text_font(fwlbl, F16, 0);
-            lv_obj_set_style_text_color(fwlbl, lv_color_hex(C_TEXT), 0);
         }
         settings_add_logo(ov);   // wordmark + "buy me a coffee" QR live here now
     }
@@ -1940,13 +1934,14 @@ static void ui_apply_font_scale(int W, int H)
     if (scale <= 1.01f) return;            // baseline / small: keep the bitmap fonts (14/16/24/32
                                            // are the readable floor; don't render smaller than that)
 
-    static lv_font_t *fS, *fB, *fT, *fH, *fI, *fIL;
+    static lv_font_t *fS, *fB, *fT, *fH, *fI, *fIL, *fIXL;
     if (fS) lv_tiny_ttf_destroy(fS);
     if (fB) lv_tiny_ttf_destroy(fB);
     if (fT) lv_tiny_ttf_destroy(fT);
     if (fH) lv_tiny_ttf_destroy(fH);
     if (fI) lv_tiny_ttf_destroy(fI);
     if (fIL) lv_tiny_ttf_destroy(fIL);
+    if (fIXL) lv_tiny_ttf_destroy(fIXL);
     fS = lv_tiny_ttf_create_data(mmk_roboto_regular, mmk_roboto_regular_len, (int)(14 * scale));
     fB = lv_tiny_ttf_create_data(mmk_roboto_regular, mmk_roboto_regular_len, (int)(16 * scale));
     fT = lv_tiny_ttf_create_data(mmk_roboto_medium,  mmk_roboto_medium_len,  (int)(24 * scale));
@@ -1962,13 +1957,17 @@ static void ui_apply_font_scale(int W, int H)
     fIL = lv_tiny_ttf_create_data(mmk_lucide, mmk_lucide_len, (int)(34 * scale));
     if (fI)  g_fIcon  = fI;
     if (fIL) g_fIconL = fIL;
+    fIXL = lv_tiny_ttf_create_data(mmk_lucide, mmk_lucide_len, (int)(48 * scale));
+    if (fIXL) g_fIconXL = fIXL;
 }
 #else
 // No TTF engine (all ESP boards): the bitmap fonts (14/16/24/32) are fixed, so we
-// can't scale type UP — but we still set s_uiscale so the X4 layout geometry
-// (margins/paddings/card sizes, all `* s_uiscale`) can shrink to fit the small
-// 240/320-class panels. Clamped to <=1.0 so every >=480 panel (ws43, nano)
-// keeps its existing s=1.0-tuned layout byte-for-byte; only the 2.8" shrinks.
+// can't scale type UP. s_uiscale is therefore clamped to <=1.0, which every
+// supported ESP panel (ws43, nano; short side >=480) resolves to exactly 1.0.
+// NOTE geometry and type must scale TOGETHER: a panel with a short side under
+// 480 would shrink every box while the bitmap text stayed put, and nothing here
+// lays out correctly that way -- that is why the 240x320 layout was dropped
+// rather than kept limping.
 static void ui_apply_font_scale(int W, int H) {
     int shortSide = (W < H) ? W : H;
     float scale = (float)shortSide / 480.0f;
@@ -1996,7 +1995,7 @@ static void homeIntercom(lv_event_t *e)
 {
     (void)e;
     if (!s_icPanel) return;
-    if (s_x4 && s_home) { s_homeAtHome = false; lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); }
+    if (s_home) { s_homeAtHome = false; lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); }
     lv_obj_clear_flag(s_icPanel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_icPanel);
 }
@@ -2021,20 +2020,20 @@ static void onHomeVol(lv_event_t *e)
 {
     if (!s_homeVol) return;
     int v = lv_slider_get_value(s_homeVol);
-    if (s_homeVolIcon) lv_image_set_src(s_homeVolIcon, v == 0 ? ICON_VOL_MUTE : ICON_VOL_UP);
-    if (lv_event_get_code(e) == LV_EVENT_RELEASED) net_set_volume(v);
+    if (s_homeVolIcon) lv_label_set_text(s_homeVolIcon, v == 0 ? ICON_VOL_MUTE : ICON_VOL_UP);
+    if (lv_event_get_code(e) == LV_EVENT_RELEASED) volSent(v);
 }
 
 // Full-screen X4 sub-page header: a back "‹" button + title at top-left (like the
 // X4 "‹ Comfort" pages). Used by the keypad (and intercom) full-screen pages.
-static void x4PageHeader(lv_obj_t *parent, const char *title, lv_event_cb_t backCb)
+static lv_obj_t *x4PageHeader(lv_obj_t *parent, const char *title, lv_event_cb_t backCb)
 {
     const float s = s_uiscale;
     // Matches the home page's own top-bar icons (topGlyphBtn/the settings gear,
     // both bumped 25% to 50*s) -- this back chevron used to be a visibly smaller
     // 40*s left over from before that bump, inconsistent on every sub-page.
     const int bsz = (int)(50 * s);
-    lv_obj_t *back = iconBtnImg(parent, ICON_BACK, bsz, 0, LV_OPA_TRANSP, 0xFFFFFF, backCb, NULL);
+    lv_obj_t *back = iconBtnImg(parent, ICON_BACK, bsz, 0, LV_OPA_TRANSP, C_TEXT, backCb, NULL);
     lv_obj_align(back, LV_ALIGN_TOP_LEFT, (int)(24 * s), (int)(22 * s));
     lv_obj_t *t = lv_label_create(parent);
     lv_obj_set_style_text_font(t, F32, 0);
@@ -2052,6 +2051,7 @@ static void x4PageHeader(lv_obj_t *parent, const char *title, lv_event_cb_t back
     lv_obj_set_style_transform_pivot_x(t, 0, 0);
     lv_obj_set_style_transform_pivot_y(t, 0, 0);
     lv_obj_align(t, LV_ALIGN_TOP_LEFT, (int)(24 * s) + bsz + (int)(20 * s), (int)(30 * s));
+    return t;
 }
 
 // ── Security partition page ─────────────────────────────────────────────────
@@ -2062,6 +2062,7 @@ static void x4PageHeader(lv_obj_t *parent, const char *title, lv_event_cb_t back
 // -- issue #2's original single-clean-page intent -- while a room with more than
 // one (live-confirmed: room 2434 "Office" has 2684+2685) shows the picker first,
 // mirroring how the Comfort page shows a thermostat list before its detail view.
+static void homeStatusRefresh(void);   // fwd
 static void secRebuild(void);          // fwd
 static void secPickerRebuild(void);    // fwd
 static void secOpenDetail(int id);     // fwd
@@ -2087,7 +2088,7 @@ static void homeSecurity(lv_event_t *e)
 {
     (void)e;
     if (!s_secPanel || s_sec.n == 0) return;
-    if (s_x4 && s_home) { s_homeAtHome = false; lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); }
+    if (s_home) { s_homeAtHome = false; lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); }
     if (s_sec.n == 1) {
         // Common case: skip the picker entirely, same as the pre-auto-discovery
         // single-bound-partition UX.
@@ -2107,7 +2108,7 @@ void ui_show_security_panel(void) { homeSecurity(NULL); }
 void ui_show_security_detail(int id)
 {
     if (!s_secPanel) return;
-    if (s_x4 && s_home) { s_homeAtHome = false; lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); }
+    if (s_home) { s_homeAtHome = false; lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); }
     secOpenDetail(id);
 }
 
@@ -2117,12 +2118,13 @@ void ui_show_security_detail(int id)
 // Security page below) repopulates the thermostat rows from s_cmf.
 static void cmfRebuildList(void);   // fwd
 static void cmfDetailRebuild(void); // fwd
+static void cmfDialSet(lv_obj_t *arc, int setpoint, const char *scale, bool active);   // fwd
 static void onCmfHome(lv_event_t *e) { (void)e; goHomeFrom(s_cmfPanel); }
 static void homeComfort(lv_event_t *e)
 {
     (void)e;
     if (!s_cmfPanel) return;
-    if (s_x4 && s_home) { s_homeAtHome = false; lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); }
+    if (s_home) { s_homeAtHome = false; lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN); }
     cmfRebuildList();
     lv_obj_clear_flag(s_cmfPanel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_cmfPanel);
@@ -2192,18 +2194,32 @@ static bool secIsArmed(const partition_t *p) {
 // in buildSecurityPage), not heroD, since the same base glyph asset at the same
 // transform_scale carries the same absolute pixel asymmetry regardless of how
 // big the ring around it is. "Lock" (closed) measured centered -- no nudge.
-static float s_secHeroIconScale = 1.0f;
+// Which actions the page leads with. All three stay TAPPABLE in every state: the
+// state shown is only ever what the driver last confirmed, and a panel that hid
+// Disarm because it believed the house was disarmed would leave no way out the one
+// time that belief was stale. So the state only moves the EMPHASIS: the action that
+// makes sense now is at full strength (Disarm filled green when armed), the ones
+// that would be no-ops recede.
+static void secSetActions(const partition_t *p)
+{
+    if (!s_secDisarmBtn || !s_secArmHomeBtn || !s_secArmAwayBtn) return;
+    const bool locked = secInAlarm(p) || secInDelay(p) || secIsArmed(p);
+    uiBtnFill(s_secDisarmBtn, locked ? BTN_SUCCESS : BTN_NEUTRAL);
+    lv_obj_set_style_opa(s_secDisarmBtn,  locked ? LV_OPA_COVER : LV_OPA_50, 0);
+    lv_obj_set_style_opa(s_secArmHomeBtn, locked ? LV_OPA_50 : LV_OPA_COVER, 0);
+    lv_obj_set_style_opa(s_secArmAwayBtn, locked ? LV_OPA_50 : LV_OPA_COVER, 0);
+}
+
 static void secSetHero(const partition_t *p)
 {
     if (!s_secHero || !s_secHeroIcon) return;
     bool alarm = secInAlarm(p), delay = secInDelay(p), armed = secIsArmed(p);
-    uint32_t ring = alarm ? C_RED : armed ? C_RED : delay ? 0xFFD166 : C_GREEN;
+    uint32_t ring = alarm ? C_RED : armed ? C_RED : delay ? C_WARN : C_GREEN;
     bool locked = alarm || armed || delay;
     lv_obj_set_style_border_color(s_secHero, lv_color_hex(ring), 0);
     lv_label_set_text(s_secHeroIcon, iconGlyph(locked ? "Lock" : "Unlock"));
     lv_obj_set_style_text_color(s_secHeroIcon, lv_color_hex(ring), 0);
-    int dx = locked ? 0 : -(int)(2.6f * s_secHeroIconScale);
-    lv_obj_align(s_secHeroIcon, LV_ALIGN_CENTER, dx, 0);
+    lv_obj_center(s_secHeroIcon);
 }
 
 // One line of feedback for an in-flight secarm/secdisarm -- NEVER the big state
@@ -2244,6 +2260,7 @@ static void secRebuild(void)
 
     if (s_secTitleLbl) lv_label_set_text(s_secTitleLbl, (s_sec.n > 1 && p->title[0]) ? p->title : "");
     secSetHero(p);
+    secSetActions(p);
 
     char stbuf[32];
     lv_label_set_text(s_secStateLbl, secStateLabel(p->state, stbuf, sizeof(stbuf)));
@@ -2367,23 +2384,18 @@ static void secOpenPin(const char *armType, bool isDisarm, bool bypass)
     lv_obj_clear_flag(s_pinPanel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_pinPanel);
 }
+void ui_show_security_pin(void) { secOpenPin("Away", false, false); }   // sim/preview only
 static void onSecArmHome(lv_event_t *e)   { (void)e; secOpenPin("Stay", false, s_secBypassWanted); }
 static void onSecArmAway(lv_event_t *e)   { (void)e; secOpenPin("Away", false, s_secBypassWanted); }
 static void onSecDisarm(lv_event_t *e)    { (void)e; secOpenPin(NULL, true, false); }
 static void onSecBypassToggle(lv_event_t *e) { (void)e; s_secBypassWanted = !s_secBypassWanted; secRebuild(); }
 
 // One PIN-pad button (digit or action). Square, dark, matches tileCard's glass look.
-static lv_obj_t *pinKey(lv_obj_t *p, const char *label, int x, int y, int sz,
+static lv_obj_t *pinKey(lv_obj_t *p, const char *label, int sz,
                         lv_event_cb_t cb, void *ud)
 {
     lv_obj_t *b = lv_button_create(p);
-    lv_obj_remove_style_all(b);
-    lv_obj_set_pos(b, x, y);
-    lv_obj_set_size(b, sz, sz);
-    lv_obj_set_style_radius(b, sz / 2, 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_bg_opa(b, LV_OPA_10, 0);
-    lv_obj_set_style_bg_opa(b, LV_OPA_30, LV_STATE_PRESSED);
+    uiRoundStyle(b, sz, false);
     lv_obj_t *l = lv_label_create(b);
     lv_obj_set_style_text_font(l, F24, 0);
     lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
@@ -2393,7 +2405,7 @@ static lv_obj_t *pinKey(lv_obj_t *p, const char *label, int x, int y, int sz,
     return b;
 }
 
-static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
+static void buildSecurityPage(lv_obj_t *scr, int W, int H)
 {
     const float s = s_uiscale;
     s_secPanel = lv_obj_create(scr);
@@ -2406,135 +2418,139 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_obj_set_style_bg_grad_dir(s_secPanel, LV_GRAD_DIR_VER, 0);
     lv_obj_set_style_bg_opa(s_secPanel, LV_OPA_COVER, 0);
     lv_obj_clear_flag(s_secPanel, LV_OBJ_FLAG_SCROLLABLE);
-    if (smallP) {
-        lv_obj_t *back = iconBtnImg(s_secPanel, ICON_BACK, 30, 0, LV_OPA_TRANSP, 0xFFFFFF, onSecDetailBack, NULL);
-        lv_obj_align(back, LV_ALIGN_TOP_LEFT, 8, 8);
-    } else {
-        x4PageHeader(s_secPanel, "Security", onSecDetailBack);
-    }
-    // H (not smallP, a WIDTH-derived flag) is what decides whether this page's
-    // vertical stack fits: the office WS43 runs 800x480 LANDSCAPE, plenty wide
-    // (s_uiscale=1, smallP=false) but only 480px tall. The hero circle below was
-    // sized for the >=700px-tall layouts (WS43 portrait 480x800, P4 nano
-    // 1280x800) it was actually tested against, and at full size pushed the
-    // Disarm button and everything after it off the bottom of a 480px-tall
-    // screen entirely -- confirmed in the sim at 800x480 after the fact, which
-    // is what should have been checked before flashing.
+    x4PageHeader(s_secPanel, "Security", onSecDetailBack);
+    
+    // The page body is two flex columns -- status (ring, state, zone text) and
+    // actions (arm/disarm/bypass) -- and ORIENTATION decides how they sit:
+    // stacked in portrait, side by side in landscape. Nothing here is positioned
+    // by hand, so nothing can overlap or fall off the bottom.
     //
-    // Three tiers, all folded into one `compact` level so every size below
-    // ladders off the SAME decision instead of two flags whose precedence could
-    // (and did, in an earlier draft of this fix) disagree with each other:
-    //   0 full    -- H>=700 (WS43 portrait, P4 nano)
-    //   1 short   -- H<700  (WS43 LANDSCAPE, the office panel's actual config)
-    //   2 tiny    -- smallP (the S3's 240px-tall classes; already extra-shrunk
-    //                by s_uiscale<1 on top of this)
-    const int compact = smallP ? 2 : (H < 700 ? 1 : 0);
-    const int top = compact == 2 ? 30 : compact == 1 ? 20 : (int)(120 * s);
+    // This replaces a single vertical stack built from lv_obj_align_to() chains
+    // and a three-level `compact` ladder of pixel sizes. align_to() is computed
+    // ONCE, against the placeholder text present at build time, so every label
+    // drifted off-centre as soon as real text arrived ("All zones secure" sat
+    // visibly right of the ring on every panel). And one tall stack cannot fit
+    // a landscape screen at any hero size: it pushed Disarm off the bottom of
+    // the 800x480 WS43 (the office panel's real config), then, after that got
+    // its own shrunken tier, still clipped it on the 1280x800 nano.
+    const bool wide = (W > H);
+    const int hdrH = (int)(84 * s);
+    const int sidePad = (int)(28 * s);
+    lv_obj_t *body = lv_obj_create(s_secPanel);
+    lv_obj_remove_style_all(body);
+    lv_obj_set_pos(body, 0, hdrH);
+    lv_obj_set_size(body, W, H - hdrH);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_scroll_dir(body, LV_DIR_VER);   // last resort only; every shipped size fits
+    lv_obj_set_style_pad_hor(body, sidePad, 0);
+    lv_obj_set_style_pad_bottom(body, (int)(40 * s), 0);   // clears s_secStatusLbl
+    lv_obj_set_style_pad_row(body, (int)(24 * s), 0);
+    lv_obj_set_style_pad_column(body, (int)(40 * s), 0);
+    lv_obj_set_flex_flow(body, wide ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(body, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    const int innerW = W - 2 * sidePad;
+    // Portrait: the actions span the width and sit at the bottom edge, where a
+    // thumb rests; the status block centres itself in whatever is left above.
+    int actW = wide ? innerW * 45 / 100 : innerW;
+    if (wide && actW > (int)(440 * s)) actW = (int)(440 * s);
+    const int statW = wide ? innerW * 45 / 100 : innerW;
+
+    lv_obj_t *statCol = lv_obj_create(body);
+    lv_obj_remove_style_all(statCol);
+    lv_obj_set_size(statCol, statW, LV_SIZE_CONTENT);
+    if (!wide) lv_obj_set_flex_grow(statCol, 1);
+    lv_obj_clear_flag(statCol, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(statCol, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(statCol, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(statCol, (int)(8 * s), 0);
 
     // Partition name, shown only when this room has more than one (secRebuild
-    // leaves it blank text but the widget stays laid out) -- a single-partition
-    // room keeps the exact "Security" page-header-only look from before auto-
-    // discovery, since there's nothing to disambiguate.
-    s_secTitleLbl = lv_label_create(s_secPanel);
+    // sets it to "" otherwise) -- a single-partition room keeps the plain
+    // "Security" header-only look, since there's nothing to disambiguate.
+    s_secTitleLbl = lv_label_create(statCol);
     lv_obj_set_style_text_font(s_secTitleLbl, F16, 0);
     lv_obj_set_style_text_color(s_secTitleLbl, lv_color_hex(C_SUBTLE), 0);
     lv_label_set_text(s_secTitleLbl, "");
-    lv_obj_align(s_secTitleLbl, LV_ALIGN_TOP_MID, 0, top - (int)(24 * s));
 
     // Hero circle: the Navigator app's own Security page centers a big circular
     // status icon (an open/closed padlock inside a colored ring) above the state
-    // text -- ours was text-only. secSetHero() (called from secRebuild) drives
-    // the ring color and lock/unlock glyph from the same tri-state read the home
-    // tile's badge uses.
-    const int heroD = compact == 2 ? (int)(60 * s) : compact == 1 ? (int)(84 * s) : (int)(150 * s);
-    s_secHero = lv_obj_create(s_secPanel);
+    // text. secSetHero() (called from secRebuild) drives the ring color and
+    // lock/unlock glyph from the same tri-state read the home badge uses.
+    const int heroD = (int)((wide ? 150 : 180) * s);
+    s_secHero = lv_obj_create(statCol);
     lv_obj_remove_style_all(s_secHero);
     lv_obj_set_size(s_secHero, heroD, heroD);
     lv_obj_clear_flag(s_secHero, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(s_secHero, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_radius(s_secHero, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(s_secHero, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_color(s_secHero, lv_color_hex(C_SHADE), 0);
     lv_obj_set_style_bg_opa(s_secHero, LV_OPA_30, 0);
     lv_obj_set_style_border_width(s_secHero, (int)(6 * s) < 4 ? 4 : (int)(6 * s), 0);
     lv_obj_set_style_border_color(s_secHero, lv_color_hex(C_GREEN), 0);
-    lv_obj_align(s_secHero, LV_ALIGN_TOP_MID, 0, top);
-    s_secHeroIcon = lv_label_create(s_secHero);
-    // FICON (24px), not FICONL: the 34px icon set only carries the three transport
-    // glyphs (play/pause/stop) -- Lock/Unlock rendered as missing-glyph boxes
-    // there (confirmed in the sim). Scaled up via transform since there's no
-    // larger bitmap asset, same approach as x4PageHeader's heading bump --
-    // scaled to roughly match heroD's own tier so the glyph doesn't overrun a
-    // shrunk ring.
-    lv_obj_set_style_text_font(s_secHeroIcon, FICON, 0);
-    lv_obj_set_style_text_color(s_secHeroIcon, lv_color_hex(C_GREEN), 0);
-    lv_label_set_text(s_secHeroIcon, iconGlyph("Unlock"));
-    float heroIconScale = compact ? 1.3f : 2.2f;
-    s_secHeroIconScale = heroIconScale;
-    lv_obj_set_style_transform_scale(s_secHeroIcon, (int)(256 * heroIconScale), 0);
-    lv_obj_align(s_secHeroIcon, LV_ALIGN_CENTER, -(int)(2.6f * heroIconScale), 0);
+    lv_obj_set_style_margin_bottom(s_secHero, (int)(6 * s), 0);
+    // The 48px Lucide glyph at native size, centred by layout. This used to be the
+    // 24px glyph blown up 2.2x with a transform -- which scales about the label's
+    // top-left corner, not its centre, so the lock sat low and right in the ring on
+    // the real panel, propped up by a hand-tuned pixel nudge that only ever suited
+    // one ring size. (The transform existed because the larger icon fonts once
+    // lacked Lock/Unlock; every size carries the full set now.)
+    s_secHeroIcon = iconCreate(s_secHero, iconGlyph("Unlock"), (int)(48 * s), C_GREEN, LV_OPA_COVER);
+    lv_obj_center(s_secHeroIcon);
 
-    s_secStateLbl = lv_label_create(s_secPanel);
-    lv_obj_set_style_text_font(s_secStateLbl, compact ? F24 : F32, 0);
+    s_secStateLbl = lv_label_create(statCol);
+    lv_obj_set_style_text_font(s_secStateLbl, F32, 0);
     lv_label_set_text(s_secStateLbl, "Unknown");
-    lv_obj_align_to(s_secStateLbl, s_secHero, LV_ALIGN_OUT_BOTTOM_MID, 0, compact ? 4 : (int)(14 * s));
 
-    s_secSubLbl = lv_label_create(s_secPanel);
+    // Zone/trouble text wraps inside the column instead of running off-panel
+    // ("3 zones open - Pool Bath Door, ..." is longer than a portrait WS43).
+    s_secSubLbl = lv_label_create(statCol);
+    lv_obj_set_width(s_secSubLbl, LV_PCT(100));
+    lv_label_set_long_mode(s_secSubLbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(s_secSubLbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(s_secSubLbl, F14, 0);
     lv_obj_set_style_text_color(s_secSubLbl, lv_color_hex(C_SUBTLE), 0);
     lv_label_set_text(s_secSubLbl, "");
-    lv_obj_align_to(s_secSubLbl, s_secStateLbl, LV_ALIGN_OUT_BOTTOM_MID, 0, compact ? 2 : (int)(8 * s));
 
-    s_secTroubleLbl = lv_label_create(s_secPanel);
+    s_secTroubleLbl = lv_label_create(statCol);
+    lv_obj_set_width(s_secTroubleLbl, LV_PCT(100));
+    lv_label_set_long_mode(s_secTroubleLbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(s_secTroubleLbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(s_secTroubleLbl, F14, 0);
     lv_obj_set_style_text_color(s_secTroubleLbl, lv_color_hex(C_RED), 0);
     lv_label_set_text(s_secTroubleLbl, "");
-    lv_obj_align_to(s_secTroubleLbl, s_secSubLbl, LV_ALIGN_OUT_BOTTOM_MID, 0, compact ? 2 : (int)(6 * s));
-    lv_obj_add_flag(s_secTroubleLbl, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_secTroubleLbl, LV_OBJ_FLAG_HIDDEN);   // flex skips hidden children
 
-    // Buttons chain off the trouble label's own box (hidden-but-laid-out, same as
-    // before) rather than a fixed top+N offset, so the hero circle above can
-    // change size across tiers without the button row drifting into or away
-    // from it.
-    const int bw = compact ? ((W / 2) - (int)(28 * s)) : (int)(200 * s);
-    const int bh = compact == 2 ? 32 : compact == 1 ? 40 : (int)(64 * s);
-    const int bgap = compact ? (compact == 2 ? 4 : 8) : (int)(16 * s);
-    const int btnGapY = compact ? (compact == 2 ? 4 : 8) : (int)(24 * s);
-    lv_obj_t *armHome = lv_button_create(s_secPanel);
-    lv_obj_set_size(armHome, bw, bh);
-    lv_obj_set_style_bg_color(armHome, lv_color_hex(0x2A2E37), 0);
-    lv_obj_set_style_radius(armHome, (int)(14 * s), 0);
-    lv_obj_add_event_cb(armHome, onSecArmHome, LV_EVENT_CLICKED, NULL);
-    lv_obj_align_to(armHome, s_secTroubleLbl, LV_ALIGN_OUT_BOTTOM_MID, -(bw + bgap) / 2, btnGapY);
-    { lv_obj_t *l = lv_label_create(armHome); lv_obj_set_style_text_font(l, F16, 0);
-      lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Arm Home"); lv_obj_center(l); }
+    lv_obj_t *actCol = lv_obj_create(body);
+    lv_obj_remove_style_all(actCol);
+    lv_obj_set_size(actCol, actW, LV_SIZE_CONTENT);
+    lv_obj_clear_flag(actCol, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(actCol, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(actCol, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    const int bgap = (int)(16 * s);
+    lv_obj_set_style_pad_row(actCol, bgap, 0);
 
-    lv_obj_t *armAway = lv_button_create(s_secPanel);
-    lv_obj_set_size(armAway, bw, bh);
-    lv_obj_set_style_bg_color(armAway, lv_color_hex(0x2A2E37), 0);
-    lv_obj_set_style_radius(armAway, (int)(14 * s), 0);
-    lv_obj_add_event_cb(armAway, onSecArmAway, LV_EVENT_CLICKED, NULL);
-    lv_obj_align_to(armAway, s_secTroubleLbl, LV_ALIGN_OUT_BOTTOM_MID, (bw + bgap) / 2, btnGapY);
-    { lv_obj_t *l = lv_label_create(armAway); lv_obj_set_style_text_font(l, F16, 0);
-      lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Arm Away"); lv_obj_center(l); }
+    lv_obj_t *armRow = lv_obj_create(actCol);
+    lv_obj_remove_style_all(armRow);
+    lv_obj_set_size(armRow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_clear_flag(armRow, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(armRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(armRow, bgap, 0);
 
-    lv_obj_t *disarm = lv_button_create(s_secPanel);
-    lv_obj_set_size(disarm, 2 * bw + bgap, bh);
-    lv_obj_set_style_bg_color(disarm, lv_color_hex(C_GREEN), 0);
-    lv_obj_set_style_bg_opa(disarm, LV_OPA_30, 0);
-    lv_obj_set_style_radius(disarm, (int)(14 * s), 0);
-    lv_obj_add_event_cb(disarm, onSecDisarm, LV_EVENT_CLICKED, NULL);
-    lv_obj_align_to(disarm, armHome, LV_ALIGN_OUT_BOTTOM_MID, bw / 2 + bgap / 2, bgap);
-    { lv_obj_t *l = lv_label_create(disarm); lv_obj_set_style_text_font(l, F16, 0);
-      lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Disarm"); lv_obj_center(l); }
+    s_secArmHomeBtn = uiBtn(armRow, "Arm Home", BTN_NEUTRAL, false, onSecArmHome, NULL);
+    s_secArmAwayBtn = uiBtn(armRow, "Arm Away", BTN_NEUTRAL, false, onSecArmAway, NULL);
+    lv_obj_set_flex_grow(s_secArmHomeBtn, 1);
+    lv_obj_set_flex_grow(s_secArmAwayBtn, 1);
+    s_secDisarmBtn = uiBtn(actCol, "Disarm", BTN_NEUTRAL, false, onSecDisarm, NULL);
+    lv_obj_set_width(s_secDisarmBtn, LV_PCT(100));
 
     // "Bypass & arm" affordance (issue: optional quick bypass when zones are
     // faulted). A toggle, not a separate command -- PARTITION_ARM's own Bypass
     // flag IS bypass-and-arm, there is no separate bypass call (see driver.lua).
-    s_secBypassBtn = lv_button_create(s_secPanel);
+    s_secBypassBtn = lv_button_create(actCol);
     lv_obj_remove_style_all(s_secBypassBtn);
-    lv_obj_set_size(s_secBypassBtn, 2 * bw + bgap, compact ? (compact == 2 ? 22 : 28) : (int)(40 * s));
+    lv_obj_set_size(s_secBypassBtn, LV_PCT(100), (int)(40 * s));
     lv_obj_add_event_cb(s_secBypassBtn, onSecBypassToggle, LV_EVENT_CLICKED, NULL);
-    lv_obj_align_to(s_secBypassBtn, disarm, LV_ALIGN_OUT_BOTTOM_MID, 0, bgap);
     lv_obj_add_flag(s_secBypassBtn, LV_OBJ_FLAG_HIDDEN);
     s_secBypassLbl = lv_label_create(s_secBypassBtn);
     lv_obj_set_style_text_font(s_secBypassLbl, F14, 0);
@@ -2545,7 +2561,7 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     s_secStatusLbl = lv_label_create(s_secPanel);
     lv_obj_set_style_text_font(s_secStatusLbl, F14, 0);
     lv_label_set_text(s_secStatusLbl, "");
-    lv_obj_align(s_secStatusLbl, LV_ALIGN_BOTTOM_MID, 0, -(int)(24 * s));
+    lv_obj_align(s_secStatusLbl, LV_ALIGN_BOTTOM_MID, 0, -(int)(14 * s));
 
     // ── PIN entry overlay (lv_layer_top(), hidden until secOpenPin) ─────────
     s_pinPanel = lv_obj_create(lv_layer_top());
@@ -2553,69 +2569,91 @@ static void buildSecurityPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_obj_set_size(s_pinPanel, W, H);
     lv_obj_set_pos(s_pinPanel, 0, 0);
     lv_obj_add_flag(s_pinPanel, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_bg_color(s_pinPanel, lv_color_hex(0x0B0D12), 0);
+    lv_obj_set_style_bg_color(s_pinPanel, lv_color_hex(C_SCRIM), 0);
     lv_obj_set_style_bg_opa(s_pinPanel, LV_OPA_90, 0);
     lv_obj_clear_flag(s_pinPanel, LV_OBJ_FLAG_SCROLLABLE);
 
-    s_pinTitle = lv_label_create(s_pinPanel);
+    // Prompt (title, entry dots, error) and keypad: stacked in portrait, side by
+    // side in landscape. The pad used to be placed at fixed y offsets from the top
+    // of the screen, which put its bottom row at y=478 and Cancel/OK at y=506 on
+    // the 800x480 WS43 -- i.e. the office panel could not confirm a code at all.
+    const bool pinWide = (W > H);
+    lv_obj_set_flex_flow(s_pinPanel, pinWide ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_pinPanel, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_all(s_pinPanel, (int)(20 * s), 0);
+    lv_obj_set_style_pad_row(s_pinPanel, (int)(22 * s), 0);
+    lv_obj_set_style_pad_column(s_pinPanel, (int)(48 * s), 0);
+
+    lv_obj_t *prompt = lv_obj_create(s_pinPanel);
+    lv_obj_remove_style_all(prompt);
+    lv_obj_clear_flag(prompt, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(prompt, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(prompt, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(prompt, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(prompt, (int)(16 * s), 0);
+
+    s_pinTitle = lv_label_create(prompt);
     lv_obj_set_style_text_font(s_pinTitle, F24, 0);
     lv_obj_set_style_text_color(s_pinTitle, lv_color_hex(C_TEXT), 0);
     lv_label_set_text(s_pinTitle, "Arm code");
-    lv_obj_align(s_pinTitle, LV_ALIGN_TOP_MID, 0, (int)(40 * s));
 
     const int dotSz = (int)(16 * s), dotGap = (int)(14 * s);
-    const int dotsW = SEC_PIN_MAX * dotSz + (SEC_PIN_MAX - 1) * dotGap;
+    lv_obj_t *dots = lv_obj_create(prompt);
+    lv_obj_remove_style_all(dots);
+    lv_obj_clear_flag(dots, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(dots, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(dots, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(dots, dotGap, 0);
     for (int i = 0; i < SEC_PIN_MAX; i++) {
-        lv_obj_t *dot = lv_obj_create(s_pinPanel);
+        lv_obj_t *dot = lv_obj_create(dots);
         lv_obj_remove_style_all(dot);
         lv_obj_set_size(dot, dotSz, dotSz);
         lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(dot, lv_color_hex(C_TEXT), 0);
         lv_obj_set_style_bg_opa(dot, LV_OPA_20, 0);
-        lv_obj_set_pos(dot, (W - dotsW) / 2 + i * (dotSz + dotGap), (int)(96 * s));
         lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
         s_pinDots[i] = dot;
     }
-    s_pinError = lv_label_create(s_pinPanel);
+    s_pinError = lv_label_create(prompt);
     lv_obj_set_style_text_font(s_pinError, F14, 0);
     lv_obj_set_style_text_color(s_pinError, lv_color_hex(C_RED), 0);
     lv_label_set_text(s_pinError, "");
-    lv_obj_align(s_pinError, LV_ALIGN_TOP_MID, 0, (int)(126 * s));
 
-    // 3x4 keypad: 1-9, blank, 0, backspace.
+    // 3x4 keypad: 1-9, blank, 0, backspace. A wrapping row exactly three keys wide.
     const int ksz = (int)(66 * s), kgap = (int)(18 * s);
-    const int kx0 = (W - (3 * ksz + 2 * kgap)) / 2;
-    const int ky0 = (int)(160 * s);
+    lv_obj_t *pad = lv_obj_create(s_pinPanel);
+    lv_obj_remove_style_all(pad);
+    lv_obj_clear_flag(pad, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(pad, 3 * ksz + 2 * kgap, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(pad, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_row(pad, kgap, 0);
+    lv_obj_set_style_pad_column(pad, kgap, 0);
     for (int d = 1; d <= 9; d++) {
-        int col = (d - 1) % 3, row = (d - 1) / 3;
         char lbl[2] = { (char)('0' + d), 0 };
-        pinKey(s_pinPanel, lbl, kx0 + col * (ksz + kgap), ky0 + row * (ksz + kgap), ksz,
-               onPinDigit, (void *)(intptr_t)d);
+        pinKey(pad, lbl, ksz, onPinDigit, (void *)(intptr_t)d);
     }
-    pinKey(s_pinPanel, "0", kx0 + 1 * (ksz + kgap), ky0 + 3 * (ksz + kgap), ksz,
-           onPinDigit, (void *)(intptr_t)0);
-    pinKey(s_pinPanel, LV_SYMBOL_BACKSPACE, kx0 + 2 * (ksz + kgap), ky0 + 3 * (ksz + kgap), ksz,
-           onPinBackspace, NULL);
+    { lv_obj_t *blank = lv_obj_create(pad);
+      lv_obj_remove_style_all(blank);
+      lv_obj_set_size(blank, ksz, ksz);
+      lv_obj_clear_flag(blank, LV_OBJ_FLAG_CLICKABLE); }
+    pinKey(pad, "0", ksz, onPinDigit, (void *)(intptr_t)0);
+    // Backspace is Lucide's "delete" mark, not LV_SYMBOL_BACKSPACE: that codepoint
+    // lives in LVGL's built-in symbol font, not in ours, so it drew a missing-glyph box.
+    { lv_obj_t *bk = pinKey(pad, "", ksz, onPinBackspace, NULL);
+      lv_obj_center(iconCreate(bk, ICON_DELETE, ksz / 2, C_TEXT, LV_OPA_COVER)); }
 
-    const int by2 = ky0 + 4 * (ksz + kgap) + (int)(10 * s);
-    lv_obj_t *cancel = lv_button_create(s_pinPanel);
-    lv_obj_set_size(cancel, (int)(140 * s), (int)(52 * s));
-    lv_obj_set_style_bg_opa(cancel, LV_OPA_20, 0);
-    lv_obj_set_style_radius(cancel, (int)(12 * s), 0);
-    lv_obj_add_event_cb(cancel, onPinCancel, LV_EVENT_CLICKED, NULL);
-    lv_obj_align(cancel, LV_ALIGN_TOP_MID, -(int)(80 * s), by2);
-    { lv_obj_t *l = lv_label_create(cancel); lv_obj_set_style_text_font(l, F16, 0);
-      lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "Cancel"); lv_obj_center(l); }
+    // Cancel/OK sit under the keypad in portrait; in landscape there is no room
+    // below it, so they finish the prompt column instead.
+    lv_obj_t *okRow = lv_obj_create(pinWide ? prompt : s_pinPanel);
+    lv_obj_remove_style_all(okRow);
+    lv_obj_clear_flag(okRow, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(okRow, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(okRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(okRow, (int)(20 * s), 0);
+    if (pinWide) lv_obj_set_style_margin_top(okRow, (int)(20 * s), 0);
 
-    lv_obj_t *confirm = lv_button_create(s_pinPanel);
-    lv_obj_set_size(confirm, (int)(140 * s), (int)(52 * s));
-    lv_obj_set_style_bg_color(confirm, lv_color_hex(C_GREEN), 0);
-    lv_obj_set_style_bg_opa(confirm, LV_OPA_60, 0);
-    lv_obj_set_style_radius(confirm, (int)(12 * s), 0);
-    lv_obj_add_event_cb(confirm, onPinConfirm, LV_EVENT_CLICKED, NULL);
-    lv_obj_align(confirm, LV_ALIGN_TOP_MID, (int)(80 * s), by2);
-    { lv_obj_t *l = lv_label_create(confirm); lv_obj_set_style_text_font(l, F16, 0);
-      lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0); lv_label_set_text(l, "OK"); lv_obj_center(l); }
+    lv_obj_set_width(uiBtn(okRow, "Cancel", BTN_NEUTRAL, false, onPinCancel, NULL), (int)(140 * s));
+    lv_obj_set_width(uiBtn(okRow, "OK", BTN_PRIMARY, false, onPinConfirm, NULL), (int)(140 * s));
 }
 
 // Driver-pushed security partition list (`secstate`, PROTOCOL.md). NULL-ing
@@ -2643,6 +2681,7 @@ void ui_set_security(const security_state_t *sec)
     if (s_secPanel && !lv_obj_has_flag(s_secPanel, LV_OBJ_FLAG_HIDDEN)) secRebuild();
     if (s_secPickerPanel && !lv_obj_has_flag(s_secPickerPanel, LV_OBJ_FLAG_HIDDEN)) secPickerRebuild();
     if (s_home && sec_available() != s_secHomeShown) ui_request_rebuild();
+    else homeStatusRefresh();
 }
 
 // Delivery outcome for a secarm/secdisarm (`secresult`). ok==true means only "the
@@ -2684,43 +2723,28 @@ static void secPickerRebuild(void)
 {
     if (!s_secPickerList) return;
     lv_obj_clean(s_secPickerList);
-    const float s = s_uiscale;
-    const int gap = (int)(14 * s);
-    const int dispW = lv_display_get_horizontal_resolution(NULL);
-    const bool portrait = (lv_display_get_vertical_resolution(NULL) > dispW);
-    const int pad = (s < 0.99f) ? 12 : (int)(28 * s);
-    const int W = dispW - 2 * pad;
-    int cols = portrait ? ((W + gap) / (190 + gap)) : ((W + gap) / (340 + gap));
-    if (cols < 1) cols = 1;
-    if (cols > 3) cols = 3;
-    if (portrait && cols > 2) cols = 2;
-    const int cw = (W - (cols - 1) * gap) / cols;
-    const int ch = (int)(76 * s);
-
-    lv_obj_set_flex_flow(s_secPickerList, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_style_pad_column(s_secPickerList, gap, 0);
-    lv_obj_set_style_pad_row(s_secPickerList, gap, 0);
+    const int rw = rowListLayout(s_secPickerList, (int)(28 * s_uiscale));
 
     for (int i = 0; i < s_sec.n; i++) {
         const partition_t *p = &s_sec.list[i];
         char stbuf[32];
         const char *sub = secStateLabel(p->state, stbuf, sizeof(stbuf));
         bool alarm = secInAlarm(p), armed = secIsArmed(p) || alarm;
-        tileCard(s_secPickerList, ICON_INTERCOM, "Security", p->title[0] ? p->title : "Partition",
-                 sub, armed, alarm ? C_RED : 0x4CC9F0, onSecPickerRow, (void *)(intptr_t)i, cw, ch,
-                 NULL, NULL, NULL);
+        rowCard(s_secPickerList, iconGlyph(armed ? "Lock" : "Unlock"), p->title[0] ? p->title : "Partition",
+                sub, armed, alarm ? C_RED : C_ACCENT, NULL, ROW_CHEVRON,
+                onSecPickerRow, (void *)(intptr_t)i, rw);
     }
     if (s_sec.n == 0) {
         lv_obj_t *l = lv_label_create(s_secPickerList);
         lv_obj_set_style_text_font(l, F16, 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(0x9AA5B1), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(C_MUTED), 0);
         lv_label_set_text(l, "No partitions");
         lv_obj_set_style_pad_top(l, (int)(20 * s_uiscale), 0);
     }
 }
 // Same full-screen-list-panel construction as the Comfort page's list page --
 // see there for the layout rationale (header + a flex-wrap tile grid).
-static void buildSecurityPickerPage(lv_obj_t *scr, int W, int H, bool smallP)
+static void buildSecurityPickerPage(lv_obj_t *scr, int W, int H)
 {
     const float s = s_uiscale;
     s_secPickerPanel = lv_obj_create(scr);
@@ -2734,14 +2758,9 @@ static void buildSecurityPickerPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_obj_set_style_bg_opa(s_secPickerPanel, LV_OPA_COVER, 0);
     lv_obj_clear_flag(s_secPickerPanel, LV_OBJ_FLAG_SCROLLABLE);
     int lTop;
-    if (smallP) {
-        lv_obj_t *back = iconBtnImg(s_secPickerPanel, ICON_BACK, 30, 0, LV_OPA_TRANSP, 0xFFFFFF, onSecPickerHome, NULL);
-        lv_obj_align(back, LV_ALIGN_TOP_LEFT, 8, 8);
-        lTop = 50;
-    } else {
-        x4PageHeader(s_secPickerPanel, "Security", onSecPickerHome);
-        lTop = (int)(120 * s);
-    }
+    x4PageHeader(s_secPickerPanel, "Security", onSecPickerHome);
+    lTop = (int)(120 * s);
+    
     const int lPad = (int)(28 * s);
     s_secPickerList = lv_obj_create(s_secPickerPanel);
     lv_obj_remove_style_all(s_secPickerList);
@@ -2777,7 +2796,9 @@ static void cmfDetailRebuild(void)
 
     if (s_cmfDetailTitle) lv_label_set_text(s_cmfDetailTitle, c->title);
     if (s_cmfDetailTemp) {
-        char buf[24]; snprintf(buf, sizeof(buf), "%d\xC2\xB0%s", c->temp, c->scale);
+        char buf[32];
+        if (c->has_temp) snprintf(buf, sizeof(buf), "Now %d\xC2\xB0%s", c->temp, c->scale);
+        else             snprintf(buf, sizeof(buf), "No reading");
         lv_label_set_text(s_cmfDetailTemp, buf);
     }
     if (s_cmfDetailFan) {
@@ -2794,14 +2815,31 @@ static void cmfDetailRebuild(void)
     // highlight just below, applied to the dial instead of a label.
     bool heatActive = !strcmp(c->mode, "heat") || !strcmp(c->mode, "auto");
     bool coolActive = !strcmp(c->mode, "cool") || !strcmp(c->mode, "auto");
+    // One dial gets the room two would have shared. Landscape is height-bound.
+    {
+        const bool two = c->has_heat && c->has_cool;
+        const bool wide = lv_display_get_horizontal_resolution(NULL) > lv_display_get_vertical_resolution(NULL);
+        const int d = (int)((two ? 160 : (wide ? 230 : 260)) * s_uiscale);
+        lv_obj_t *arcs[2] = { s_cmfHeatRing, s_cmfCoolRing };
+        for (int i = 0; i < 2; i++) {
+            if (!arcs[i]) continue;
+            lv_obj_set_size(arcs[i], d, d);
+            // [-] [+] tuck into the arc's open bottom: its gap is ~0.15 d tall.
+            lv_obj_t *keys = lv_obj_get_child(lv_obj_get_parent(arcs[i]), 2);
+            if (keys) {
+                lv_obj_set_style_margin_top(keys, -(d * 22 / 100), 0);
+                lv_obj_set_style_pad_column(keys, two ? (int)(22 * s_uiscale) : d * 28 / 100, 0);
+            }
+        }
+    }
     if (s_cmfHeatRow) setVis(s_cmfHeatRow, c->has_heat);
-    if (s_cmfHeatRing) lv_obj_set_style_border_opa(s_cmfHeatRing, heatActive ? LV_OPA_COVER : LV_OPA_40, 0);
+    cmfDialSet(s_cmfHeatRing, c->heat, c->scale, heatActive);
     if (s_cmfHeatLbl) {
         if (s_cmfPending) lv_label_set_text(s_cmfHeatLbl, "...");
         else { char b[16]; snprintf(b, sizeof(b), "%d\xC2\xB0%s", c->heat, c->scale); lv_label_set_text(s_cmfHeatLbl, b); }
     }
     if (s_cmfCoolRow) setVis(s_cmfCoolRow, c->has_cool);
-    if (s_cmfCoolRing) lv_obj_set_style_border_opa(s_cmfCoolRing, coolActive ? LV_OPA_COVER : LV_OPA_40, 0);
+    cmfDialSet(s_cmfCoolRing, c->cool, c->scale, coolActive);
     if (s_cmfCoolLbl) {
         if (s_cmfPending) lv_label_set_text(s_cmfCoolLbl, "...");
         else { char b[16]; snprintf(b, sizeof(b), "%d\xC2\xB0%s", c->cool, c->scale); lv_label_set_text(s_cmfCoolLbl, b); }
@@ -2810,8 +2848,7 @@ static void cmfDetailRebuild(void)
     for (int i = 0; i < 4; i++) {
         if (!s_cmfModeBtns[i]) continue;
         bool active = !s_cmfPending && !strcmp(c->mode, modeNames[i]);
-        lv_obj_set_style_bg_opa(s_cmfModeBtns[i], active ? LV_OPA_60 : LV_OPA_20, 0);
-        lv_obj_set_style_bg_color(s_cmfModeBtns[i], lv_color_hex(active ? C_ACCENT : 0xFFFFFF), 0);
+        uiBtnFill(s_cmfModeBtns[i], active ? BTN_PRIMARY : BTN_NEUTRAL);
     }
 }
 
@@ -2858,66 +2895,125 @@ static void cmfRebuildList(void)
 {
     if (!s_cmfList) return;
     lv_obj_clean(s_cmfList);
-    const float s = s_uiscale;
-    const int gap = (int)(14 * s);
-    const int dispW = lv_display_get_horizontal_resolution(NULL);
-    const bool portrait = (lv_display_get_vertical_resolution(NULL) > dispW);
-    const int pad = (s < 0.99f) ? 12 : (int)(28 * s);
-    const int W = dispW - 2 * pad;
-    int cols = portrait ? ((W + gap) / (190 + gap)) : ((W + gap) / (340 + gap));
-    if (cols < 1) cols = 1;
-    if (cols > 3) cols = 3;
-    if (portrait && cols > 2) cols = 2;
-    const int cw = (W - (cols - 1) * gap) / cols;
-    const int ch = (int)(76 * s);
-
-    lv_obj_set_flex_flow(s_cmfList, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_style_pad_column(s_cmfList, gap, 0);
-    lv_obj_set_style_pad_row(s_cmfList, gap, 0);
+    const int rw = rowListLayout(s_cmfList, (int)(28 * s_uiscale));
 
     for (int i = 0; i < s_cmf.n; i++) {
         const comfort_t *c = &s_cmf.list[i];
-        char modeCap[8];
-        snprintf(modeCap, sizeof(modeCap), "%s", c->mode);
-        if (modeCap[0]) modeCap[0] = (char)toupper((unsigned char)modeCap[0]);
-        char sub[40];
-        snprintf(sub, sizeof(sub), "%d\xC2\xB0%s \xC2\xB7 %s", c->temp, c->scale, modeCap);
-        tileCard(s_cmfList, ICON_MEDIA, "Climate", c->title, sub, false, C_ACCENT,
-                 onCmfRow, (void *)(intptr_t)i, cw, ch, NULL, NULL, NULL);
+        // The row answers "what is it doing" in words and "how warm is it" as the
+        // big number -- the two things you open this page for.
+        const bool heat = !strcmp(c->mode, "heat"), cool = !strcmp(c->mode, "cool");
+        char sub[48], temp[16];
+        if (heat && c->has_heat)      snprintf(sub, sizeof(sub), "Heating to %d\xC2\xB0", c->heat);
+        else if (cool && c->has_cool) snprintf(sub, sizeof(sub), "Cooling to %d\xC2\xB0", c->cool);
+        else if (!strcmp(c->mode, "auto") && c->has_heat && c->has_cool)
+                                      snprintf(sub, sizeof(sub), "Auto \xC2\xB7 %d\xC2\xB0\xE2\x80\x93%d\xC2\xB0", c->heat, c->cool);
+        else { snprintf(sub, sizeof(sub), "%s", c->mode[0] ? c->mode : "off");
+               sub[0] = (char)toupper((unsigned char)sub[0]); }
+        if (c->has_temp) snprintf(temp, sizeof(temp), "%d\xC2\xB0", c->temp);
+        else             snprintf(temp, sizeof(temp), "--");   // no reading: never a made-up number
+        rowCard(s_cmfList, iconGlyph(heat ? "Heat" : cool ? "Cool" : "Climate"), c->title, sub,
+                heat || cool, heat ? C_HEAT : C_ACCENT, temp, 0, onCmfRow, (void *)(intptr_t)i, rw);
     }
     if (s_cmf.n == 0) {
         lv_obj_t *l = lv_label_create(s_cmfList);
         lv_obj_set_style_text_font(l, F16, 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(0x9AA5B1), 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(C_MUTED), 0);
         lv_label_set_text(l, "No thermostats");
         lv_obj_set_style_pad_top(l, (int)(20 * s_uiscale), 0);
     }
 }
 
 // One round +/- button, same visual language as the Security PIN pad's pinKey.
-// Plain ASCII "-"/"+" rather than LV_SYMBOL_MINUS/PLUS: those codepoints live in
-// LVGL's built-in symbol font, which this codebase's generated F24 (Roboto subset)
-// does not include -- confirmed via the sim (rendered as tofu boxes) rather than
-// assumed, same "verify, don't guess" standard as the rest of this feature.
-static lv_obj_t *cmfRoundBtn(lv_obj_t *p, const char *label, lv_event_cb_t cb, int sz)
+// A round [-] / [+] key: Lucide minus/plus, same round-button style as the PIN pad.
+static lv_obj_t *cmfRoundBtn(lv_obj_t *p, const char *glyph, lv_event_cb_t cb, int sz)
 {
     lv_obj_t *b = lv_button_create(p);
-    lv_obj_remove_style_all(b);
-    lv_obj_set_size(b, sz, sz);
-    lv_obj_set_style_radius(b, sz / 2, 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_bg_opa(b, LV_OPA_10, 0);
-    lv_obj_set_style_bg_opa(b, LV_OPA_30, LV_STATE_PRESSED);
-    lv_obj_t *l = lv_label_create(b);
-    lv_obj_set_style_text_font(l, F24, 0);
-    lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
-    lv_label_set_text(l, label);
-    lv_obj_center(l);
+    uiRoundStyle(b, sz, false);
+    lv_obj_center(iconCreate(b, glyph, sz / 2, C_TEXT, LV_OPA_COVER));
     if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
     return b;
 }
 
-static void buildComfortPage(lv_obj_t *scr, int W, int H, bool smallP)
+// One setpoint dial for the thermostat page: a tag, a 270-degree arc (gap at the
+// bottom, the Nest/Ecobee convention) with the setpoint inside it, and [-] [+]
+// underneath. The dial came out of the SquareLine redesign spike, where it
+// replaced a small bordered ring wedged between the two buttons: the arc shows
+// WHERE in its range the setpoint sits, which a bare number cannot.
+//
+// The arc is display-only. Dragging it needs an absolute "set to N" command and
+// the wire only has inc/dec steps (PROTOCOL.md `comfortcmd`) -- the only
+// thermostat commands confirmed against a live Director. Add that on both sides
+// first; then this becomes clickable and the buttons can go.
+// Returns the whole block, which is what cmfDetailRebuild shows/hides.
+static lv_obj_t *cmfSetpointBlock(lv_obj_t *parent, const char *tagText, uint32_t ringColor,
+                                  lv_event_cb_t decCb, lv_event_cb_t incCb,
+                                  lv_obj_t **ringOut, lv_obj_t **lblOut)
+{
+    const float s = s_uiscale;
+    const int btnSz = (int)(48 * s) > 44 ? (int)(48 * s) : 44;   // touch-target floor
+    const int arcD  = (int)(150 * s);   // cmfDialSet() resizes: a lone dial is larger
+    const int arcW  = (int)(12 * s);
+
+    lv_obj_t *blk = lv_obj_create(parent);
+    lv_obj_remove_style_all(blk);
+    lv_obj_set_size(blk, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_clear_flag(blk, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(blk, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(blk, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(blk, (int)(4 * s), 0);
+
+    lv_obj_t *tag = lv_label_create(blk);
+    lv_obj_set_style_text_font(tag, F14, 0);
+    lv_obj_set_style_text_color(tag, lv_color_hex(C_SUBTLE), 0);
+    lv_label_set_text(tag, tagText);
+
+    lv_obj_t *arc = lv_arc_create(blk);
+    lv_obj_set_size(arc, arcD, arcD);
+    lv_arc_set_bg_angles(arc, 135, 45);
+    lv_obj_remove_style(arc, NULL, LV_PART_KNOB);        // display-only: no drag handle
+    lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_width(arc, arcW, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc, lv_color_hex(C_SHADE), LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(arc, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, arcW, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(arc, lv_color_hex(ringColor), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_INDICATOR);
+    lv_obj_t *lbl = lv_label_create(arc);
+    lv_obj_set_style_text_font(lbl, F32, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(C_TEXT), 0);
+    lv_label_set_text(lbl, "--");
+    lv_obj_center(lbl);
+
+    // The buttons tuck into the arc's open bottom rather than sitting below it.
+    lv_obj_t *row = lv_obj_create(blk);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, (int)(22 * s), 0);
+    lv_obj_set_style_margin_top(row, -(int)(30 * s), 0);
+    cmfRoundBtn(row, ICON_MINUS, decCb, btnSz);
+    cmfRoundBtn(row, ICON_PLUS, incCb, btnSz);
+
+    *ringOut = arc;
+    *lblOut = lbl;
+    return blk;
+}
+
+// Dial position for a setpoint. The range is the span a house thermostat is
+// realistically set within, so ordinary values land mid-arc instead of pinned to
+// one end; out-of-range values clamp (the number in the middle stays exact).
+static void cmfDialSet(lv_obj_t *arc, int setpoint, const char *scale, bool active)
+{
+    if (!arc) return;
+    const bool celsius = scale && (scale[0] == 'C' || scale[0] == 'c');
+    lv_arc_set_range(arc, celsius ? 10 : 50, celsius ? 32 : 90);
+    lv_arc_set_value(arc, setpoint);
+    lv_obj_set_style_arc_opa(arc, active ? LV_OPA_COVER : LV_OPA_40, LV_PART_INDICATOR);
+}
+
+static void buildComfortPage(lv_obj_t *scr, int W, int H)
 {
     const float s = s_uiscale;
 
@@ -2932,14 +3028,10 @@ static void buildComfortPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_obj_set_style_bg_grad_dir(s_cmfPanel, LV_GRAD_DIR_VER, 0);
     lv_obj_set_style_bg_opa(s_cmfPanel, LV_OPA_COVER, 0);
     lv_obj_clear_flag(s_cmfPanel, LV_OBJ_FLAG_SCROLLABLE);
-    if (smallP) {
-        lv_obj_t *back = iconBtnImg(s_cmfPanel, ICON_BACK, 30, 0, LV_OPA_TRANSP, 0xFFFFFF, onCmfHome, NULL);
-        lv_obj_align(back, LV_ALIGN_TOP_LEFT, 8, 8);
-    } else {
-        x4PageHeader(s_cmfPanel, "Comfort", onCmfHome);
-    }
-    const int lPad = smallP ? 12 : (int)(28 * s);
-    const int lTop = smallP ? 44 : (int)(118 * s);
+    x4PageHeader(s_cmfPanel, "Comfort", onCmfHome);
+    
+    const int lPad = (int)(28 * s);
+    const int lTop = (int)(118 * s);
     s_cmfList = lv_obj_create(s_cmfPanel);
     lv_obj_remove_style_all(s_cmfList);
     lv_obj_set_size(s_cmfList, W - 2 * lPad, H - lTop - (int)(24 * s));
@@ -2959,170 +3051,102 @@ static void buildComfortPage(lv_obj_t *scr, int W, int H, bool smallP)
     lv_obj_set_style_bg_grad_dir(s_cmfDetail, LV_GRAD_DIR_VER, 0);
     lv_obj_set_style_bg_opa(s_cmfDetail, LV_OPA_COVER, 0);
     lv_obj_clear_flag(s_cmfDetail, LV_OBJ_FLAG_SCROLLABLE);
-    if (smallP) {
-        lv_obj_t *back = iconBtnImg(s_cmfDetail, ICON_BACK, 30, 0, LV_OPA_TRANSP, 0xFFFFFF, onCmfDetailBack, NULL);
-        lv_obj_align(back, LV_ALIGN_TOP_LEFT, 8, 8);
-    } else {
-        x4PageHeader(s_cmfDetail, "Thermostat", onCmfDetailBack);
-    }
-    // H (not smallP, a WIDTH-derived flag) decides whether this page's vertical
-    // stack fits -- same "compact" idea and same real bug as buildSecurityPage's
-    // hero circle: the office WS43 runs 800x480 LANDSCAPE (smallP=false, plenty
-    // wide, only 480px tall), and this page's dial rows + mode picker, sized for
-    // the >=700px-tall layouts they were tested against, pushed the mode picker
-    // off the bottom of a 480px screen entirely (confirmed in the sim after the
-    // fact -- again, what should have been checked before flashing).
-    const bool compact = !smallP && H < 700;
-    const int dTop = smallP ? 50 : compact ? 20 : (int)(120 * s);
-    s_cmfDetailTitle = lv_label_create(s_cmfDetail);
-    lv_obj_set_style_text_font(s_cmfDetailTitle, F24, 0);
-    lv_obj_set_style_text_color(s_cmfDetailTitle, lv_color_hex(C_SUBTLE), 0);
-    lv_label_set_text(s_cmfDetailTitle, "");
-    lv_obj_align(s_cmfDetailTitle, LV_ALIGN_TOP_MID, 0, dTop);
+    // The header IS the thermostat's name (cmfDetailRebuild sets it): "Thermostat"
+    // told you nothing the page didn't already.
+    s_cmfDetailTitle = x4PageHeader(s_cmfDetail, "Thermostat", onCmfDetailBack);
+    lv_label_set_long_mode(s_cmfDetailTitle, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(s_cmfDetailTitle, (int)((W - (int)(130 * s)) / 1.2f), lv_font_get_line_height(F32));
 
-    // Current-temp readout: the Navigator app's own thermostat page pairs this
-    // with a small gauge icon rather than showing it bare -- reused "Climate"
-    // (the same glyph the Comfort tile/list already use) rather than adding a
-    // new one.
-    lv_obj_t *tempRow = lv_obj_create(s_cmfDetail);
+    // The dial is the page. Portrait: dial(s), then the current reading, with the
+    // mode selector anchored to the bottom edge where a thumb rests. Landscape: dial
+    // on the left, reading + modes on the right. All flex -- the earlier stack was
+    // chained with lv_obj_align_to(), which is evaluated ONCE against the "--"
+    // placeholder, so rows sat off-centre once a real reading arrived, and its
+    // fixed-width mode pills were wider than a portrait WS43.
+    const bool wide = (W > H);
+    const int hdrH = (int)(84 * s);
+    const int sidePad = (int)(28 * s);
+    lv_obj_t *body = lv_obj_create(s_cmfDetail);
+    lv_obj_remove_style_all(body);
+    lv_obj_set_pos(body, 0, hdrH);
+    lv_obj_set_size(body, W, H - hdrH);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_hor(body, sidePad, 0);
+    lv_obj_set_style_pad_top(body, (int)(8 * s), 0);
+    lv_obj_set_style_pad_bottom(body, (int)(24 * s), 0);
+    lv_obj_set_style_pad_row(body, (int)(16 * s), 0);
+    lv_obj_set_style_pad_column(body, (int)(32 * s), 0);
+    lv_obj_set_flex_flow(body, wide ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(body, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    // Heat/cool dials: side by side when a unit reports both (auto mode), one big
+    // centred dial otherwise -- cmfDetailRebuild hides the absent one and sizes
+    // what is left (has_heat/has_cool: confirmed live that an "off"-mode unit
+    // reports neither). Warm orange vs the accent blue.
+    lv_obj_t *dials = lv_obj_create(body);
+    lv_obj_remove_style_all(dials);
+    lv_obj_clear_flag(dials, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_height(dials, LV_SIZE_CONTENT);
+    if (wide) lv_obj_set_flex_grow(dials, 1); else lv_obj_set_width(dials, LV_PCT(100));
+    lv_obj_set_flex_flow(dials, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(dials, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    s_cmfHeatRow = cmfSetpointBlock(dials, "Heat to", C_HEAT, onCmfHeatDec, onCmfHeatInc,
+                                    &s_cmfHeatRing, &s_cmfHeatLbl);
+    s_cmfCoolRow = cmfSetpointBlock(dials, "Cool to", C_ACCENT, onCmfCoolDec, onCmfCoolInc,
+                                    &s_cmfCoolRing, &s_cmfCoolLbl);
+
+    // Reading on top, modes at the bottom. In portrait this column takes all the
+    // height the dials leave, which is what pins the modes to the bottom edge.
+    lv_obj_t *side = lv_obj_create(body);
+    lv_obj_remove_style_all(side);
+    lv_obj_clear_flag(side, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    if (wide) { lv_obj_set_size(side, (W - 2 * sidePad) * 46 / 100, LV_SIZE_CONTENT); }
+    else      { lv_obj_set_width(side, LV_PCT(100)); lv_obj_set_flex_grow(side, 1); }
+    lv_obj_set_flex_flow(side, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(side, wide ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(side, (int)(24 * s), 0);
+
+    lv_obj_t *statCol = lv_obj_create(side);
+    lv_obj_remove_style_all(statCol);
+    lv_obj_set_size(statCol, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_clear_flag(statCol, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(statCol, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(statCol, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(statCol, (int)(4 * s), 0);
+
+    lv_obj_t *tempRow = lv_obj_create(statCol);
     lv_obj_remove_style_all(tempRow);
     lv_obj_set_size(tempRow, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_clear_flag(tempRow, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align_to(tempRow, s_cmfDetailTitle, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(8 * s));
-    s_cmfDetailTempIcon = lv_label_create(tempRow);
-    lv_obj_set_style_text_font(s_cmfDetailTempIcon, FICON, 0);
-    lv_obj_set_style_text_color(s_cmfDetailTempIcon, lv_color_hex(C_SUBTLE), 0);
-    lv_label_set_text(s_cmfDetailTempIcon, iconGlyph("Climate"));
-    lv_obj_align(s_cmfDetailTempIcon, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_clear_flag(tempRow, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(tempRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(tempRow, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(tempRow, (int)(8 * s), 0);
+    s_cmfDetailTempIcon = iconCreate(tempRow, iconGlyph("Climate"), (int)(24 * s), C_SUBTLE, LV_OPA_COVER);
     s_cmfDetailTemp = lv_label_create(tempRow);
-    lv_obj_set_style_text_font(s_cmfDetailTemp, F32, 0);
+    lv_obj_set_style_text_font(s_cmfDetailTemp, F24, 0);
     lv_obj_set_style_text_color(s_cmfDetailTemp, lv_color_hex(C_TEXT), 0);
     lv_label_set_text(s_cmfDetailTemp, "--");
-    lv_obj_align_to(s_cmfDetailTemp, s_cmfDetailTempIcon, LV_ALIGN_OUT_RIGHT_MID, (int)(8 * s), 0);
 
-    s_cmfDetailFan = lv_label_create(s_cmfDetail);
+    s_cmfDetailFan = lv_label_create(statCol);
     lv_obj_set_style_text_font(s_cmfDetailFan, F14, 0);
     lv_obj_set_style_text_color(s_cmfDetailFan, lv_color_hex(C_SUBTLE), 0);
     lv_label_set_text(s_cmfDetailFan, "");
-    lv_obj_align_to(s_cmfDetailFan, s_cmfDetailTemp, LV_ALIGN_OUT_BOTTOM_MID, 0, (int)(4 * s));
 
-    // Heat/cool setpoint rows: [-] value [+]. cmfDetailRebuild hides whichever of
-    // the two the thermostat doesn't report a setpoint for at all (has_heat/has_cool
-    // -- confirmed live that an "off"-mode thermostat reports neither).
-    //
-    // Chained via align_to off the PREVIOUS element's actual rendered box, not a
-    // fixed offset from the top -- confirmed live in the sim that a fixed offset
-    // overlapped on a small panel (240x320, smallP): text there stays at the
-    // bitmap-font floor size (ui_apply_font_scale) while s_uiscale keeps shrinking,
-    // so a `dTop + K*s` offset undershoots the title+temp+fan block's real height.
-    // Chaining sidesteps the mismatch entirely: each row starts where the block
-    // above it actually ends, on any panel.
-    const int gap    = compact ? 8 : (int)(28 * s) > 12 ? (int)(28 * s) : 12;   // floor so small panels don't crowd
-    // Floored, not just scaled: at s=0.5 (240x320) a bare 48*s=24px row is shorter
-    // than the F24 setpoint label it has to hold (confirmed live in the sim -- the
-    // label overflowed its row and clashed with the "Heat"/"Cool" tag above it), and
-    // 24px is under any reasonable touch target besides.
-    const int btnSz  = compact ? 36 : (int)(48 * s) > 44 ? (int)(48 * s) : 44;
-    // The Navigator app's own thermostat page centers a big circular dial (ring +
-    // setpoint number), not a bare number between two buttons -- ringD is that
-    // dial's diameter, and the row now has to be wide enough for [-] ring [+].
-    const int ringD  = compact ? 64 : (int)(96 * s) > 76 ? (int)(96 * s) : 76;
-    const int rowGap = compact ? 8 : (int)(14 * s) > 10 ? (int)(14 * s) : 10;
-    const int rowW   = 2 * btnSz + ringD + 2 * rowGap;
-    const int rowH   = ringD > btnSz ? ringD : btnSz;
-    const int tagY   = compact ? 16 : (int)(20 * s) > 16 ? (int)(20 * s) : 16;   // "Heat"/"Cool" tag's rise above its row
-
-    s_cmfHeatRow = lv_obj_create(s_cmfDetail);
-    lv_obj_remove_style_all(s_cmfHeatRow);
-    lv_obj_set_size(s_cmfHeatRow, rowW, rowH);
-    lv_obj_align_to(s_cmfHeatRow, s_cmfDetailFan, LV_ALIGN_OUT_BOTTOM_MID, 0, gap + (int)(20 * s));
-    lv_obj_clear_flag(s_cmfHeatRow, LV_OBJ_FLAG_SCROLLABLE);
-    {
-        lv_obj_t *tag = lv_label_create(s_cmfHeatRow);
-        lv_obj_set_style_text_font(tag, F14, 0);
-        lv_obj_set_style_text_color(tag, lv_color_hex(C_SUBTLE), 0);
-        lv_label_set_text(tag, "Heat");
-        lv_obj_align(tag, LV_ALIGN_TOP_MID, 0, -tagY);
-        lv_obj_t *dec = cmfRoundBtn(s_cmfHeatRow, "-", onCmfHeatDec, btnSz);
-        lv_obj_align(dec, LV_ALIGN_LEFT_MID, 0, 0);
-        // Warm orange ring -- distinct from Cool's blue below, same idea as the
-        // Security hero's green/red.
-        s_cmfHeatRing = lv_obj_create(s_cmfHeatRow);
-        lv_obj_remove_style_all(s_cmfHeatRing);
-        lv_obj_set_size(s_cmfHeatRing, ringD, ringD);
-        lv_obj_clear_flag(s_cmfHeatRing, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_clear_flag(s_cmfHeatRing, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_radius(s_cmfHeatRing, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(s_cmfHeatRing, lv_color_hex(0x000000), 0);
-        lv_obj_set_style_bg_opa(s_cmfHeatRing, LV_OPA_30, 0);
-        lv_obj_set_style_border_width(s_cmfHeatRing, (int)(4 * s) < 3 ? 3 : (int)(4 * s), 0);
-        lv_obj_set_style_border_color(s_cmfHeatRing, lv_color_hex(0xFF8A3D), 0);
-        lv_obj_center(s_cmfHeatRing);
-        s_cmfHeatLbl = lv_label_create(s_cmfHeatRing);
-        lv_obj_set_style_text_font(s_cmfHeatLbl, F24, 0);
-        lv_obj_set_style_text_color(s_cmfHeatLbl, lv_color_hex(C_TEXT), 0);
-        lv_label_set_text(s_cmfHeatLbl, "--");
-        lv_obj_center(s_cmfHeatLbl);
-        lv_obj_t *inc = cmfRoundBtn(s_cmfHeatRow, "+", onCmfHeatInc, btnSz);
-        lv_obj_align(inc, LV_ALIGN_RIGHT_MID, 0, 0);
-    }
-
-    s_cmfCoolRow = lv_obj_create(s_cmfDetail);
-    lv_obj_remove_style_all(s_cmfCoolRow);
-    lv_obj_set_size(s_cmfCoolRow, rowW, rowH);
-    lv_obj_align_to(s_cmfCoolRow, s_cmfHeatRow, LV_ALIGN_OUT_BOTTOM_MID, 0, gap);
-    lv_obj_clear_flag(s_cmfCoolRow, LV_OBJ_FLAG_SCROLLABLE);
-    {
-        lv_obj_t *tag = lv_label_create(s_cmfCoolRow);
-        lv_obj_set_style_text_font(tag, F14, 0);
-        lv_obj_set_style_text_color(tag, lv_color_hex(C_SUBTLE), 0);
-        lv_label_set_text(tag, "Cool");
-        lv_obj_align(tag, LV_ALIGN_TOP_MID, 0, -tagY);
-        lv_obj_t *dec = cmfRoundBtn(s_cmfCoolRow, "-", onCmfCoolDec, btnSz);
-        lv_obj_align(dec, LV_ALIGN_LEFT_MID, 0, 0);
-        s_cmfCoolRing = lv_obj_create(s_cmfCoolRow);
-        lv_obj_remove_style_all(s_cmfCoolRing);
-        lv_obj_set_size(s_cmfCoolRing, ringD, ringD);
-        lv_obj_clear_flag(s_cmfCoolRing, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_clear_flag(s_cmfCoolRing, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_radius(s_cmfCoolRing, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(s_cmfCoolRing, lv_color_hex(0x000000), 0);
-        lv_obj_set_style_bg_opa(s_cmfCoolRing, LV_OPA_30, 0);
-        lv_obj_set_style_border_width(s_cmfCoolRing, (int)(4 * s) < 3 ? 3 : (int)(4 * s), 0);
-        lv_obj_set_style_border_color(s_cmfCoolRing, lv_color_hex(0x4CC9F0), 0);
-        lv_obj_center(s_cmfCoolRing);
-        s_cmfCoolLbl = lv_label_create(s_cmfCoolRing);
-        lv_obj_set_style_text_font(s_cmfCoolLbl, F24, 0);
-        lv_obj_set_style_text_color(s_cmfCoolLbl, lv_color_hex(C_TEXT), 0);
-        lv_label_set_text(s_cmfCoolLbl, "--");
-        lv_obj_center(s_cmfCoolLbl);
-        lv_obj_t *inc = cmfRoundBtn(s_cmfCoolRow, "+", onCmfCoolInc, btnSz);
-        lv_obj_align(inc, LV_ALIGN_RIGHT_MID, 0, 0);
-    }
-
-    // Mode picker: 4 pill buttons (off/heat/cool/auto), the active one highlighted
-    // by cmfDetailRebuild. Each is aligned off coolRow's own bottom edge (same
-    // chaining reasoning as the setpoint rows above) with a per-button x offset.
+    // Mode selector: 4 segments sharing the width, the active one filled by
+    // cmfDetailRebuild.
     static const char *modeLabels[4] = { "Off", "Heat", "Cool", "Auto" };
-    const int mBw = compact ? 70 : (int)(90 * s);
-    const int mBh = compact ? 32 : (int)(44 * s);
-    const int mGap = compact ? 6 : (int)(10 * s);
-    const int mX0 = -((4 * mBw + 3 * mGap) / 2) + mBw / 2;
+    lv_obj_t *modeRow = lv_obj_create(side);
+    lv_obj_remove_style_all(modeRow);
+    lv_obj_set_size(modeRow, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_clear_flag(modeRow, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(modeRow, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(modeRow, (int)(10 * s), 0);
     for (int i = 0; i < 4; i++) {
-        lv_obj_t *b = lv_button_create(s_cmfDetail);
-        lv_obj_set_size(b, mBw, mBh);
-        lv_obj_set_style_radius(b, mBh / 2, 0);
-        lv_obj_set_style_bg_color(b, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_bg_opa(b, LV_OPA_20, 0);
-        lv_obj_align_to(b, s_cmfCoolRow, LV_ALIGN_OUT_BOTTOM_MID, mX0 + i * (mBw + mGap), gap);
-        lv_obj_add_event_cb(b, onCmfMode, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-        lv_obj_t *l = lv_label_create(b);
-        lv_obj_set_style_text_font(l, F16, 0);
-        lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
-        lv_label_set_text(l, modeLabels[i]);
-        lv_obj_center(l);
+        lv_obj_t *b = uiBtn(modeRow, modeLabels[i], BTN_NEUTRAL, false, onCmfMode, (void *)(intptr_t)i);
+        lv_obj_set_flex_grow(b, 1);
         s_cmfModeBtns[i] = b;
-        s_cmfModeLbls[i] = l;
+        s_cmfModeLbls[i] = lv_obj_get_child(b, 0);
     }
 }
 
@@ -3140,6 +3164,7 @@ void ui_set_comfort(const comfort_state_t *cmf)
     if (s_cmfDetail && !lv_obj_has_flag(s_cmfDetail, LV_OBJ_FLAG_HIDDEN)) cmfDetailRebuild();
     if (s_cmfPanel  && !lv_obj_has_flag(s_cmfPanel,  LV_OBJ_FLAG_HIDDEN)) cmfRebuildList();
     if (s_home && cmf_available() != s_cmfHomeShown) ui_request_rebuild();
+    else homeStatusRefresh();
 }
 
 // ── Compact-bar text rotation ───────────────────────────────────────────────
@@ -3204,7 +3229,7 @@ static void miniRotTick(lv_timer_t *t)
 // `sub` is the SMALL line ABOVE the name -- the provider on a favourite ("Apple Music"),
 // "On" on a lit button. One anatomy for every tile is what lets favourites,
 // actions and keypad buttons share a grid without looking arbitrary.
-static lv_obj_t *tileCard(lv_obj_t *p, const lv_image_dsc_t *icon, const char *glyph,
+static lv_obj_t *tileCard(lv_obj_t *p, const char *icon, const char *glyph,
                           const char *name, const char *sub, bool on, uint32_t accent,
                           lv_event_cb_t cb, void *ud, int w, int h, lv_obj_t **iconOut,
                           int *iconX, int *iconSize)
@@ -3217,10 +3242,7 @@ static lv_obj_t *tileCard(lv_obj_t *p, const lv_image_dsc_t *icon, const char *g
     lv_obj_t *c = lv_button_create(p);
     lv_obj_remove_style_all(c);
     lv_obj_set_size(c, w, h);
-    lv_obj_set_style_radius(c, (int)(18 * s), 0);
-    lv_obj_set_style_bg_color(c, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(c, on ? LV_OPA_50 : LV_OPA_30, 0);
-    lv_obj_set_style_bg_opa(c, LV_OPA_60, LV_STATE_PRESSED);
+    uiSurface(c, (int)(18 * s), on);
     lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
     if (cb) lv_obj_add_event_cb(c, cb, LV_EVENT_CLICKED, ud);
 
@@ -3230,21 +3252,8 @@ static lv_obj_t *tileCard(lv_obj_t *p, const lv_image_dsc_t *icon, const char *g
     // a glance -- which is the entire argument for putting buttons on this page.
     lv_obj_t *ic = NULL;
     const char *g = (glyph && glyph[0]) ? iconGlyph(glyph) : NULL;
-    if (g) {
-        ic = lv_label_create(c);
-        lv_obj_set_style_text_font(ic, FICON, 0);
-        lv_label_set_text(ic, g);
-        lv_obj_set_style_text_color(ic, lv_color_hex(on ? accent : C_TEXT), 0);
-        lv_obj_set_width(ic, isz);
-        lv_obj_set_style_text_align(ic, LV_TEXT_ALIGN_CENTER, 0);
-    } else {
-        ic = lv_image_create(c);
-        lv_image_set_src(ic, icon);
-        lv_obj_set_size(ic, isz, isz);
-        lv_image_set_inner_align(ic, LV_IMAGE_ALIGN_CONTAIN);
-        lv_obj_set_style_image_recolor(ic, lv_color_hex(on ? accent : C_TEXT), 0);
-        lv_obj_set_style_image_recolor_opa(ic, LV_OPA_COVER, 0);
-    }
+    if (!g) g = icon;   // no (or unknown) driver icon name: the tile kind's default mark
+    ic = iconCreate(c, g, isz, on ? accent : C_TEXT, LV_OPA_COVER);
     lv_obj_align(ic, LV_ALIGN_LEFT_MID, pad, 0);
     if (iconOut) *iconOut = ic;
 
@@ -3344,7 +3353,7 @@ static bool homeBarWanted(void)
 // Listen deliberately gets no tile: the now-playing bar below is the
 // now-playing affordance and tapping it opens the full page, so a tile would
 // just duplicate the thing directly beneath it.
-static void build_home_tiles(int W, int H, bool smallP)
+static void build_home_tiles(int W, int H)
 {
     const float s = s_uiscale;
     const int m   = (int)(40 * s);
@@ -3359,7 +3368,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     int nbtn = s_haveButtons ? s_lastState.n_buttons : 0;
     if (nbtn > MMK_MAX_BUTTONS) nbtn = MMK_MAX_BUTTONS;
 
-    const int cy = smallP ? (int)(44 * s) : (int)(104 * s);
+    const int cy = (int)(104 * s);
 
     // Columns follow WIDTH in RAW pixels: a scaled target grows in step with s
     // and so always yields the same count, which is why a 1280px panel kept
@@ -3387,7 +3396,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     // Only reserve the bar's band when it will actually show something -- an idle
     // room (no title, no active media session) left an empty strip of wallpaper
     // the height of the bar, room enough for another whole row of tiles.
-    s_homeBarShown = !smallP && homeBarWanted();
+    s_homeBarShown = homeBarWanted();
     const int miniH = s_homeBarShown ? (int)(104 * s) + (int)(24 * s) : 0;
     int avail = H - miniH - (int)(16 * s) - cy;
 
@@ -3434,6 +3443,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     }
 
     lv_obj_t *grid = lv_obj_create(s_home);
+    s_homeGrid = grid;
     lv_obj_remove_style_all(grid);
     lv_obj_set_size(grid, W - 2 * m, avail);
     lv_obj_set_pos(grid, m, cy);
@@ -3444,7 +3454,7 @@ static void build_home_tiles(int W, int H, bool smallP)
     // More tiles than fit simply scroll; the scrollbar shows at rest so it is
     // discoverable.
     lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_set_style_bg_color(grid, lv_color_hex(0xFFFFFF), LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_color(grid, lv_color_hex(C_GLASS), LV_PART_SCROLLBAR);
     lv_obj_set_style_bg_opa(grid, LV_OPA_30, LV_PART_SCROLLBAR);
     lv_obj_set_style_bg_opa(grid, LV_OPA_70, LV_PART_SCROLLBAR | LV_STATE_SCROLLED);
     lv_obj_set_style_width(grid, (int)(5 * s), LV_PART_SCROLLBAR);
@@ -3474,7 +3484,7 @@ static void build_home_tiles(int W, int H, bool smallP)
         bool active = hasOnState && s_favs[i].on;
         const char *sub = !hasOnState ? NULL : (active ? (!strcmp(kind, "shade") ? "Open" : "On") : NULL);
         lv_obj_t *c = tileCard(grid, ICON_MEDIA, glyph, s_favs[i].title, sub,
-                               active, active ? 0xFFD166 : 0x4CC9F0,
+                               active, active ? C_WARN : C_ACCENT,
                                onHomeFav, (void *)(intptr_t)i, cw, ch, &ficon, &fx, &fsz);
         lv_obj_set_user_data(c, (void *)(intptr_t)i);
         favArt(c, ficon, i, fx, fsz);   // art lands on the icon's own slot (no-op: device tiles carry no art_url)
@@ -3486,11 +3496,65 @@ static void build_home_tiles(int W, int H, bool smallP)
         // filters these out; this also protects against an older driver that still
         // sends every slot the panel says it can display.
         if (!b->label[0]) continue;
-        uint32_t accent = 0xFFD166;
+        uint32_t accent = C_WARN;
         if (b->color[0]) accent = (uint32_t)strtoul(b->color, NULL, 16);
         const char *gi = (!b->on && b->off_icon[0]) ? b->off_icon : b->icon;
         tileCard(grid, ICON_KEYPAD, gi, b->label, b->on ? "On" : NULL, b->on,
                  accent, onHomeBtn, (void *)(intptr_t)i, cw, ch, NULL, NULL, NULL);
+    }
+}
+
+static void homeStatusRefresh(void)
+{
+    if (!s_homeStatus) return;
+    // "72° in · 58° out · Disarmed" -- each part only when it is actually known:
+    // the room's own thermostat (the driver resolves it from the room's thermostat
+    // binding; the Comfort list itself is house-wide, so the panel cannot guess),
+    // the outdoor reading that thermostat reports, and this room's partitions.
+    char t[96]; size_t n = 0; t[0] = 0;
+    const char *sep = " \xC2\xB7 ";
+    const comfort_t *rc = (cmf_available() && s_cmf.room_id) ? cmfFind(s_cmf.room_id) : NULL;
+    if (rc && !rc->has_temp) rc = NULL;   // bound, but not reporting: say nothing
+    if (rc) n += (size_t)snprintf(t + n, sizeof(t) - n, "%d\xC2\xB0 in", rc->temp);
+    if (s_cmf.has_outdoor && n < sizeof(t))
+        n += (size_t)snprintf(t + n, sizeof(t) - n, "%s%d\xC2\xB0 out", n ? sep : "", s_cmf.outdoor);
+    bool alarm = false, armed = false;
+    for (int i = 0; i < s_sec.n; i++) {
+        if (secInAlarm(&s_sec.list[i])) alarm = true;
+        if (secIsArmed(&s_sec.list[i])) armed = true;
+    }
+    if (sec_available() && n < sizeof(t))
+        snprintf(t + n, sizeof(t) - n, "%s%s", n ? sep : "", alarm ? "Alarm" : armed ? "Armed" : "Disarmed");
+    lv_label_set_text(s_homeStatus, t);
+    lv_obj_set_style_text_color(s_homeStatus, lv_color_hex(alarm ? C_RED : C_SUBTLE), 0);
+}
+
+// Repaint JUST the tile grid. This is what a changed tile needs -- a favourite
+// light flipping on, a keypad button's LED changing, the now-playing bar taking
+// or giving back its band -- and it is deliberately NOT ui_request_rebuild().
+//
+// Those used to go through the full rebuild: lv_obj_clean() of the whole screen
+// and ui_begin() from scratch. That is a sledgehammer with side effects, and the
+// side effects are what looked like processes fighting each other:
+//   - it closes whatever page is open. The driver re-sends `favorites` ~2.5 s
+//     after every light tap (RefreshFavoritesSoon), so: tap a light, open
+//     Comfort, get thrown back Home two seconds later.
+//   - it tears down now-playing and re-queues every thumbnail decode.
+//   - it resets the grid's scroll position under the user's finger.
+// The grid is self-contained, so replacing it alone has none of those.
+static void homeTilesRefresh(void)
+{
+    if (!s_home || !s_homeGrid || !s_connected) return;
+    const int W = lv_display_get_horizontal_resolution(NULL);
+    const int H = lv_display_get_vertical_resolution(NULL);
+    const int scrollY = lv_obj_get_scroll_y(s_homeGrid);
+    art_thumb_clear();                 // the tiles' thumbnails die with them
+    lv_obj_delete(s_homeGrid);
+    s_homeGrid = NULL;
+    build_home_tiles(W, H);
+    if (s_homeGrid) {
+        lv_obj_update_layout(s_homeGrid);
+        lv_obj_scroll_to_y(s_homeGrid, scrollY, LV_ANIM_OFF);
     }
 }
 
@@ -3499,12 +3563,6 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
     const float s = s_uiscale;
     const int m = (int)(40 * s);
     const bool portrait = (H > W);
-    // Tiny 2.8" class (240x320 portrait OR 320x240 landscape — s<1 either way, it's
-    // keyed off the short side): no room for the mini-player or the "Home"/room
-    // heading — just a clean stack of big touch cards (per user). Card ARRANGEMENT
-    // (stacked vs a row) still follows `portrait` below; only this chrome-trim flag
-    // is orientation-agnostic.
-    const bool smallP = (s < 0.99f);
     s_home = lv_obj_create(scr);
     lv_obj_remove_style_all(s_home);
     lv_obj_set_size(s_home, W, H);
@@ -3515,19 +3573,26 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
     lv_obj_set_style_bg_opa(s_home, LV_OPA_COVER, 0);
     lv_obj_clear_flag(s_home, LV_OBJ_FLAG_SCROLLABLE);
 
-    if (!smallP) {
-        lv_obj_t *room = lv_label_create(s_home);
-        lv_obj_set_style_text_font(room, F32, 0);
-        lv_obj_set_style_text_color(room, lv_color_hex(C_TEXT), 0);
-        // The landing page is titled with the ROOM, not "Home" -- this panel belongs to
-        // a room and that is the more useful label. "Home" is only the fallback for
-        // before the driver has told us the room. Kept in s_homeTitle because this was
-        // previously set ONCE at build time: a room arriving (or changing) afterwards
-        // never updated it, so it read "Home" forever on a panel that knew its room.
-        lv_label_set_text(room, s_lastState.room[0] ? s_lastState.room : "Home");
-        lv_obj_set_pos(room, m, (int)(30 * s));
-        s_homeTitle = room;
-    } else s_homeTitle = NULL;
+    lv_obj_t *room = lv_label_create(s_home);
+    lv_obj_set_style_text_font(room, F32, 0);
+    lv_obj_set_style_text_color(room, lv_color_hex(C_TEXT), 0);
+    // The landing page is titled with the ROOM, not "Home" -- this panel belongs to
+    // a room and that is the more useful label. "Home" is only the fallback for
+    // before the driver has told us the room. Kept in s_homeTitle because this was
+    // previously set ONCE at build time: a room arriving (or changing) afterwards
+    // never updated it, so it read "Home" forever on a panel that knew its room.
+    lv_label_set_text(room, s_lastState.room[0] ? s_lastState.room : "Home");
+    lv_obj_set_pos(room, m, (int)(16 * s));
+    s_homeTitle = room;
+    // One quiet line of house status under the room name. Security only: it is
+    // the one status here that is genuinely about THIS panel's room. (Not the
+    // temperature -- the Comfort list is house-wide, not room-scoped, so "72
+    // inside" would be a guess about which thermostat is "here".)
+    s_homeStatus = lv_label_create(s_home);
+    lv_obj_set_style_text_font(s_homeStatus, F14, 0);
+    lv_obj_set_pos(s_homeStatus, m, (int)(16 * s) + lv_font_get_line_height(F32) + (int)(2 * s));
+    homeStatusRefresh();
+    
     // Settings: a gear in the TOP-RIGHT, level with the room title. This was
     // a gear pinned bottom-right (with a star bottom-left for favourites) -- two pieces
     // of floating chrome competing with the content. Top-right is where the rest
@@ -3537,8 +3602,8 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
     // Comfort launchers (topGlyphBtn(), same shape) it needs to read as SETTINGS
     // specifically, so it uses the same gear glyph the Settings page's own
     // Diagnostics tab uses (G_TOOLS / "Settings" in ICONS[]).
-    { int gsz = smallP ? 42 : (int)(50 * s);   // 25% up from 34/40 -- more next to the room name
-      lv_obj_t *more = topGlyphBtn(s_home, "Settings", gsz, 0xFFFFFF, onSettingsOpen, NULL);
+    { int gsz = (int)(50 * s);   // 25% up from 34/40 -- more next to the room name
+      lv_obj_t *more = topGlyphBtn(s_home, "Settings", gsz, C_TEXT, onSettingsOpen, NULL);
       lv_obj_align(more, LV_ALIGN_TOP_RIGHT, -(int)(12 * s), (int)(28 * s));
       lv_obj_set_ext_click_area(more, (int)(12 * s)); }
 
@@ -3569,17 +3634,14 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
         lv_obj_t *box = lv_obj_create(s_home);
         lv_obj_remove_style_all(box);
         lv_obj_set_size(box, W - 2 * m, LV_SIZE_CONTENT);
-        lv_obj_set_pos(box, m, (int)((smallP ? 70 : 150) * s));
+        lv_obj_set_pos(box, m, (int)((150) * s));
         lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                               LV_FLEX_ALIGN_CENTER);
         lv_obj_set_style_pad_row(box, (int)(10 * s), 0);
 
-        // A muted X in a ring: unambiguously "no link". Deliberately an IMAGE icon
-        // (ICON_CLOSE) rather than a font glyph -- the icon fonts are generated with
-        // limited ranges, and both "Plug" and U+25CF rendered as missing-glyph boxes
-        // when tried here. Image icons always render.
-        int isz = (int)((smallP ? 46 : 64) * s);
+        // A muted X in a ring: unambiguously "no link".
+        int isz = (int)((64) * s);
         lv_obj_t *ring = lv_obj_create(box);
         lv_obj_remove_style_all(ring);
         lv_obj_set_size(ring, isz, isz);
@@ -3589,26 +3651,20 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
         lv_obj_set_style_border_color(ring, lv_color_hex(C_TEXT), 0);
         lv_obj_set_style_border_opa(ring, LV_OPA_30, 0);
         {
-            lv_obj_t *x = lv_image_create(ring);
-            lv_image_set_src(x, ICON_CLOSE);
-            int xs = (int)(isz * 0.5f);
-            lv_obj_set_size(x, xs, xs);
-            lv_image_set_inner_align(x, LV_IMAGE_ALIGN_CONTAIN);
-            lv_obj_set_style_image_recolor(x, lv_color_hex(C_TEXT), 0);
-            lv_obj_set_style_image_recolor_opa(x, LV_OPA_40, 0);
+            lv_obj_t *x = iconCreate(ring, ICON_CLOSE, isz / 2, C_TEXT, LV_OPA_40);
             lv_obj_center(x);
         }
 
         lv_obj_t *l1 = lv_label_create(box);
         lv_label_set_text(l1, "Not connected");
         lv_obj_set_style_text_color(l1, lv_color_hex(C_TEXT), 0);
-        lv_obj_set_style_text_font(l1, smallP ? F16 : F24, 0);
+        lv_obj_set_style_text_font(l1, F24, 0);
 
         lv_obj_t *l2 = lv_label_create(box);
         lv_obj_set_width(l2, W - 2 * m - (int)(20 * s));
         lv_obj_set_style_text_align(l2, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(l2, LV_LABEL_LONG_WRAP);
-        lv_label_set_text(l2, "Waiting for the Control4 controller");
+        lv_label_set_text(l2, "Waiting for controller");   // platform-neutral: Control4 or Home Assistant
         lv_obj_set_style_text_color(l2, lv_color_hex(C_SUBTLE), 0);
         lv_obj_set_style_text_font(l2, F16, 0);
 
@@ -3632,15 +3688,15 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
     // toward it lands on Intercom, Security, Comfort -- roughly rarest-to-most
     // reached for, dots (settings) last.
     if (icAvail || secAvail || cmfAvail) {
-        const int isz = smallP ? 42 : (int)(50 * s);   // matches the dots button's own 25% bump
+        const int isz = (int)(50 * s);   // matches the dots button's own 25% bump
         const int igap = (int)(10 * s);
         const int iy = (int)(28 * s);
         // The dots button is gsz-sized (same bump), so start one dots-width + gap in.
-        const int gsz = smallP ? 42 : (int)(50 * s);
+        const int gsz = (int)(50 * s);
         int xoff = -(int)(12 * s) - gsz - igap;   // just left of the "more" dots button
 
         if (cmfAvail) {
-            lv_obj_t *btn = topGlyphBtn(s_home, "Climate", isz, 0xFFFFFF, homeComfort, NULL);
+            lv_obj_t *btn = topGlyphBtn(s_home, "Climate", isz, C_TEXT, homeComfort, NULL);
             lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, xoff, iy);
             xoff -= isz + igap;
         }
@@ -3656,30 +3712,26 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
             armed = armed || alarm;
             lv_obj_t *dot = NULL;
             lv_obj_t *btn = topGlyphBtn(s_home, "Security", isz,
-                                        alarm ? C_RED : 0xFFFFFF, homeSecurity, &dot);
+                                        alarm ? C_RED : C_TEXT, homeSecurity, &dot);
             lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, xoff, iy);
             if (dot && (armed || alarm)) {
-                lv_obj_set_style_bg_color(dot, lv_color_hex(alarm ? C_RED : 0x4CC9F0), 0);
+                lv_obj_set_style_bg_color(dot, lv_color_hex(alarm ? C_RED : C_ACCENT), 0);
                 lv_obj_clear_flag(dot, LV_OBJ_FLAG_HIDDEN);
             }
             xoff -= isz + igap;
         }
         if (icAvail) {
-            lv_obj_t *btn = topGlyphBtn(s_home, "Bell", isz, 0xFFFFFF, homeIntercom, NULL);
+            lv_obj_t *btn = topGlyphBtn(s_home, "Bell", isz, C_TEXT, homeIntercom, NULL);
             lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, xoff, iy);
             xoff -= isz + igap;
         }
     }
 
-    build_home_tiles(W, H, smallP);
+    build_home_tiles(W, H);
 
     // Mini-player bar (bottom): a big square album-art tile on the left, title +
     // artist stacked next to it, a persistent volume slider along the lower band,
-    // and a right cluster with power stacked above pause · skip. Omitted on the tiny
-    // 2.8" (smallP) — no vertical room; the cards fill the screen instead — and on
-    // design 3, which gives the whole page to tiles (the Listen chip carries the
-    // now-playing info instead, the way the C4 room page does).
-    if (!smallP) {
+    // and a right cluster with power stacked above pause · skip.
     // A slim bar: the tile grid is the content now, and a full-height player left
     // it a row and a half on the 10". Dropping the bar altogether would also drop
     // at-a-glance volume and transport, which is the most-used control on a wall
@@ -3709,15 +3761,10 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
     lv_obj_align(art, LV_ALIGN_LEFT_MID, pad, 0);
     lv_obj_set_style_radius(art, (int)(10 * s), 0);
     lv_obj_set_style_clip_corner(art, true, 0);   // clips the art canvas to rounded corners
-    lv_obj_set_style_bg_color(art, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_color(art, lv_color_hex(C_SHADE), 0);
     lv_obj_set_style_bg_opa(art, LV_OPA_40, 0);
     art_add_mirror(art, 0, 0, asz, asz);          // real album art (cover-cropped mirror)
-    lv_obj_t *ai = lv_image_create(art);          // music-note placeholder while no art
-    lv_image_set_src(ai, ICON_MEDIA);
-    lv_obj_set_size(ai, (int)(44 * s), (int)(44 * s));
-    lv_image_set_inner_align(ai, LV_IMAGE_ALIGN_CONTAIN);
-    lv_obj_set_style_image_recolor(ai, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_image_recolor_opa(ai, LV_OPA_50, 0);
+    lv_obj_t *ai = iconCreate(art, ICON_MEDIA, (int)(44 * s), C_TEXT, LV_OPA_50);          // music-note placeholder while no art
     lv_obj_center(ai);
     setVis(ai, !art_has());
     s_homeMiniArt = art;
@@ -3735,7 +3782,7 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
     int titleX = textX;
     if (!portrait) {
         const int arSz = (int)(40 * s);
-        lv_obj_t *ar = iconBtnImg(bar, ICON_ROOM_ADD, arSz, 0, LV_OPA_TRANSP, 0xFFFFFF, onHomeAddRooms, NULL);
+        lv_obj_t *ar = iconBtnImg(bar, ICON_ROOM_ADD, arSz, 0, LV_OPA_TRANSP, C_TEXT, onHomeAddRooms, NULL);
         lv_obj_align(ar, LV_ALIGN_TOP_LEFT, textX - (int)(6 * s), (int)(18 * s));
         titleX = textX + arSz + (int)(6 * s);
     }
@@ -3773,12 +3820,7 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
     }
 
     // Persistent volume: speaker icon + long slider along the lower band.
-    lv_obj_t *vi = lv_image_create(bar);
-    lv_image_set_src(vi, ICON_VOL_UP);
-    lv_obj_set_size(vi, (int)(28 * s), (int)(28 * s));
-    lv_image_set_inner_align(vi, LV_IMAGE_ALIGN_CONTAIN);
-    lv_obj_set_style_image_recolor(vi, lv_color_hex(C_TEXT), 0);
-    lv_obj_set_style_image_recolor_opa(vi, LV_OPA_COVER, 0);
+    lv_obj_t *vi = iconCreate(bar, ICON_VOL_UP, (int)(28 * s), C_TEXT, LV_OPA_COVER);
     lv_obj_align(vi, LV_ALIGN_BOTTOM_LEFT, textX, (int)(-26 * s));
     s_homeVolIcon = vi;
     s_homeVol = lv_slider_create(bar);
@@ -3786,7 +3828,7 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
     lv_obj_set_size(s_homeVol, textW - (int)(44 * s), (int)(10 * s));
     lv_obj_align(s_homeVol, LV_ALIGN_BOTTOM_LEFT, textX + (int)(44 * s), (int)(-34 * s));
     lv_obj_set_ext_click_area(s_homeVol, (int)(22 * s));
-    lv_obj_set_style_bg_color(s_homeVol, lv_color_hex(0x404040), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_homeVol, lv_color_hex(C_TRACK), LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_homeVol, lv_color_hex(C_TEXT), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(s_homeVol, lv_color_hex(C_TEXT), LV_PART_KNOB);
     lv_obj_add_event_cb(s_homeVol, onHomeVol, LV_EVENT_RELEASED, NULL);
@@ -3797,11 +3839,11 @@ static void build_home(lv_obj_t *scr, int W, int H, uint32_t bgTop, uint32_t bgB
     // player offers play/pause only, and dropping it also buys the two remaining
     // targets more room (they were crowding the power button).
     const int rcX = (int)(14 * s);
-    lv_obj_t *pp = iconBtnImg(bar, ICON_PAUSE, rcBtn, 0, LV_OPA_TRANSP, 0xFFFFFF, onPlayPause, &s_homeMiniPP);
+    lv_obj_t *pp = iconBtnImg(bar, ICON_PAUSE, rcBtn, 0, LV_OPA_TRANSP, C_TEXT, onPlayPause, &s_homeMiniPP);
     lv_obj_align(pp, LV_ALIGN_RIGHT_MID, -rcX, 0);
-    lv_obj_t *pw = iconBtnImg(bar, ICON_POWER, rcBtn, 0, LV_OPA_TRANSP, 0xFFFFFF, onHomePower, NULL);
+    lv_obj_t *pw = iconBtnImg(bar, ICON_POWER, rcBtn, 0, LV_OPA_TRANSP, C_TEXT, onHomePower, NULL);
     lv_obj_align(pw, LV_ALIGN_RIGHT_MID, -(rcX + rcBtn + rcGap), 0);
-    }  // if (!smallP) mini-player
+    
 
 home_chrome:
     (void)0;   // label target for the not-connected early-out above
@@ -3928,7 +3970,6 @@ static void onWakeTap(lv_event_t *e)
 
 void ui_begin(void)
 {
-    ui_apply_theme();   // pick X4 vs HA before anything below reads g_theme
     lv_obj_t *scr = lv_screen_active();
     // Created once and NOT torn down by a rebuild: it lives on the system layer,
     // which lv_obj_clean(screen) does not touch.
@@ -3955,83 +3996,64 @@ void ui_begin(void)
     const int W = lv_display_get_horizontal_resolution(NULL);
     const int H = lv_display_get_vertical_resolution(NULL);
     ui_apply_font_scale(W, H);   // pick resolution-appropriate font sizes first
+    // ONE typeface. Text style is inherited, so setting it on the two roots means a
+    // label that forgets to pick a font still comes out in Roboto rather than in
+    // LVGL's built-in Montserrat -- which is how a second typeface used to leak
+    // into button labels and the setup screen.
+    lv_obj_set_style_text_font(scr, F16, 0);
+    lv_obj_set_style_text_color(scr, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_font(lv_layer_top(), F16, 0);
+    lv_obj_set_style_text_color(lv_layer_top(), lv_color_hex(C_TEXT), 0);
 
     const bool landscape = (W >= H);
-    // X4 two-column now-playing: album-art card atop stacked controls in a left
-    // column (right column = queue, deferred). Enabled on large landscape panels
-    // (the T3 7"). WIP first pass -- reuses the existing controls, repositioned.
-    // X4 card styling comes in two resolution-driven flavors (no board #ifdef):
-    //  • x4L — large-landscape TWO-column now-playing (nano 10.1" @ 1280x800): the
-    //    art card sits in a left column, info/rooms panels fill the right column.
-    //  • x4P — narrow PORTRAIT single column (ws43 4.3" @ 480x800): art near the top,
-    //    controls stacked below it, info/rooms shown as full-card overlays. The
-    //    W<=700 cap keeps this to the ~480 class and off the nano's 800-wide portrait.
-    const bool x4L = landscape && W >= 1000;
-    // Portrait X4: the 4.3" class (480-wide) AND the small 2.8" (240-wide) — the
-    // layout scales by s_uiscale (which now goes below 1 on the small panel). The
-    // <=900 cap is a safety net, not a tuned target: no board defaults to or
-    // exposes portrait in its Settings UI at this width (nano is landscape-only,
-    // 1280x800 -> x4L), but net.c applies a driver-pushed `rotation` unconditionally
-    // (not gated by MMK_CAN_ROTATE), so nano COULD be told to go portrait
-    // (800x1280) by a driver even with no on-device control for it. Rather than
-    // leave that state with no X4 layout at all, it renders (unpolished) via this
-    // same single-column path instead of falling back to the legacy overlay UI.
-    const bool x4P = !landscape && W >= 200 && W <= 900;
-    // Small landscape X4 (e.g. the 2.8" s3 rotated, 320x240): the same small-panel
-    // class as x4P (same s_uiscale — it's keyed off the SHORT side, which is 240
-    // either way) but landscape, so it doesn't fit x4P's `!landscape` gate. Reuses
-    // x4P's single-column stacked layout via x4V below rather than x4L's big
-    // two-column design (no room for two columns at 320 wide).
-    const bool x4Ls = landscape && W < 1000 && H >= 200;
-    const bool x4  = x4L || x4P || x4Ls;
-    s_x4 = x4;
-    // x4V ("vertical stack") = the single-column layout shape shared by x4P and
-    // x4Ls, as opposed to x4L's big two-column design. Nearly every x4P-only
-    // layout decision below is really about this SHAPE, not true portrait, so it
-    // uses x4V — x4P is kept only where true orientation actually matters.
-    const bool x4V = x4P || x4Ls;
-    // Small X4 (either orientation, s_uiscale<1 on the 240-class panel): s_uiscale
-    // shrinks all the scaled gaps below the fixed bitmap-font heights, so this
-    // flavor needs font-aware spacing + a trimmed bottom (no room/chevron chrome —
-    // the room is on Home and there's already a top-left back button). Doesn't
-    // affect the >=480-wide boards (ws43/nano), which stay at s=1.0.
-    const bool smallP = x4V && (s_uiscale < 0.99f);
-    printf("ui: res %dx%d landscape=%d x4=%d (L=%d P=%d Ls=%d)\n", W, H, (int)landscape, (int)x4, (int)x4L, (int)x4P, (int)x4Ls);
-    // Card inset margin (gradient shows around it). The tiny 240x320 (smallP) has no
-    // room to waste on a card frame, so it goes FULL-SCREEN (no margin, no card panel).
-    const int x4M = smallP ? 0 : (int)(28 * s_uiscale);
+    // Two layout shapes, chosen by ORIENTATION alone (no board #ifdef, no size
+    // tiers):
+    //  - x4L -- landscape TWO-column now-playing: the art + control stack sits in
+    //    a left column, info/rooms panels fill the right column. WS43 rotated
+    //    (800x480), nano and the T3 panels (1280x800).
+    //  - x4P -- portrait single column: art near the top, controls stacked below,
+    //    info/rooms shown as full-card overlays. WS43 (480x800).
+    // s_uiscale (short side / 480) carries the size difference between panels, so
+    // 800x480 at s=1 and 1280x800 at s=1.67 are the same layout at two scales.
+    //
+    // 800x480 used to be routed to a third flavor ("x4Ls") written for a 320x240
+    // panel this firmware no longer targets. It reused the PORTRAIT stack inside a
+    // landscape frame, which is why the WS43 in landscape clipped its transport
+    // row and lost the volume slider entirely.
+    const bool x4L = landscape;
+    const bool x4P = !landscape;
+    const bool x4V = x4P;   // "vertical stack" shape; kept as a name because most
+                            // decisions below are about the SHAPE, not orientation
+    printf("ui: res %dx%d %s s=%.2f\n", W, H, x4L ? "landscape" : "portrait", (double)s_uiscale);
+    // Card inset margin (gradient shows around it).
+    const int x4M = (int)(28 * s_uiscale);
     // Content column: the left ~46% of the card in landscape; the full inset width
     // in portrait (so title/bar/transport/volume all flow full-width, single column).
-    const int x4ColX = x4V ? (x4M + (int)(smallP ? 14 : 20 * s_uiscale)) : (int)(52 * s_uiscale);
+    const int x4ColX = x4V ? (x4M + (int)(20 * s_uiscale)) : (int)(52 * s_uiscale);
     const int x4ColW = x4V ? (W - 2 * x4ColX) : (W * 46 / 100 - x4ColX);
     // X4 now-playing is an inset CARD floating on the home gradient (not full-bleed):
     // a dark rounded panel, with the art + controls + right panel drawn on top of it.
-    // Created before art_begin so the art canvas and widgets render above it. smallP
-    // skips the card entirely and paints the controls straight on the full-screen gradient
-    // (scr already carries the HOME_BG gradient, set above).
-    s_npCard = NULL;
-    if (!smallP) {
-        s_npCard = lv_obj_create(scr);
-        lv_obj_remove_style_all(s_npCard);
-        // Landscape card runs to the very bottom edge (more room for a larger art +
-        // the control stack); portrait keeps a bottom margin so it reads as a card.
-        lv_obj_set_size(s_npCard, W - 2 * x4M, x4V ? (H - 2 * x4M) : (H - x4M));
-        lv_obj_set_pos(s_npCard, x4M, x4M);
-        lv_obj_set_style_radius(s_npCard, (int)(26 * s_uiscale), 0);
-        lv_obj_set_style_bg_color(s_npCard, lv_color_hex(0x0E1120), 0);
-        lv_obj_set_style_bg_grad_color(s_npCard, lv_color_hex(0x121A30), 0);
-        lv_obj_set_style_bg_grad_dir(s_npCard, LV_GRAD_DIR_VER, 0);
-        lv_obj_set_style_bg_opa(s_npCard, LV_OPA_90, 0);   // gradient bleeds through slightly
-        lv_obj_clear_flag(s_npCard, LV_OBJ_FLAG_SCROLLABLE);
-    }
+    // Created before art_begin so the art canvas and widgets render above it.
+    s_npCard = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_npCard);
+    // Landscape card runs to the very bottom edge (more room for a larger art +
+    // the control stack); portrait keeps a bottom margin so it reads as a card.
+    lv_obj_set_size(s_npCard, W - 2 * x4M, x4V ? (H - 2 * x4M) : (H - x4M));
+    lv_obj_set_pos(s_npCard, x4M, x4M);
+    lv_obj_set_style_radius(s_npCard, (int)(26 * s_uiscale), 0);
+    lv_obj_set_style_bg_color(s_npCard, lv_color_hex(C_CARD_TOP), 0);
+    lv_obj_set_style_bg_grad_color(s_npCard, lv_color_hex(C_CARD_BOT), 0);
+    lv_obj_set_style_bg_grad_dir(s_npCard, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(s_npCard, LV_OPA_90, 0);   // gradient bleeds through slightly
+    lv_obj_clear_flag(s_npCard, LV_OBJ_FLAG_SCROLLABLE);
+    
 
     int aX, aY, aW, aH;
     if (x4V) {
-        // Portrait/small-landscape: a big near-square cover near the top, full
-        // column width. On the tiny 240x320 the vertical budget is tight, so cap
-        // the art smaller (26% vs 40%) to leave room for the full control stack.
+        // Portrait: a big near-square cover near the top, full column width,
+        // capped at 40% of the height to leave room for the control stack.
         int sz = x4ColW;
-        int cap = H * (smallP ? 26 : 40) / 100;
+        int cap = H * 40 / 100;
         if (sz > cap) sz = cap;
         aW = aH = sz;
         aX = x4ColX + (x4ColW - sz) / 2;
@@ -4050,7 +4072,7 @@ void ui_begin(void)
     lv_obj_remove_style_all(s_scrim);
     lv_obj_set_size(s_scrim, W, H);
     lv_obj_set_pos(s_scrim, 0, 0);
-    lv_obj_set_style_bg_color(s_scrim, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_color(s_scrim, lv_color_hex(C_SHADE), 0);
     lv_obj_set_style_bg_opa(s_scrim, LV_OPA_TRANSP, 0);
     lv_obj_add_flag(s_scrim, LV_OBJ_FLAG_CLICKABLE);
     // X4 has explicit on-card controls (persistent volume, chevron, right-panel
@@ -4093,18 +4115,14 @@ void ui_begin(void)
     lv_obj_set_pos(s_artist, mAX, mTitleY + mTitleLH + (int)(6 * s_uiscale));
     lv_obj_set_height(s_artist, lv_font_get_line_height(F16));
     {   // top-left back "‹" on the now-playing card (in addition to the bottom chevron)
-        // Chrome glyphs (back/info/volume) must not shrink with s_uiscale below a
-        // readable floor — on the 240x320 a 38*0.5=19px glyph is illegible. smallP
-        // pins them to fixed, finger-sized values instead.
         // Matches the home page's own top-bar icons/gear (topGlyphBtn, 25% bumped
         // to 42/50*s) -- this was a visibly smaller leftover from before that bump.
-        lv_obj_t *npback = iconBtnImg(scr, ICON_BACK, smallP ? 42 : (int)(50 * s_uiscale), 0, LV_OPA_TRANSP, 0xFFFFFF, onHomeChevron, NULL);
-        lv_obj_set_pos(npback, x4M + (int)(6 * s_uiscale) + (smallP ? 4 : 0), x4M + (int)(6 * s_uiscale) + (smallP ? 4 : 0));
+        lv_obj_t *npback = iconBtnImg(scr, ICON_BACK, (int)(50 * s_uiscale), 0, LV_OPA_TRANSP, C_TEXT, onHomeChevron, NULL);
+        lv_obj_set_pos(npback, x4M + (int)(6 * s_uiscale), x4M + (int)(6 * s_uiscale));
     }
     // x4V vertical-flow anchors (progress bar / time / transport center / volume):
     // each is the LARGER of the classic scaled offset and a font-aware minimum, so
-    // the ws43 (s=1) keeps its exact spacing while the 240x320 (s<1) never overlaps
-    // its fixed-height bitmap fonts. pTrPlay is the x4V transport play-button size.
+    // rows never overlap the fixed-height bitmap fonts. pTrPlay is the x4V transport play-button size.
     const int _lhA = lv_font_get_line_height(F16);
     const int _lhS = lv_font_get_line_height(F14);
     const int pTrPlay = (int)(74 * s_uiscale);
@@ -4146,7 +4164,7 @@ void ui_begin(void)
 
     s_bar = lv_bar_create(scr);
     lv_bar_set_range(s_bar, 0, 1000);
-    lv_obj_set_style_bg_color(s_bar, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_bar, lv_color_hex(C_GLASS), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_bar, LV_OPA_20, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_bar, lv_color_hex(C_GREEN), LV_PART_INDICATOR);
     lv_obj_set_style_radius(s_bar, (int)(3 * s_uiscale), 0);
@@ -4157,12 +4175,12 @@ void ui_begin(void)
     // subset the source supports (set from caps in setState). X4 transport is plain
     // glyphs (no button circles/pills) on the card/gradient background.
     {
-        uint32_t sideBg  = 0x000000;
+        uint32_t sideBg  = C_SHADE;
         lv_opa_t sideOpa = LV_OPA_TRANSP;
-        uint32_t playBg  = 0x000000;
+        uint32_t playBg  = C_SHADE;
         lv_opa_t playOpa = LV_OPA_TRANSP;
-        uint32_t sideFg = 0xFFFFFF, playFg = 0xFFFFFF;   // white glyphs
-        if (x4V) {   // portrait/small-landscape: big touch targets, centred full-width below the meta
+        uint32_t sideFg = C_TEXT, playFg = C_TEXT;   // white glyphs
+        if (x4V) {   // portrait: big touch targets, centred full-width below the meta
             s_trPlay = pTrPlay;
             s_trSide = (int)(58 * s_uiscale);
             s_trCx   = x4ColX + x4ColW / 2;
@@ -4187,8 +4205,8 @@ void ui_begin(void)
 
     // Overflow menu: a plain vertical ellipsis (⋮) at the title's right, like
     // Navigator — opens the (i) info panel. (No pill background.)
-    { int isz = smallP ? 30 : (int)(34 * s_uiscale);
-    s_infoToggle = iconBtnImg(scr, ICON_DOTS, isz, 0x000000, LV_OPA_TRANSP, 0xFFFFFF, onInfo, NULL);
+    { int isz = (int)(34 * s_uiscale);
+    s_infoToggle = iconBtnImg(scr, ICON_DOTS, isz, C_SHADE, LV_OPA_TRANSP, C_TEXT, onInfo, NULL);
     lv_obj_set_pos(s_infoToggle, x4ColX + x4ColW - isz, mTitleY + (int)(2 * s_uiscale)); }
 
     // No top-left intercom icon on X4: the home screen has its own Intercom card,
@@ -4206,33 +4224,26 @@ void ui_begin(void)
         // Persistent volume row (speaker + slider), below the transport (portrait's
         // transport is taller, so it needs a larger gap to clear it).
         const int volY = x4V ? pVolY : (s_trCy + (int)(44 * s));
-        const int viSz  = smallP ? 26 : (int)(24 * s);           // readable speaker glyph
-        const int viGap = smallP ? 36 : (int)(44 * s);           // slider offset past the icon
-        lv_obj_t *nvi = lv_image_create(scr);
-        lv_image_set_src(nvi, ICON_VOL_UP);
-        lv_obj_set_size(nvi, viSz, viSz);
-        lv_image_set_inner_align(nvi, LV_IMAGE_ALIGN_CONTAIN);
-        lv_obj_set_style_image_recolor(nvi, lv_color_hex(C_TEXT), 0);
-        lv_obj_set_style_image_recolor_opa(nvi, LV_OPA_COVER, 0);
+        const int viSz  = (int)(24 * s);           // readable speaker glyph
+        const int viGap = (int)(44 * s);           // slider offset past the icon
+        lv_obj_t *nvi = iconCreate(scr, ICON_VOL_UP, viSz, C_TEXT, LV_OPA_COVER);
         lv_obj_set_pos(nvi, x4ColX, volY);
         s_npVolIcon = nvi;
         s_npVol = lv_slider_create(scr);
         lv_slider_set_range(s_npVol, 0, 100);
-        lv_obj_set_size(s_npVol, x4ColW - viGap, smallP ? 8 : (int)(10 * s));
-        lv_obj_set_pos(s_npVol, x4ColX + viGap, volY + (smallP ? 9 : (int)(7 * s)));
+        lv_obj_set_size(s_npVol, x4ColW - viGap, (int)(10 * s));
+        lv_obj_set_pos(s_npVol, x4ColX + viGap, volY + ((int)(7 * s)));
         lv_obj_set_ext_click_area(s_npVol, (int)(18 * s));
-        lv_obj_set_style_bg_color(s_npVol, lv_color_hex(0x404040), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(s_npVol, lv_color_hex(C_TRACK), LV_PART_MAIN);
         lv_obj_set_style_bg_color(s_npVol, lv_color_hex(C_TEXT), LV_PART_INDICATOR);
         lv_obj_set_style_bg_color(s_npVol, lv_color_hex(C_TEXT), LV_PART_KNOB);
         lv_obj_add_event_cb(s_npVol, onNpVol, LV_EVENT_RELEASED, NULL);
         lv_obj_add_event_cb(s_npVol, onNpVol, LV_EVENT_VALUE_CHANGED, NULL);
 
         // house+ / "Playing in <room>" (opens the room list) + power + collapse
-        // chevron. Skipped on the tiny 240x320 (smallP): the room is on Home and the
-        // top-left back button already collapses — no vertical room for this stack.
-        if (!smallP) {
+        // chevron.
         const int botY = volY + (int)(42 * s);
-        lv_obj_t *hr = iconBtnImg(scr, ICON_ROOM_ADD, (int)(34 * s), 0, LV_OPA_TRANSP, 0xFFFFFF, onHomeAddRooms, NULL);
+        lv_obj_t *hr = iconBtnImg(scr, ICON_ROOM_ADD, (int)(34 * s), 0, LV_OPA_TRANSP, C_TEXT, onHomeAddRooms, NULL);
         lv_obj_set_pos(hr, x4ColX, botY);
         lv_obj_t *pin = lv_label_create(scr);
         lv_obj_set_style_text_font(pin, F14, 0);
@@ -4244,20 +4255,20 @@ void ui_begin(void)
         lv_obj_set_style_text_color(s_npRoomLbl, lv_color_hex(C_TEXT), 0);
         lv_label_set_text(s_npRoomLbl, s_lastState.room[0] ? s_lastState.room : "");
         lv_obj_set_pos(s_npRoomLbl, x4ColX + (int)(46 * s), botY + (int)(18 * s));
-        lv_obj_t *pwr = iconBtnImg(scr, ICON_POWER, (int)(34 * s), 0, LV_OPA_TRANSP, 0xFFFFFF, onHomePower, NULL);
+        lv_obj_t *pwr = iconBtnImg(scr, ICON_POWER, (int)(34 * s), 0, LV_OPA_TRANSP, C_TEXT, onHomePower, NULL);
         lv_obj_set_pos(pwr, x4ColX + x4ColW - (int)(38 * s), botY);
 
         // Collapse chevron, pinned to the card bottom (below the bottom row).
         lv_obj_t *chev = iconBtnImg(scr, ICON_CHEVRON_DOWN, (int)(32 * s),
-                                    0x000000, LV_OPA_TRANSP, 0xFFFFFF, onHomeChevron, NULL);
+                                    C_SHADE, LV_OPA_TRANSP, C_TEXT, onHomeChevron, NULL);
         lv_obj_set_pos(chev, x4ColX + x4ColW / 2 - (int)(16 * s), cardBot - (int)(34 * s));
-        } else s_npRoomLbl = NULL;   // smallP: no room row
+        
     }
 
 
     // Track-info panel: the card's RIGHT half on x4L (transparent, an (i) header,
     // two-line gray-name/white-value rows with dividers), or a full-card dark
-    // overlay on x4V (portrait/small-landscape — tap anywhere to close).
+    // overlay on x4V (portrait — tap anywhere to close).
     {
         const float s = s_uiscale;
         s_infoPanel = lv_obj_create(scr);
@@ -4270,9 +4281,9 @@ void ui_begin(void)
         lv_obj_set_style_pad_row(rowsWrap, (int)(12 * s), 0);
         lv_obj_set_scroll_dir(rowsWrap, LV_DIR_VER);
         int ix, iy, iw, ipH;
-        if (x4V) {   // portrait/small-landscape: full-card dark overlay (tap anywhere to close)
+        if (x4V) {   // portrait: full-card dark overlay (tap anywhere to close)
             ix = x4M; iy = x4M; iw = W - 2 * x4M; ipH = H - 2 * x4M;
-            lv_obj_set_style_bg_color(s_infoPanel, lv_color_hex(0x0E1120), 0);
+            lv_obj_set_style_bg_color(s_infoPanel, lv_color_hex(C_CARD_TOP), 0);
             lv_obj_set_style_bg_opa(s_infoPanel, LV_OPA_COVER, 0);
             lv_obj_set_style_radius(s_infoPanel, (int)(26 * s), 0);
             lv_obj_add_flag(s_infoPanel, LV_OBJ_FLAG_CLICKABLE);
@@ -4284,12 +4295,7 @@ void ui_begin(void)
         lv_obj_set_size(s_infoPanel, iw, ipH);
         lv_obj_set_pos(s_infoPanel, ix, iy);
         lv_obj_set_style_pad_all(s_infoPanel, x4V ? (int)(18 * s) : 0, 0);
-        lv_obj_t *ici = lv_image_create(s_infoPanel);   // (i) header icon, centered
-        lv_image_set_src(ici, ICON_INFO);
-        lv_obj_set_size(ici, (int)(46 * s), (int)(46 * s));
-        lv_image_set_inner_align(ici, LV_IMAGE_ALIGN_CONTAIN);
-        lv_obj_set_style_image_recolor(ici, lv_color_hex(C_TEXT), 0);
-        lv_obj_set_style_image_recolor_opa(ici, LV_OPA_COVER, 0);
+        lv_obj_t *ici = iconCreate(s_infoPanel, ICON_INFO, (int)(46 * s), C_TEXT, LV_OPA_COVER);   // (i) header icon, centered
         lv_obj_align(ici, LV_ALIGN_TOP_MID, 0, 0);
         lv_obj_set_size(rowsWrap, LV_PCT(100), ipH - (int)(72 * s));
         lv_obj_align(rowsWrap, LV_ALIGN_TOP_LEFT, 0, (int)(72 * s));
@@ -4302,7 +4308,7 @@ void ui_begin(void)
             lv_obj_set_style_pad_row(row, (int)(2 * s), 0);
             lv_obj_set_style_pad_bottom(row, (int)(7 * s), 0);
             lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
-            lv_obj_set_style_border_color(row, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_border_color(row, lv_color_hex(C_GLASS), 0);
             lv_obj_set_style_border_opa(row, LV_OPA_20, 0);
             lv_obj_set_style_border_width(row, 1, 0);
             s_infoName[i] = lv_label_create(row);
@@ -4320,7 +4326,7 @@ void ui_begin(void)
 
     // X4 add-rooms right panel (shown by the house+ control). Master volume + a room
     // list; the list is stubbed to just this room until the driver enumerates rooms.
-    if (x4) {
+    {
         const float s = s_uiscale;
         int ix, iy, iw, ipH;
         if (x4V) { ix = x4M; iy = x4M; iw = W - 2 * x4M; ipH = H - 2 * x4M; }
@@ -4342,7 +4348,7 @@ void ui_begin(void)
             lv_obj_set_flex_flow(s_roomsPanel, LV_FLEX_FLOW_COLUMN);
         }
         if (x4V) {   // portrait: full-card dark overlay
-            lv_obj_set_style_bg_color(s_roomsPanel, lv_color_hex(0x0E1120), 0);
+            lv_obj_set_style_bg_color(s_roomsPanel, lv_color_hex(C_CARD_TOP), 0);
             lv_obj_set_style_bg_opa(s_roomsPanel, LV_OPA_COVER, 0);
             lv_obj_set_style_radius(s_roomsPanel, (int)(26 * s), 0);
         }
@@ -4364,8 +4370,8 @@ void ui_begin(void)
             lv_obj_set_style_pad_column(hdr, (int)(10 * s), 0);
             // Matches the home page's own top-bar icons/gear (topGlyphBtn, 25% bumped
             // to 42/50*s) -- this was a visibly smaller leftover from before that bump.
-            int bsz = (s < 0.99f) ? 42 : (int)(50 * s);
-            iconBtnImg(hdr, ICON_BACK, bsz, C_BTN, LV_OPA_COVER, 0xFFFFFF, onRoomsClose, NULL);
+            int bsz = (int)(50 * s);
+            iconBtnImg(hdr, ICON_BACK, bsz, C_GLASS, LV_OPA_COVER, C_TEXT, onRoomsClose, NULL);
             lv_obj_t *ht = lv_label_create(hdr);
             lv_label_set_text(ht, "Rooms");
             lv_obj_set_style_text_color(ht, lv_color_hex(C_TEXT), 0);
@@ -4384,12 +4390,7 @@ void ui_begin(void)
             lv_obj_set_style_pad_column(vrow, (int)(12 * s), 0);
             lv_obj_set_style_pad_ver(vrow, (int)(6 * s), 0);
 
-            lv_obj_t *rvi = lv_image_create(vrow);   // master volume speaker icon
-            lv_image_set_src(rvi, ICON_VOL_UP);
-            lv_obj_set_size(rvi, (int)(28 * s), (int)(28 * s));
-            lv_image_set_inner_align(rvi, LV_IMAGE_ALIGN_CONTAIN);
-            lv_obj_set_style_image_recolor(rvi, lv_color_hex(C_TEXT), 0);
-            lv_obj_set_style_image_recolor_opa(rvi, LV_OPA_COVER, 0);
+            lv_obj_t *rvi = iconCreate(vrow, ICON_VOL_UP, (int)(28 * s), C_TEXT, LV_OPA_COVER);   // master volume speaker icon
             s_roomsVolIcon = rvi;
 
             s_roomsVol = lv_slider_create(vrow);
@@ -4397,7 +4398,7 @@ void ui_begin(void)
             lv_obj_set_height(s_roomsVol, (int)(10 * s));
             lv_obj_set_flex_grow(s_roomsVol, 1);      // fills the row, never overflows
             lv_obj_set_ext_click_area(s_roomsVol, (int)(18 * s));
-            lv_obj_set_style_bg_color(s_roomsVol, lv_color_hex(0x404040), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(s_roomsVol, lv_color_hex(C_TRACK), LV_PART_MAIN);
             lv_obj_set_style_bg_color(s_roomsVol, lv_color_hex(C_TEXT), LV_PART_INDICATOR);
             lv_obj_set_style_bg_color(s_roomsVol, lv_color_hex(C_TEXT), LV_PART_KNOB);
             lv_obj_add_event_cb(s_roomsVol, onRoomsVol, LV_EVENT_RELEASED, NULL);
@@ -4417,7 +4418,7 @@ void ui_begin(void)
         lv_obj_set_width(row, LV_PCT(100));
         lv_obj_set_height(row, (int)(54 * s));
         lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
-        lv_obj_set_style_border_color(row, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_border_color(row, lv_color_hex(C_GLASS), 0);
         lv_obj_set_style_border_opa(row, LV_OPA_20, 0);
         lv_obj_set_style_border_width(row, 1, 0);
         s_roomsRowLbl = lv_label_create(row);
@@ -4451,16 +4452,10 @@ void ui_begin(void)
     lv_obj_set_style_bg_grad_color(s_icPanel, lv_color_hex(HOME_BG_BOT), 0);
     lv_obj_set_style_bg_grad_dir(s_icPanel, LV_GRAD_DIR_VER, 0);
     lv_obj_set_style_bg_opa(s_icPanel, LV_OPA_COVER, 0);
-    if (smallP) {
-        // Tiny 2.8": no "Intercom" heading — small back chevron only (matches
-        // the keypad page); the list moves up into the reclaimed space below.
-        lv_obj_t *back = iconBtnImg(s_icPanel, ICON_BACK, 30, 0, LV_OPA_TRANSP, 0xFFFFFF, onIcHome, NULL);
-        lv_obj_align(back, LV_ALIGN_TOP_LEFT, 8, 8);
-    } else {
-        x4PageHeader(s_icPanel, "Intercom", onIcHome);
-    }
-    const int icPad = smallP ? 12 : (int)(28 * s_uiscale);
-    const int icTop = smallP ? 44 : (int)(118 * s_uiscale);
+    x4PageHeader(s_icPanel, "Intercom", onIcHome);
+    
+    const int icPad = (int)(28 * s_uiscale);
+    const int icTop = (int)(118 * s_uiscale);
     s_icList = lv_obj_create(s_icPanel);
     lv_obj_remove_style_all(s_icList);
     lv_obj_set_size(s_icList, W - 2 * icPad, H - icTop - (int)(24 * s_uiscale));
@@ -4484,14 +4479,10 @@ void ui_begin(void)
     lv_obj_set_style_bg_grad_color(s_favPanel, lv_color_hex(HOME_BG_BOT), 0);
     lv_obj_set_style_bg_grad_dir(s_favPanel, LV_GRAD_DIR_VER, 0);
     lv_obj_set_style_bg_opa(s_favPanel, LV_OPA_COVER, 0);
-    if (smallP) {
-        lv_obj_t *back = iconBtnImg(s_favPanel, ICON_BACK, 30, 0, LV_OPA_TRANSP, 0xFFFFFF, onFavHome, NULL);
-        lv_obj_align(back, LV_ALIGN_TOP_LEFT, 8, 8);
-    } else {
-        x4PageHeader(s_favPanel, "Favorites", onFavHome);
-    }
-    const int fvPad = smallP ? 12 : (int)(28 * s_uiscale);
-    const int fvTop = smallP ? 44 : (int)(118 * s_uiscale);
+    x4PageHeader(s_favPanel, "Favorites", onFavHome);
+    
+    const int fvPad = (int)(28 * s_uiscale);
+    const int fvTop = (int)(118 * s_uiscale);
     s_favGrid = lv_obj_create(s_favPanel);
     lv_obj_remove_style_all(s_favGrid);
     lv_obj_set_size(s_favGrid, W - 2 * fvPad, H - fvTop - (int)(24 * s_uiscale));
@@ -4507,18 +4498,18 @@ void ui_begin(void)
     // unconditionally (like the intercom picker, which exists even on boards with
     // MMK_HAS_SIP off) -- sec_available() just keeps its home tile from ever
     // appearing until a secstate reports at least one auto-discovered partition.
-    buildSecurityPickerPage(scr, W, H, smallP);
-    buildSecurityPage(scr, W, H, smallP);
+    buildSecurityPickerPage(scr, W, H);
+    buildSecurityPage(scr, W, H);
 
     // Comfort page (list + detail). Built unconditionally, same reasoning as
     // Security just above -- ShowProp("Show Comfort")/cmf_available() just keeps
     // its home tile from ever appearing until a comfortlist says it's on.
-    buildComfortPage(scr, W, H, smallP);
+    buildComfortPage(scr, W, H);
 
     // X4-inspired home screen on top of the now-playing (shown by default). Its
     // own rich indigo->blue gradient (not the charcoal now-playing bg) so the
     // dark glass cards stand out.
-    if (x4) {
+    {
         build_home(scr, W, H, HOME_BG_TOP, HOME_BG_BOT);
         if (!s_homeAtHome) lv_obj_add_flag(s_home, LV_OBJ_FLAG_HIDDEN);
     }
@@ -4566,8 +4557,28 @@ void ui_set_connected(bool connected)
                                              : "Waiting for controller\xE2\x80\xA6");
 }
 
+// Did anything a button TILE draws change? Field by field, not memcmp: the structs
+// are char arrays filled by get_str(), so bytes past each NUL are garbage (the same
+// trap ui_set_favorites documents).
+static bool buttonsDiffer(const media_state_t *a, const media_state_t *b)
+{
+    if (a->n_buttons != b->n_buttons) return true;
+    int n = a->n_buttons < MMK_MAX_BUTTONS ? a->n_buttons : MMK_MAX_BUTTONS;
+    for (int i = 0; i < n; i++) {
+        const key_btn_t *x = &a->buttons[i], *y = &b->buttons[i];
+        if (x->on != y->on || strcmp(x->label, y->label) || strcmp(x->icon, y->icon) ||
+            strcmp(x->off_icon, y->off_icon) || strcmp(x->color, y->color)) return true;
+    }
+    return false;
+}
+
 void ui_set_state(const media_state_t *st)
 {
+    // A keypad button's LED (or label/icon) changed: repaint the tiles. Nothing did
+    // this before -- button tiles are only drawn by build_home_tiles, and no state
+    // push ever asked for that, so a tile went on showing "On" (or not) until some
+    // unrelated rebuild happened to come along.
+    const bool btnChanged = s_haveState && buttonsDiffer(&s_lastState, st);
     s_lastState = *st; s_haveState = true;
     bool hasSource = st->source.id[0] && strcmp(st->source.id, "0") != 0;
     if (s_ppHoldUntil && (int32_t)(millis() - s_ppHoldUntil) < 0) {
@@ -4625,8 +4636,8 @@ void ui_set_state(const media_state_t *st)
         if (s_miniRotTimer) miniRotApply(false);   // artist/album may have changed
     }
     setVis(s_artist, s_showArtist);
-    if (s_ppIcon) lv_image_set_src(s_ppIcon, s_lastPlaying ? ICON_PAUSE : ICON_PLAY);
-    if (s_homeMiniPP) lv_image_set_src(s_homeMiniPP, s_lastPlaying ? ICON_PAUSE : ICON_PLAY); // stopMode -> play glyph for now
+    if (s_ppIcon) lv_label_set_text(s_ppIcon, s_lastPlaying ? ICON_PAUSE : ICON_PLAY);
+    if (s_homeMiniPP) lv_label_set_text(s_homeMiniPP, s_lastPlaying ? ICON_PAUSE : ICON_PLAY); // stopMode -> play glyph for now
 
     s_duration = st->duration;
     // Progress position: the bar runs on a local 1 Hz clock (ui_tick_progress), but
@@ -4645,20 +4656,23 @@ void ui_set_state(const media_state_t *st)
     }
     updateTime();
 
-    if (s_homeVol && !lv_obj_has_state(s_homeVol, LV_STATE_PRESSED)) {   // home mini-player volume
+    bool volHeld = s_volHoldUntil && (int32_t)(millis() - s_volHoldUntil) < 0;
+    if (volHeld && st->volume == s_volExpect) volHeld = false;   // echoed: the driver caught up
+    if (!volHeld) s_volHoldUntil = 0;
+    if (s_homeVol && !volHeld && !lv_obj_has_state(s_homeVol, LV_STATE_PRESSED)) {   // home mini-player volume
         lv_slider_set_value(s_homeVol, st->volume, LV_ANIM_OFF);
         if (s_homeVolIcon)
-            lv_image_set_src(s_homeVolIcon, (st->muted || st->volume == 0) ? ICON_VOL_MUTE : ICON_VOL_UP);
+            lv_label_set_text(s_homeVolIcon, (st->muted || st->volume == 0) ? ICON_VOL_MUTE : ICON_VOL_UP);
     }
-    if (s_npVol && !lv_obj_has_state(s_npVol, LV_STATE_PRESSED)) {   // X4 card volume
+    if (s_npVol && !volHeld && !lv_obj_has_state(s_npVol, LV_STATE_PRESSED)) {   // X4 card volume
         lv_slider_set_value(s_npVol, st->volume, LV_ANIM_OFF);
         if (s_npVolIcon)
-            lv_image_set_src(s_npVolIcon, (st->muted || st->volume == 0) ? ICON_VOL_MUTE : ICON_VOL_UP);
+            lv_label_set_text(s_npVolIcon, (st->muted || st->volume == 0) ? ICON_VOL_MUTE : ICON_VOL_UP);
     }
-    if (s_roomsVol && !lv_obj_has_state(s_roomsVol, LV_STATE_PRESSED)) {   // X4 add-rooms master volume
+    if (s_roomsVol && !volHeld && !lv_obj_has_state(s_roomsVol, LV_STATE_PRESSED)) {   // X4 add-rooms master volume
         lv_slider_set_value(s_roomsVol, st->volume, LV_ANIM_OFF);
         if (s_roomsVolIcon)
-            lv_image_set_src(s_roomsVolIcon, (st->muted || st->volume == 0) ? ICON_VOL_MUTE : ICON_VOL_UP);
+            lv_label_set_text(s_roomsVolIcon, (st->muted || st->volume == 0) ? ICON_VOL_MUTE : ICON_VOL_UP);
     }
     if (st->room[0]) {   // "Playing in <room>" + the room-list row name + landing title
         if (s_npRoomLbl)   lv_label_set_text(s_npRoomLbl, st->room);
@@ -4708,10 +4722,10 @@ void ui_set_state(const media_state_t *st)
     // The bar toggling isn't just a show/hide -- build_home_tiles sized the grid
     // around whether the bar's band was reserved, so playback starting or ending
     // has to reflow the tiles too, not just swap the bar's visibility flag.
-    // Guarded on s_homeBar existing: on the tiny smallP panels there is no bar to
-    // begin with (s_homeBarShown stays permanently false there), so without this
-    // guard a playing smallP room would trigger a rebuild on every state update.
-    if (s_home && s_homeBar && wantBar != s_homeBarShown) ui_request_rebuild();
+    // Guarded on s_homeBar existing (the not-connected page builds no bar), or a
+    // playing room would request a rebuild on every state update.
+    if (s_home && s_homeBar && wantBar != s_homeBarShown) homeTilesRefresh();
+    else if (btnChanged) homeTilesRefresh();
     if ((int)st->power != (int)s_lastPower) s_lastPower = st->power;
 }
 
@@ -4739,6 +4753,9 @@ static void clearWidgets(void)
     s_homeBar = NULL;
     for (int i = 0; i < 8; i++) s_infoRows[i] = s_infoName[i] = s_infoVal[i] = NULL;
     s_homeTitle = NULL;   // rebuilt by build_home; must not dangle across a rebuild
+    s_homeStatus = NULL;
+    s_homeGrid = NULL;
+    s_secArmHomeBtn = s_secArmAwayBtn = s_secDisarmBtn = NULL;
 }
 
 static void doRebuild(void)
@@ -4754,6 +4771,11 @@ static void doRebuild(void)
     if (s_splashCv)  { lv_obj_delete(s_splashCv); s_splashCv = NULL; }
     if (s_splashBuf) { heap_caps_free(s_splashBuf); s_splashBuf = NULL; }
     lv_obj_clean(lv_screen_active());
+    // The PIN pad is on lv_layer_top(), which the clean above does not touch, and
+    // ui_begin() builds a fresh one. Without this every rebuild orphaned a whole
+    // keypad up there (a slow leak), and a pad that was OPEN went dead: it stayed
+    // on screen while s_pinDots/s_pinError moved on to the new, hidden copy.
+    if (s_pinPanel) { lv_obj_delete(s_pinPanel); s_pinPanel = NULL; }
     clearWidgets();
     s_lastPower = true; s_progTitle[0] = 0;
     ui_begin();
@@ -4761,9 +4783,27 @@ static void doRebuild(void)
 }
 void ui_request_rebuild(void) { s_rebuildReq = true; }
 
+// Is the user in the middle of something a rebuild would destroy? A rebuild hides
+// every page and drops the PIN pad, so one landing while a thermostat, a partition
+// or a half-typed code is on screen throws the user back Home mid-task.
+static bool uiBusy(void)
+{
+    lv_obj_t *pages[] = { s_secPanel, s_secPickerPanel, s_cmfPanel, s_cmfDetail, s_icPanel, s_pinPanel };
+    for (unsigned i = 0; i < sizeof(pages) / sizeof(pages[0]); i++)
+        if (pages[i] && !lv_obj_has_flag(pages[i], LV_OBJ_FLAG_HIDDEN)) return true;
+    // ... or a finger is down right now (a drag, a press-and-hold).
+    for (lv_indev_t *in = lv_indev_get_next(NULL); in; in = lv_indev_get_next(in))
+        if (lv_indev_get_state(in) == LV_INDEV_STATE_PRESSED) return true;
+    return false;
+}
+
 void ui_tick_progress(void)
 {
-    if (s_rebuildReq) { s_rebuildReq = false; doRebuild(); return; }
+    // A requested rebuild waits for a quiet moment. The reasons that are left for a
+    // full rebuild (a launcher icon appearing, the link state, orientation) are all
+    // fine a few seconds late, and none is worth yanking a page out from under a
+    // finger. Link loss is the exception: every control on screen is dead, say so.
+    if (s_rebuildReq && (!uiBusy() || !s_connected)) { s_rebuildReq = false; doRebuild(); return; }
     art_tick();
     art_thumb_tick();   // publish any favourite-tile artwork that finished decoding
     // Mini-player art tile: show real cover art only for an actual track (room on +
@@ -4778,8 +4818,8 @@ void ui_tick_progress(void)
         bool real = s_lastState.playing;
         if (real != s_lastPlaying) {
             s_lastPlaying = real;
-            lv_image_set_src(s_ppIcon, real ? ICON_PAUSE : ICON_PLAY);
-            if (s_homeMiniPP) lv_image_set_src(s_homeMiniPP, real ? ICON_PAUSE : ICON_PLAY);
+            lv_label_set_text(s_ppIcon, real ? ICON_PAUSE : ICON_PLAY);
+            if (s_homeMiniPP) lv_label_set_text(s_homeMiniPP, real ? ICON_PAUSE : ICON_PLAY);
         }
     }
     if (s_lastPlaying && s_duration > 0 && (millis() - s_progMs) >= 1000) {
@@ -4875,7 +4915,7 @@ void ui_identify(void)
     lv_obj_set_style_border_width(ov, 0, 0);
     lv_obj_t *l = lv_label_create(ov);
     lv_label_set_text(l, "M Keypad");
-    lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
     lv_obj_set_style_text_font(l, F32, 0);
     lv_obj_center(l);
     lv_timer_t *t = lv_timer_create(identify_done, 3000, ov);
@@ -4900,7 +4940,7 @@ void ui_announce(const char *text)
 
     lv_obj_t *hdr = lv_label_create(ov);
     lv_label_set_text(hdr, "ANNOUNCEMENT");
-    lv_obj_set_style_text_color(hdr, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(hdr, lv_color_hex(C_TEXT), 0);
     lv_obj_set_style_text_font(hdr, F14, 0);
 
     if (text && text[0]) {
@@ -4985,25 +5025,14 @@ static void onCallDoor(lv_event_t *e)
     net_call_door(s_callRemote, ep->actions[idx].id);
 }
 
-static lv_obj_t *callBtn(lv_obj_t *parent, const char *txt, uint32_t bg, lv_event_cb_t cb, void *ud)
+static lv_obj_t *callBtn(lv_obj_t *parent, const char *txt, btn_kind_t kind, lv_event_cb_t cb, void *ud)
 {
-    // Sized off the ui scale: a fixed 124x52 pill is a thumbnail on a 10" panel,
-    // and answering a door station is the one thing here that has to be hittable
-    // without looking.
-    const float s = s_uiscale;
-    const int bw = (int)(190 * s), bh = (int)(68 * s);
-    lv_obj_t *b = lv_button_create(parent);
-    lv_obj_remove_style_all(b);
-    lv_obj_set_size(b, bw, bh);
-    lv_obj_set_style_radius(b, bh / 2, 0);
-    lv_obj_set_style_bg_color(b, lv_color_hex(bg), 0);
-    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-    lv_obj_t *l = lv_label_create(b);
-    lv_label_set_text(l, txt);
-    lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(l, F24, 0);
-    lv_obj_center(l);
-    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, ud);
+    // The large button: answering a door station is the one thing here that has to
+    // be hittable without looking. Width is a share of the action row, not a pixel
+    // count: two fixed pills plus their gap are a pixel or two wider than half a
+    // landscape screen, which wrapped them one per row.
+    lv_obj_t *b = uiBtn(parent, txt, kind, true, cb, ud);
+    lv_obj_set_width(b, LV_PCT(47));
     return b;
 }
 
@@ -5031,19 +5060,33 @@ void ui_call(const char *event, const char *peer)
         lv_obj_set_style_bg_grad_color(ov, lv_color_hex(HOME_BG_BOT), 0);
         lv_obj_set_style_bg_grad_dir(ov, LV_GRAD_DIR_VER, 0);
         lv_obj_set_style_bg_opa(ov, LV_OPA_COVER, 0);
-        lv_obj_set_flex_flow(ov, LV_FLEX_FLOW_COLUMN);
+        // Who is calling, and what you can do about it: stacked in portrait, side
+        // by side in landscape. As one tall stack the puck + three labels + two
+        // wrapped button rows came to more than 480px, so the WS43 in landscape
+        // pushed the caller's avatar off the top of the screen.
+        const bool wide = lv_display_get_horizontal_resolution(NULL) >
+                          lv_display_get_vertical_resolution(NULL);
+        lv_obj_set_flex_flow(ov, wide ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(ov, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_row(ov, (int)(14 * s), 0);
+        lv_obj_set_style_pad_row(ov, (int)(22 * s), 0);
+        lv_obj_set_style_pad_column(ov, (int)(24 * s), 0);
+        lv_obj_set_style_pad_all(ov, (int)(20 * s), 0);
 
-        // An IMAGE icon scaled to the panel. This was a 24px font glyph at every
-        // size -- a speck on a 10" -- because the 34px icon font lacks the bell.
-        // An avatar puck: a soft accent circle with the caller's mark inside. The
-        // icon is capped at its source resolution (the assets are 64/96px) -- scaled
-        // to a full 84*s it went visibly soft on the 10" -- and the circle carries
-        // the size instead, so the screen still reads from across the room.
-        const int puck = (int)(150 * s);
-        int isz = (int)(84 * s); if (isz > 96) isz = 96;
-        lv_obj_t *ring = lv_obj_create(ov);
+        lv_obj_t *who = lv_obj_create(ov);
+        lv_obj_remove_style_all(who);
+        lv_obj_clear_flag(who, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_size(who, wide ? LV_PCT(44) : LV_PCT(100), LV_SIZE_CONTENT);
+        if (!wide) lv_obj_set_flex_grow(who, 1);   // actions land at the bottom edge
+        lv_obj_set_flex_flow(who, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(who, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_row(who, (int)(14 * s), 0);
+
+        // An avatar puck: a soft accent circle with the caller's mark inside, at the
+        // largest icon size. The circle carries the scale, so the screen still reads
+        // from across the room.
+        const int puck = (int)(130 * s);
+        const int isz = (int)(48 * s);
+        lv_obj_t *ring = lv_obj_create(who);
         lv_obj_remove_style_all(ring);
         lv_obj_set_size(ring, puck, puck);
         lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
@@ -5051,17 +5094,13 @@ void ui_call(const char *event, const char *peer)
         lv_obj_set_style_bg_color(ring, lv_color_hex(C_ACCENT), 0);
         lv_obj_set_style_bg_opa(ring, LV_OPA_20, 0);
 
-        lv_obj_t *icon = lv_image_create(ring);
-        lv_obj_set_size(icon, isz, isz);
-        lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CONTAIN);
-        lv_obj_set_style_image_recolor(icon, lv_color_hex(C_ACCENT), 0);
-        lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
+        lv_obj_t *icon = iconCreate(ring, ICON_INTERCOM, isz, C_ACCENT, LV_OPA_COVER);
         lv_obj_center(icon);
         s_callIcon = icon;
 
-        s_callState = mkLabel(ov, F24, C_SUBTLE, 0, false);
-        s_callPeer  = mkLabel(ov, F32, C_TEXT, LV_PCT(90), false);
-        s_callDur   = mkLabel(ov, F24, C_SUBTLE, 0, false);
+        s_callState = mkLabel(who, F24, C_SUBTLE, 0, false);
+        s_callPeer  = mkLabel(who, F32, C_TEXT, LV_PCT(100), false);
+        s_callDur   = mkLabel(who, F24, C_SUBTLE, 0, false);
         lv_label_set_text(s_callDur, "");
         lv_obj_set_style_text_align(s_callPeer, LV_TEXT_ALIGN_CENTER, 0);
 
@@ -5070,7 +5109,7 @@ void ui_call(const char *event, const char *peer)
         lv_obj_clear_flag(s_callBtns, LV_OBJ_FLAG_SCROLLABLE);
         // WRAPS: a door with two of its own actions makes four buttons, which ran
         // straight off both edges of a 480px panel as a single row.
-        lv_obj_set_size(s_callBtns, LV_PCT(92), LV_SIZE_CONTENT);
+        lv_obj_set_size(s_callBtns, wide ? LV_PCT(52) : LV_PCT(100), LV_SIZE_CONTENT);
         lv_obj_set_flex_flow(s_callBtns, LV_FLEX_FLOW_ROW_WRAP);
         lv_obj_set_flex_align(s_callBtns, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_set_style_pad_column(s_callBtns, (int)(16 * s), 0);
@@ -5084,7 +5123,7 @@ void ui_call(const char *event, const char *peer)
     lv_label_set_text(s_callState, stateTxt);
     lv_label_set_text(s_callPeer, (peer && peer[0]) ? peer : "Intercom");
     if (s_callIcon)
-        lv_image_set_src(s_callIcon, call_peer_is_door(peer) ? ICON_DOOR : ICON_INTERCOM);
+        lv_label_set_text(s_callIcon, call_peer_is_door(peer) ? ICON_DOOR : ICON_INTERCOM);
 
     // Count up only once connected, and only start the clock on the transition so
     // repeated "active" pushes don't keep resetting it.
@@ -5104,27 +5143,29 @@ void ui_call(const char *event, const char *peer)
     s_callMuteLbl = NULL;
     snprintf(s_callRemote, sizeof(s_callRemote), "%s", (peer && peer[0]) ? peer : "");
     const intercom_target_t *ep = call_peer_ep(peer);
+    // The endpoint's own door actions (0..2 -- typically door + gate) come FIRST, so
+    // the call controls land on the bottom row, nearest the thumb, with the
+    // affirmative one on the right. Offered on an INCOMING call too: letting
+    // someone in without answering is the common case at a door station. Labels
+    // come from the driver; the panel does not invent them or guess which targets
+    // have them.
+    if (ep) {
+        for (int i = 0; i < ep->n_actions; i++) {
+            callBtn(s_callBtns, ep->actions[i].label, BTN_PRIMARY, onCallDoor, (void *)(intptr_t)i);
+        }
+    }
     if (!strcmp(event, "incoming")) {
-        callBtn(s_callBtns, "Answer",  C_GREEN, onCallAnswer, NULL);
-        callBtn(s_callBtns, "Decline", C_RED,   onCallHangup, NULL);
+        callBtn(s_callBtns, "Decline", BTN_DANGER,  onCallHangup, NULL);
+        callBtn(s_callBtns, "Answer",  BTN_SUCCESS, onCallAnswer, NULL);
     } else {
-        callBtn(s_callBtns, "End", C_RED, onCallHangup, NULL);
         if (active) {
             // Mute only makes sense once there is audio to mute. Starts from the
             // live state, so a driver-side MUTE_CALL is reflected here too.
             lv_obj_t *m = callBtn(s_callBtns, sip_is_muted() ? "Unmute" : "Mute",
-                                  C_BTN, onCallMute, NULL);
+                                  BTN_NEUTRAL, onCallMute, NULL);
             s_callMuteLbl = lv_obj_get_child(m, 0);
         }
-    }
-    // The endpoint's own door actions (0..2 -- typically door + gate), offered on
-    // an INCOMING call too: letting someone in without answering first is the
-    // common case at a door station. Labels come from the driver; the panel does
-    // not invent them or guess which targets have them.
-    if (ep) {
-        for (int i = 0; i < ep->n_actions; i++) {
-            callBtn(s_callBtns, ep->actions[i].label, C_ACCENT, onCallDoor, (void *)(intptr_t)i);
-        }
+        callBtn(s_callBtns, "End", BTN_DANGER, onCallHangup, NULL);
     }
 
     // Wake the display for the call (and keep it lit — see ui_tick_screensaver).
@@ -5150,12 +5191,9 @@ static void setup_logo_init(void)
     // opaque white background and would render as a white box on the dark screen.
     extern const uint8_t logo_png_start[] asm("_binary_logo_png_start");
     extern const uint8_t logo_png_end[]   asm("_binary_logo_png_end");
-    unsigned char *rgba = NULL; unsigned iw = 0, ih = 0;
-    if (lodepng_decode32(&rgba, &iw, &ih, logo_png_start,
-                         (size_t)(logo_png_end - logo_png_start)) != 0 || !rgba) {
-        if (rgba) free(rgba);
-        return;
-    }
+    unsigned iw = 0, ih = 0;
+    unsigned char *rgba = art_png_decode_rgba(logo_png_start, (size_t)(logo_png_end - logo_png_start), &iw, &ih);
+    if (!rgba) return;
     // lodepng gives R,G,B,A; LVGL ARGB8888 stores B,G,R,A — swap R<->B.
     for (size_t i = 0; i < (size_t)iw * ih; i++) {
         unsigned char t = rgba[i*4]; rgba[i*4] = rgba[i*4+2]; rgba[i*4+2] = t;
@@ -5264,13 +5302,13 @@ static void setup_build(void)
         // deliberate brand moment (it matches the white wordmark on the captive
         // portal the QR leads to). Recolor keeps the art's alpha, so only the
         // letterforms turn white.
-        lv_obj_set_style_image_recolor(lg, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_image_recolor(lg, lv_color_hex(C_TEXT), 0);
         lv_obj_set_style_image_recolor_opa(lg, LV_OPA_COVER, 0);
     }
 
     lv_obj_t *title = lv_label_create(s_setup);
     lv_label_set_text(title, s_setup_ble ? "App Setup" : "Wi-Fi Setup");
-    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
     lv_obj_set_style_text_font(title, f_title, 0);
 
     lv_obj_t *qr = lv_qrcode_create(s_setup);
@@ -5314,7 +5352,7 @@ static void setup_build(void)
     // Toggle between the two setup methods — only when the board offers BLE prov.
     if (s_setup_has_pop) {
         lv_obj_t *btn = lv_button_create(s_setup);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1a2530), 0);
+        uiBtnStyle(btn, BTN_NEUTRAL);
         lv_obj_set_style_pad_hor(btn, big ? 22 : 14, 0);
         lv_obj_set_style_pad_ver(btn, big ? 14 : 8, 0);
         lv_obj_add_event_cb(btn, setup_toggle_cb, LV_EVENT_CLICKED, NULL);
@@ -5362,7 +5400,7 @@ void ui_show_setup(const char *ap_name, const char *ap_pass, const char *pop)
     lv_obj_set_size(ov, LV_PCT(100), LV_PCT(100));
     // The NuVoxel blue gradient (indigo -> blue, vertical), matching the home
     // screen so Wi-Fi setup reads as part of the same UI. HOME_BG_* is the X4/HA
-    // theme's home gradient; ui_apply_theme() has already picked the theme.
+    // home gradient.
     lv_obj_set_style_bg_color(ov, lv_color_hex(HOME_BG_TOP), 0);
     lv_obj_set_style_bg_grad_color(ov, lv_color_hex(HOME_BG_BOT), 0);
     lv_obj_set_style_bg_grad_dir(ov, LV_GRAD_DIR_VER, 0);

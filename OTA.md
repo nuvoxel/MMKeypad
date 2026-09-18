@@ -12,8 +12,7 @@ manifest, or auto-update policy. Firmware reaches a device three ways:
 
 On the panel: **Settings → Check for update**. The keypad queries this project's
 GitHub Releases, lists the assets published for **the image it runs**
-(`device_fw_image_id()` → `mmk-s3` / `mmk-poe` / `mmk-nano` / `mmk-ws43` /
-`mmk-t3`), and installs the one you pick — it downloads the asset over HTTPS, writes it to the inactive
+(`device_fw_image_id()` → `mmk-poe` / `mmk-nano` / `mmk-ws43` / `mmk-t3`), and installs the one you pick — it downloads the asset over HTTPS, writes it to the inactive
 OTA partition (`esp_https_ota`), and restarts into it. The running version is
 marked *installed* in the list.
 
@@ -24,7 +23,7 @@ asset-name convention are the only contract:
 
 ```
 GET https://api.github.com/repos/nuvoxel/MMKeypad/releases
-asset name:  <sku>-<version>.bin      e.g.  mmk-s3-2026.08.24.001.bin
+asset name:  <sku>-<version>.bin      e.g.  mmk-ws43-2026.08.24.001.bin
 ```
 
 ## Publishing a release
@@ -36,8 +35,8 @@ version. The asset name is load-bearing (the on-screen picker filters by
 ```sh
 cd firmware-idf
 VER=2026.08.24.001
-for b in s3 poe nano ws43; do ./board.sh $b build; done
-# rename each build/*/mmkeypad_idf.bin to mmk-<sku>-$VER.bin
+for b in poe nano ws43; do MMK_RELEASE=1 ./board.sh $b build; done
+# rename each build.<board>.rel/mmkeypad_idf.bin to mmk-<sku>-$VER.bin
 
 # The T3 is a SEPARATE tree and a different artifact — easy to forget, and a
 # release without it silently leaves every T3 with nothing to install (its
@@ -46,13 +45,15 @@ cd ../firmware-linux-t3/lvgl-app && make && cd .. && make bundle
 #   -> build/mmk-t3-$VER.tar
 
 gh release create v$VER --repo nuvoxel/MMKeypad --target main \
-  mmk-s3-$VER.bin mmk-poe-$VER.bin mmk-nano-$VER.bin mmk-ws43-$VER.bin \
+  mmk-poe-$VER.bin mmk-nano-$VER.bin mmk-ws43-$VER.bin \
   mmk-t3-$VER.tar
 
 tools/verify-release.sh v$VER   # mandatory -- fails loudly if any SKU is missing
 ```
 
-**Every SKU, every release.** All five share `firmware-idf/version.txt`, so a
+**Every SKU, every release.** (The lcdwiki 2.8" `mmk-s3` image was retired in
+2026.09.18 -- the shared UI needs a short side of at least 480px -- so releases
+from then on carry four assets.) All of them share `firmware-idf/version.txt`, so a
 partial release leaves some panels unable to see the version their siblings are
 reporting — and with the remote trigger below, a project-wide `Update Firmware`
 becomes a no-op on exactly the boards you forgot. `tools/verify-release.sh` is
@@ -101,7 +102,7 @@ The fallback, and how a fresh board gets its first image:
 
 ```sh
 cd firmware-idf
-./board.sh ws43 -p /dev/cu.usbmodemXXXX flash monitor   # or s3 | poe | nano | matrix
+./board.sh ws43 -p /dev/cu.usbmodemXXXX flash monitor   # or poe | nano | matrix
 ```
 
 ## T3 (RK3188 Linux) updates

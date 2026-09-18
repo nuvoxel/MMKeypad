@@ -2372,7 +2372,15 @@ local function ReadComfortState(id, name)
   if mode == "" then mode = "off" end
   return {
     id = id, title = name,
-    temp = comfortCtoDisplay(v(COMFORT_VAR.TEMPERATURE), fahrenheit) or 0,
+    -- OMITTED when the thermostat has no reading. CONFIRMED LIVE (2026-09-18): a
+    -- thermostatV2 that is in the project but not reporting ("Office Thermostat",
+    -- id 2937 -- HVAC_MODE blank, TEMPERATURE / TEMPERATURE_F / TEMPERATURE_C all 0)
+    -- reads raw 0, and 0 tenths-C converts to a perfectly believable 32F. The panel
+    -- showed "32 in" for a room that was 73. Same not-set convention as the
+    -- setpoints just below; an indoor thermostat genuinely at 0.0C is not a case
+    -- worth lying to every other install for.
+    temp = (tonumber(v(COMFORT_VAR.TEMPERATURE)) or 0) ~= 0
+           and comfortCtoDisplay(v(COMFORT_VAR.TEMPERATURE), fahrenheit) or nil,
     heat = rawHeat > 0 and comfortCtoDisplay(rawHeat, fahrenheit) or nil,
     cool = rawCool > 0 and comfortCtoDisplay(rawCool, fahrenheit) or nil,
     mode = mode,
@@ -2441,9 +2449,97 @@ function BuildComfortList()
   return out
 end
 
+-- ---------------------------------------------------------------------------
+-- The panel's own room: which thermostat is "here", and the outdoor temperature.
+-- The panel shows these as one quiet status line under the room name
+-- ("72 in, 58 out"), so it needs to know which entry of the HOUSE-WIDE list above
+-- belongs to its room. That is a Composer room binding (Room > Connections >
+-- Temperature), which the room exposes as a variable.
+--
+-- CONFIRMED LIVE (2026-09-18, dev Director): the room carries TEMPERATURE_ID and
+-- TEMPERATURE_CONTROL_ID (both the bound thermostat's id) alongside
+-- SECURITY_SYSTEM_ID. Variables are found by NAME through C4:GetDeviceVariables
+-- (the same {id -> {name, value}} shape ScanDeviceMedia relies on) rather than by
+-- a hard-coded number, and every miss just omits the field: the panel then shows
+-- whatever else it knows. The log line "comfort: room thermostat ..." says what
+-- was resolved.
+-- ---------------------------------------------------------------------------
+local function DeviceVarByName(id, ...)
+  id = tonumber(id); if not id or id == 0 then return nil end
+  local ok, t = pcall(function() return C4:GetDeviceVariables(id) end)
+  if not ok or type(t) ~= "table" then return nil end
+  for _, want in ipairs({ ... }) do
+    for varId, info in pairs(t) do
+      if type(info) == "table" and tostring(info.name or ""):upper() == want then
+        return info.value, tonumber(varId), want
+      end
+    end
+  end
+  return nil
+end
+
+-- One extra listener (the outdoor reading), so a change reaches the panel without
+-- polling. Routed by OnWatchedVariableChanged's gComfortWatch[idDevice] test, which
+-- the room thermostat already passes -- it is always one of the listed thermostats.
+local gOutdoorWatch = nil   -- { dev =, var = }
+local function WatchOutdoorVar(dev, var)
+  if gOutdoorWatch and (gOutdoorWatch.dev ~= dev or gOutdoorWatch.var ~= var) then
+    pcall(function() C4:UnregisterVariableListener(gOutdoorWatch.dev, gOutdoorWatch.var) end)
+    gOutdoorWatch = nil
+  end
+  if dev and var and not gOutdoorWatch then
+    pcall(function() C4:RegisterVariableListener(dev, var) end)
+    gOutdoorWatch = { dev = dev, var = var }
+  end
+end
+
+-- Returns (roomThermostatId, outdoorWholeDegrees) -- either may be nil. `list` is
+-- BuildComfortList()'s result: the room's thermostat only counts if it is one of
+-- the thermostats the panel was actually told about.
+local function RoomComfort(list)
+  local raw = DeviceVarByName(gRoom, "TEMPERATURE_ID", "TEMPERATURE_CONTROL_ID")
+  local tid = tonumber(raw)
+  local entry
+  for _, c in ipairs(list) do if c.id == tid then entry = c break end end
+  if not entry then
+    dbg("comfort: room thermostat not resolved (room var =", tostring(raw), ")")
+    WatchOutdoorVar(nil, nil)
+    return nil, nil
+  end
+  -- CONFIRMED LIVE (2026-09-18, dev Director, all six thermostats): thermostatV2
+  -- exposes OUTDOOR_TEMPERATURE_F and OUTDOOR_TEMPERATURE_C as whole degrees, and a
+  -- unit with NO outdoor sensor reports 0 in BOTH. That pair is the not-set test:
+  -- 0F and 0C cannot both be true of real weather, whereas either alone can (a real
+  -- 0C day reads F=32, C=0) -- so a plain "0 means unset" rule would hide genuine
+  -- freezing-point readings, and no rule at all put "0 out" on the panel.
+  local fahrenheit = (entry.scale == "F")
+  local f, fVar = DeviceVarByName(tid, "OUTDOOR_TEMPERATURE_F")
+  local c, cVar = DeviceVarByName(tid, "OUTDOOR_TEMPERATURE_C")
+  f, c = tonumber(f), tonumber(c)
+  local outdoor, var, name
+  if f and c and not (f == 0 and c == 0) then
+    outdoor = math.floor((fahrenheit and f or c) + 0.5)
+    var  = fahrenheit and fVar or cVar
+    name = fahrenheit and "OUTDOOR_TEMPERATURE_F" or "OUTDOOR_TEMPERATURE_C"
+  end
+  -- A reading outside anything weather does means the unit assumption is wrong for
+  -- this thermostat: say nothing rather than something false.
+  if outdoor and (outdoor < (fahrenheit and -60 or -50) or outdoor > (fahrenheit and 140 or 60)) then
+    dbg("comfort: outdoor reading implausible, dropped:", tostring(outdoor), "from", tostring(name))
+    outdoor = nil
+  end
+  WatchOutdoorVar(outdoor and tid or nil, outdoor and var or nil)
+  dbg("comfort: room thermostat", tid, "outdoor", tostring(outdoor), "via", tostring(name))
+  return tid, outdoor
+end
+
 function BuildComfortState()
   if not ShowProp("Show Comfort") then return { available = false } end
-  return { available = true, list = BuildComfortList() }
+  local list = BuildComfortList()
+  local room, outdoor = RoomComfort(list)
+  -- `room` / `outdoor` are OPTIONAL (json.encode drops nil keys): a panel that
+  -- predates them ignores them, a driver that cannot resolve them omits them.
+  return { available = true, list = list, room = room, outdoor = outdoor }
 end
 
 function PushComfortState()

@@ -71,6 +71,19 @@ static void noop_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px)
     lv_display_flush_ready(disp);
 }
 
+/* Sample favourites, at file scope so the MMK_CHURN scene can re-push them. */
+static favorite_t g_sim_favs[] = {
+    { .id = "ra.1", .title = "Morning Radio",         .kind = "stream" },
+    { .id = "ra.2", .title = "Electronic Station",    .kind = "stream" },
+    { .id = "ra.3", .title = "Chill Jazz",            .kind = "stream" },
+    { .id = "ra.4", .title = "Classic Rock",          .kind = "stream" },
+    { .id = "ra.5", .title = "Morning Coffee",        .kind = "stream" },
+    { .id = "light:1", .title = "Kitchen Pendants",   .kind = "light",   .on = true },
+    { .id = "shade:1", .title = "Living Room Shades", .kind = "shade",   .on = true },
+    { .id = "comfort:1", .title = "Great Room",       .kind = "comfort" },
+    { .id = "relay:1", .title = "Front Gate",         .kind = "relay" },
+};
+
 static int env_int(const char *name, int dflt)
 {
     const char *v = getenv(name);
@@ -206,17 +219,7 @@ int main(int argc, char **argv)
      * serviced and the snapshot shows the rows -- setting them later renders an
      * out-of-date page. */
     {
-        static favorite_t favs[] = {
-            { .id = "ra.1", .title = "Morning Radio",         .kind = "stream" },
-            { .id = "ra.2", .title = "Electronic Station",    .kind = "stream" },
-            { .id = "ra.3", .title = "Chill Jazz",            .kind = "stream" },
-            { .id = "ra.4", .title = "Classic Rock",          .kind = "stream" },
-            { .id = "ra.5", .title = "Morning Coffee",        .kind = "stream" },
-            { .id = "light:1", .title = "Kitchen Pendants",   .kind = "light",   .on = true },
-            { .id = "shade:1", .title = "Living Room Shades", .kind = "shade",   .on = true },
-            { .id = "comfort:1", .title = "Great Room",       .kind = "comfort" },
-            { .id = "relay:1", .title = "Front Gate",         .kind = "relay" },
-        };
+        favorite_t *favs = g_sim_favs;
         /* MMK_FAVS trims the list so the "few favourites go bigger" reflow can be
          * previewed without a driver: 1 and 2 are one-per-row, 3+ is the 2-up grid
          * (the trailing light/shade/comfort/relay favourites preview the new kinds at
@@ -230,11 +233,20 @@ int main(int argc, char **argv)
      * false), a "heat" unit only a heat setpoint, a "cool" unit only a cool one. */
     {
         static comfort_t cmf_list[] = {
-            { .id = 2929, .title = "Front Hall",  .temp = 74, .mode = "off",  .fan = "auto", .scale = "F" },
-            { .id = 2931, .title = "Back Hall",   .temp = 68, .has_heat = true, .heat = 70, .mode = "heat", .fan = "auto", .scale = "F" },
-            { .id = 2933, .title = "Front Radiant", .temp = 76, .has_cool = true, .cool = 74, .mode = "cool", .fan = "on", .scale = "F" },
+            { .id = 2929, .title = "Front Hall",  .has_temp = true, .temp = 74, .mode = "off",  .fan = "auto", .scale = "F" },
+            { .id = 2931, .title = "Back Hall",   .has_temp = true, .temp = 68, .has_heat = true, .heat = 70, .mode = "heat", .fan = "auto", .scale = "F" },
+            { .id = 2933, .title = "Front Radiant", .has_temp = true, .temp = 76, .has_cool = true, .cool = 74, .mode = "cool", .fan = "on", .scale = "F" },
+            /* Not a live-confirmed shape: an auto unit carrying BOTH setpoints, the
+             * widest the detail page gets (two dials). Layout coverage only. */
+            /* In the project but not reporting -- live-confirmed shape (raw 0 everywhere). */
+            { .id = 2937, .title = "Office", .mode = "off", .fan = "auto", .scale = "F" },
+            { .id = 2935, .title = "Primary Suite", .has_temp = true, .temp = 72, .has_heat = true, .heat = 68, .has_cool = true, .cool = 75, .mode = "auto", .fan = "auto", .scale = "F" },
         };
+        /* `room`/`outdoor` are the optional status-line fields (PROTOCOL.md); the sim
+         * pretends the Kitchen's own thermostat is Back Hall. MMK_ROOMTEMP=0 omits them. */
         comfort_state_t cmf = { .available = env_int("MMK_COMFORT", 1) != 0,
+                                 .room_id = env_int("MMK_ROOMTEMP", 1) ? 2931 : 0,
+                                 .has_outdoor = env_int("MMK_ROOMTEMP", 1) != 0, .outdoor = 58,
                                  .n = (int)(sizeof(cmf_list) / sizeof(cmf_list[0])) };
         memcpy(cmf.list, cmf_list, sizeof(cmf_list));
         ui_set_comfort(&cmf);
@@ -329,6 +341,11 @@ int main(int argc, char **argv)
      * exercises the same "skip the picker for the common case" logic homeSecurity
      * itself uses, without simulating a touch event. */
     if (env_int("MMK_SEC_PANEL", 0)) ui_show_security_panel();
+    /* MMK_SEC_ID=<id> opens one partition's detail page directly (with MMK_SEC=2,
+     * 2685 is the sample ARMED_AWAY partition -- the locked/red state). */
+    if (env_int("MMK_SEC_ID", 0)) ui_show_security_detail(env_int("MMK_SEC_ID", 0));
+    const bool pin_scene = env_int("MMK_PIN", 0) != 0;   /* arm-code PIN pad (top layer) */
+    if (pin_scene) ui_show_security_pin();
     /* MMK_NOWPLAYING=1 expands the now-playing card over home, the same way
      * tapping the mini-player bar / Listen chip does. */
     if (env_int("MMK_NOWPLAYING", 0)) ui_show_now_playing();
@@ -346,9 +363,35 @@ int main(int argc, char **argv)
     }
     for (int i = 0; i < 4; i++) lv_timer_handler();
 
+    /* MMK_CHURN=1: replay the pushes a live driver sends WHILE a page is open and
+     * check the UI holds still. Open a page first (e.g. MMK_COMFORT_PANEL=detail);
+     * the snapshot then shows whether it survived. Each of these used to trigger a
+     * full-UI rebuild, which closed the page. Also reports how many objects sit on
+     * the top layer across forced rebuilds (the PIN pad used to leak one per). */
+    if (env_int("MMK_CHURN", 0)) {
+        int nf = env_int("MMK_FAVS", 9);
+        g_sim_favs[5].on = !g_sim_favs[5].on;            /* a favourite light flips   */
+        ui_set_favorites(g_sim_favs, nf);
+        st.buttons[0].on = !st.buttons[0].on;            /* a keypad LED changes      */
+        st.title[0] = 0; st.playing = false;             /* playback stops: bar goes  */
+        snprintf(st.media_type, sizeof(st.media_type), "%s", "");
+        ui_set_state(&st);
+        for (int i = 0; i < 6; i++) { ui_tick_progress(); lv_timer_handler(); }
+        printf("churn: top-layer objects before forced rebuilds: %u\n",
+               (unsigned)lv_obj_get_child_count(lv_layer_top()));
+        if (env_int("MMK_CHURN", 0) > 1) {
+            for (int r = 0; r < 5; r++) {
+                ui_request_rebuild();
+                for (int i = 0; i < 3; i++) { ui_tick_progress(); lv_timer_handler(); }
+            }
+            printf("churn: top-layer objects after 5 forced rebuilds:  %u\n",
+                   (unsigned)lv_obj_get_child_count(lv_layer_top()));
+        }
+    }
+
     /* The call overlay lives on lv_layer_top() (like the setup screen), so it has
      * to be snapshotted there -- off the active screen it renders invisibly. */
-    lv_obj_t *root = (setup_scene || call_scene || settings_scene) ? lv_layer_top() : lv_screen_active();
+    lv_obj_t *root = (setup_scene || call_scene || settings_scene || pin_scene) ? lv_layer_top() : lv_screen_active();
     lv_obj_update_layout(root);
     lv_refr_now(disp);
 

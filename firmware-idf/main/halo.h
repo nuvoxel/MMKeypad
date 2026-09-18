@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// "Halo" — the board's single onboard WS2812B RGB LED (GPIO42 on the lcdwiki S3).
+// "Halo" — the board's single onboard WS2812B RGB LED (board.h PIN_RGB_LED).
 // Two roles: a nightlight / design accent (idle solid color) and a status light
 // (a gentle breathing pulse, e.g. blue while an intercom call rings). A small
 // worker task owns the LED; all entry points are safe to call from any task and
