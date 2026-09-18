@@ -15,6 +15,11 @@ expected=(
   "mmk-nano-${ver}.bin"
   "mmk-ws43-${ver}.bin"
   "mmk-t3-${ver}.tar"
+  # The keypad driver package. Its filename is fixed (Control4 identifies a driver
+  # by it -- see driver-keypad/build.sh), so it carries no version; the version is
+  # stamped inside. NuVoxelKeypadIntercom.c4z is deliberately NOT published: it
+  # packages Control4's SDK templates, which are not ours to distribute.
+  "NuVoxelKeypad.c4z"
 )
 
 assets="$(gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name')"

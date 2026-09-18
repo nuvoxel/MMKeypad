@@ -44,9 +44,15 @@ for b in poe nano ws43; do MMK_RELEASE=1 ./board.sh $b build; done
 cd ../firmware-linux-t3/lvgl-app && make && cd .. && make bundle
 #   -> build/mmk-t3-$VER.tar
 
+# The keypad driver rides along, so an install can get the driver that matches the
+# firmware from the same page. Fixed filename (Control4 identifies the driver by
+# it); the version is stamped inside. The intercom driver is NOT published -- it
+# packages Control4's SDK templates.
+(cd ../driver-keypad && ./build.sh)   # -> NuVoxelKeypad.c4z
+
 gh release create v$VER --repo nuvoxel/MMKeypad --target main \
   mmk-poe-$VER.bin mmk-nano-$VER.bin mmk-ws43-$VER.bin \
-  mmk-t3-$VER.tar
+  mmk-t3-$VER.tar ../driver-keypad/NuVoxelKeypad.c4z
 
 tools/verify-release.sh v$VER   # mandatory -- fails loudly if any SKU is missing
 ```

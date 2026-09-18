@@ -86,7 +86,10 @@ prerequisites this repo does not ship.
 
 **Drivers** are packaged by `build.sh` in each `driver-*/` directory, which
 produces the `.c4z` and drops it in `~/Documents/Control4/Drivers`. Built `.c4z`
-files are build artifacts and are not committed.
+files are build artifacts and are not committed; the packaged keypad driver
+(`NuVoxelKeypad.c4z`) is attached to each [GitHub Release](https://github.com/nuvoxel/MMKeypad/releases)
+next to the firmware it matches. The intercom driver is build-from-source only,
+because it packages Control4's SDK templates.
 
 ## Flashing a device and connecting it to Control4
 
