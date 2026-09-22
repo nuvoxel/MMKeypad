@@ -34,7 +34,12 @@ extern const unsigned char nv_ca_bundle_pem[];
 extern const unsigned int nv_ca_bundle_pem_len;
 
 #define HDRS_CAP 1024
-#define STASH_CAP 4096
+/* Body bytes that arrive in the same reads as the headers are stashed for the
+ * reader. Must be at least the response-header buffer (RESP_HDR_CAP below): the
+ * header read can pull up to that much past the header boundary, and a smaller
+ * stash silently DROPPED the excess -- a 10KB feed body came back as its first
+ * 4KB, and cut off mid-document. */
+#define STASH_CAP 16384
 
 /* "Sane" just means past the epoch danger zone, not correct -- ntpd keeps
  * correcting it afterward. VERIFY_REQUIRED fails the handshake outright
@@ -230,9 +235,21 @@ static int raw_read(esp_http_client_handle_t c, char *buf, int len) {
     return (int)recv(c->fd, buf, len, 0);
 }
 
+/* Response-header buffer. github.com (not the API host) sends ~5KB of headers on
+ * EVERY response -- a multi-KB content-security-policy plus the usual -- which is
+ * more than the 4KB this used to be. A header block that does not fit leaves
+ * status at 0 and the Location unset, so the releases feed read as "no status"
+ * and an asset download's 302 could not be followed: the T3 reported a GitHub
+ * error with GitHub perfectly healthy. Measured 2026-09-22: feed 5053 bytes,
+ * asset redirect 5232 bytes, api.github.com 1471 bytes. */
+#define RESP_HDR_CAP 16384
+#if STASH_CAP < RESP_HDR_CAP
+#error "STASH_CAP must hold everything the header read can over-read"
+#endif
+
 int64_t esp_http_client_fetch_headers(esp_http_client_handle_t c) {
     if (!c) return -1;
-    char hdr[4096];
+    static __thread char hdr[RESP_HDR_CAP];
     int total = 0, bodylen = -1, hdr_end = -1;
     while (total < (int)sizeof(hdr) - 1) {
         int r = raw_read(c, hdr + total, sizeof(hdr) - 1 - total);

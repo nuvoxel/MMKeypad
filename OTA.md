@@ -18,13 +18,24 @@ marked *installed* in the list.
 
 Implementation: [`firmware-idf/main/fwupdate.c`](firmware-idf/main/fwupdate.c)
 (GitHub Releases client + apply) and the picker overlay in
-[`firmware-idf/main/ui.c`](firmware-idf/main/ui.c). The releases endpoint and the
-asset-name convention are the only contract:
+[`firmware-idf/main/ui.c`](firmware-idf/main/ui.c). The release list comes from
+the releases **Atom feed** on github.com, and each asset URL is built from the
+tag by convention; the REST API is only a fallback:
 
 ```
-GET https://api.github.com/repos/nuvoxel/MMKeypad/releases
+GET https://github.com/nuvoxel/MMKeypad/releases.atom          (primary)
+GET https://api.github.com/repos/nuvoxel/MMKeypad/releases      (fallback)
+asset URL:   https://github.com/nuvoxel/MMKeypad/releases/download/<tag>/<sku>-<version><ext>
 asset name:  <sku>-<version>.bin      e.g.  mmk-ws43-2026.08.24.001.bin
 ```
+
+The feed, not the API, because the API is what panels kept failing on:
+unauthenticated it allows 60 requests an hour per egress IP, shared by every
+panel and everything else on the LAN, and answers 403 when that runs out. The
+feed is served like a web page (no limit, ~10KB) but lists no assets, which is
+why the asset name convention below is load-bearing and why
+`tools/verify-release.sh` is mandatory: a release missing a SKU's asset still
+shows up in that SKU's picker, and fails at download instead.
 
 ## Publishing a release
 

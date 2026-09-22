@@ -34,7 +34,26 @@
 
 static const char *TAG = "fwupdate";
 
-// The releases API for this project. Override at build time if you fork.
+// Where the release list comes from. Override at build time if you fork.
+//
+// PRIMARY is the releases Atom feed on github.com, not the REST API. The API is
+// what panels kept failing on: unauthenticated it allows 60 requests/hour PER
+// EGRESS IP -- shared by every panel, every laptop and anything else on the LAN
+// that talks to api.github.com -- and answers a 403 when that runs out, plus its
+// per-release JSON is ~12KB (full asset metadata for every SKU) so the list is
+// ~200KB and ever-growing. The feed is served like any web page: no rate limit,
+// ~10KB for the ten newest releases, one <title>vTAG</title> per release. Asset
+// URLs are then built by convention (releases/download/<tag>/<image>-<ver><ext>),
+// which is the same convention tools/verify-release.sh enforces at publish time.
+//
+// The API stays as the FALLBACK (feed unreachable or reshaped): it also carries
+// asset sizes, which the feed path leaves at 0 ("unknown").
+#ifndef FWUPDATE_FEED_URL
+#define FWUPDATE_FEED_URL "https://github.com/nuvoxel/MMKeypad/releases.atom"
+#endif
+#ifndef FWUPDATE_DOWNLOAD_BASE
+#define FWUPDATE_DOWNLOAD_BASE "https://github.com/nuvoxel/MMKeypad/releases/download"
+#endif
 // per_page capped near FWU_MAX (not 30): GitHub's per-release JSON is verbose (full
 // asset metadata x5 SKUs), so this project's actual releases list grew from ~30KB
 // to 178KB over ten releases published in one day -- comfortably over the old
@@ -93,6 +112,9 @@ static int http_get(const char *url, char *buf, int cap, int *out_status) {
   esp_http_client_config_t cfg = {
       .url = url,
       .crt_bundle_attach = esp_crt_bundle_attach,
+      // github.com answers with ~5KB of headers (see FWUPDATE_FEED_URL); give the
+      // client the same room nv_ota_open.c gives the asset download.
+      .buffer_size = 4096,
   };
   esp_http_client_handle_t cli = esp_http_client_init(&cfg);
   if (!cli) return -1;
@@ -116,10 +138,12 @@ static int http_get(const char *url, char *buf, int cap, int *out_status) {
   return total;
 }
 
-// Parse the releases JSON, filling s_rel with the assets that match our SKU.
+// Parse the releases API JSON, filling s_rel with the assets that match our SKU.
 // `status` is the HTTP status http_get() saw, purely to make a non-array body
 // (rate limit, GitHub outage) diagnosable instead of a bare "bad response".
-static void parse_releases(const char *body, int status) {
+// Returns true with s_rel filled (possibly to zero entries -- see s_count), false
+// with s_err set when the body was not a usable release list.
+static bool parse_releases(const char *body, int status) {
   char sku[48];
   snprintf(sku, sizeof(sku), "%s-", device_fw_image_id());  // "mmk-s3-" / "mmk-t3-"
   size_t skulen = strlen(sku);
@@ -143,8 +167,7 @@ static void parse_releases(const char *body, int status) {
       snprintf(s_err, sizeof(s_err), "bad response from GitHub");
     ESP_LOGW(TAG, "releases parse failed, status=%d body[0..120]=%.120s", status, body);
     cJSON_Delete(root);
-    s_state = FWU_ERROR;
-    return;
+    return false;
   }
 
   cJSON *rel;
@@ -176,13 +199,52 @@ static void parse_releases(const char *body, int status) {
     }
   }
   cJSON_Delete(root);
+  return true;
+}
 
-  if (s_count == 0) {
-    snprintf(s_err, sizeof(s_err), "no builds published for %s", device_fw_image_id());
-    s_state = FWU_ERROR;
-  } else {
-    s_state = FWU_READY;
+// Parse the releases Atom feed: one <entry> per release, its tag in <title>. Assets
+// are not listed there, so each entry's URL is built by the publishing convention
+// (OTA.md): <base>/<tag>/<image-id>-<version><ext>, e.g.
+//   https://github.com/nuvoxel/MMKeypad/releases/download/v2026.09.18.001/mmk-ws43-2026.09.18.001.bin
+// A release published without this SKU's asset (verify-release.sh exists to stop
+// that) shows in the list and then fails at download with a 404, which nv_ota_apply
+// reports as "update failed" -- the same as any other bad download.
+static bool parse_feed(const char *body) {
+  char core[48];
+  running_core(core, sizeof(core));
+  s_count = 0;
+  const char *p = body;
+  bool seen_entry = false;
+  while ((p = strstr(p, "<entry>")) != NULL) {
+    seen_entry = true;
+    const char *end = strstr(p, "</entry>");
+    const char *t = strstr(p, "<title>");
+    if (!t || (end && t > end)) { p += 7; continue; }
+    t += 7;
+    const char *te = strstr(t, "</title>");
+    if (!te || te - t <= 0 || te - t >= 47) { p += 7; continue; }
+    char tag[48];
+    memcpy(tag, t, te - t);
+    tag[te - t] = '\0';
+    // Tag -> version core: strip a leading 'v'. Tags are "v2026.09.18.001".
+    const char *ver = (tag[0] == 'v' || tag[0] == 'V') ? tag + 1 : tag;
+    if (!ver[0]) { p += 7; continue; }
+    if (s_count < FWU_MAX) {
+      fwupdate_rel_t *e = &s_rel[s_count++];
+      snprintf(e->version, sizeof(e->version), "%s", tag);
+      snprintf(e->url, sizeof(e->url), "%s/%s/%s-%s%s", FWUPDATE_DOWNLOAD_BASE, tag,
+               device_fw_image_id(), ver, FWU_ASSET_EXT);
+      e->size = 0;
+      e->current = (core[0] && strcmp(ver, core) == 0);
+    }
+    p = end ? end : te;
   }
+  if (!seen_entry) {
+    snprintf(s_err, sizeof(s_err), "bad feed from GitHub");
+    ESP_LOGW(TAG, "feed parse failed, body[0..120]=%.120s", body);
+    return false;
+  }
+  return true;
 }
 
 static void fetch_task(void *arg) {
@@ -195,24 +257,42 @@ static void fetch_task(void *arg) {
     return;
   }
   int status = 0;
-  int n = http_get(FWUPDATE_RELEASES_URL, body, FWU_BODYCAP, &status);
-  if (n == FWU_BODYCAP - 1) {
-    // http_get() stopping exactly at cap-1 means the body filled the buffer and got
-    // cut off mid-read, not that GitHub's response happened to be exactly this size --
-    // the ambiguous truncated-JSON parse failure this used to surface as ("bad
-    // response from GitHub") is exactly this, just diagnosed instead of guessed at.
-    snprintf(s_err, sizeof(s_err), "release list too large (%d KB) -- FWU_BODYCAP", n / 1024);
-    s_state = FWU_ERROR;
-    free(body);
-    vTaskDelete(NULL);
-    return;
+  bool ok = false;
+
+  // 1. The Atom feed (no rate limit, small). See FWUPDATE_FEED_URL.
+  int n = http_get(FWUPDATE_FEED_URL, body, FWU_BODYCAP, &status);
+  if (n > 0 && status == 200 && n < FWU_BODYCAP - 1) {
+    ESP_LOGI(TAG, "feed: %d bytes", n);
+    ok = parse_feed(body);
+  } else {
+    ESP_LOGW(TAG, "feed fetch failed: n=%d status=%d", n, status);
   }
-  if (n <= 0) {
-    snprintf(s_err, sizeof(s_err), "couldn't reach GitHub");
+
+  // 2. The REST API, if the feed didn't work out.
+  if (!ok) {
+    status = 0;
+    n = http_get(FWUPDATE_RELEASES_URL, body, FWU_BODYCAP, &status);
+    if (n == FWU_BODYCAP - 1) {
+      // http_get() stopping exactly at cap-1 means the body filled the buffer and got
+      // cut off mid-read, not that GitHub's response happened to be exactly this size --
+      // the ambiguous truncated-JSON parse failure this used to surface as ("bad
+      // response from GitHub") is exactly this, just diagnosed instead of guessed at.
+      snprintf(s_err, sizeof(s_err), "release list too large (%d KB) -- FWU_BODYCAP", n / 1024);
+    } else if (n <= 0) {
+      snprintf(s_err, sizeof(s_err), "couldn't reach GitHub");
+    } else {
+      ESP_LOGI(TAG, "releases: %d bytes, status=%d", n, status);
+      ok = parse_releases(body, status);
+    }
+  }
+
+  if (!ok) {
+    s_state = FWU_ERROR;                       // s_err set by whichever step failed last
+  } else if (s_count == 0) {
+    snprintf(s_err, sizeof(s_err), "no builds published for %s", device_fw_image_id());
     s_state = FWU_ERROR;
   } else {
-    ESP_LOGI(TAG, "releases: %d bytes, status=%d", n, status);
-    parse_releases(body, status);
+    s_state = FWU_READY;
   }
   free(body);
   vTaskDelete(NULL);
