@@ -3335,14 +3335,23 @@ static void onHomeBtn(lv_event_t *e)
     net_send_button(s_lastState.buttons[i].id);
 }
 
-// Same "is there a real session" condition the mini-player-bar visibility and
-// the home-panel auto-return check both use: room on, plus either a title or an
-// active "media" session type. Shared here so build_home_tiles can size the
-// grid around the bar's real state instead of always reserving its space.
+// "Is there a real session": the room is on AND a source is selected. Shared by the
+// mini-player-bar visibility, build_home_tiles (which sizes the grid around the
+// bar's band) and the home-panel auto-return check below.
+//
+// This used to demand a track title or a "media" session type as well, which
+// hid the bar for every VIDEO source: the driver only reports "media" when it finds
+// title/artist/album, and a TV has none, so "TV on" read as "nothing playing" and
+// the room lost its volume/power bar (regressed 2026-09-14, c71e60a). A selected
+// source is the right test -- the bar labels itself with the source name when
+// there is no title -- while an on room with NO source still gets no empty bar.
+static bool sessionActive(const media_state_t *st)
+{
+    return st->power && st->source.id[0] && strcmp(st->source.id, "0") != 0;
+}
 static bool homeBarWanted(void)
 {
-    return s_haveState && s_lastState.power &&
-           (s_lastState.title[0] || !strcmp(s_lastState.media_type, "media"));
+    return s_haveState && sessionActive(&s_lastState);
 }
 
 // The room page: ONE bounded, scrolling, wrapping tile grid holding the room's
@@ -4688,7 +4697,7 @@ void ui_set_state(const media_state_t *st)
     // Only on the transition, so it never pulls the user out of a page they opened
     // themselves while nothing is playing.
     {
-        bool session = st->power && (st->title[0] || !strcmp(st->media_type, "media"));
+        bool session = sessionActive(st);
         if (s_hadSession && !session) {
             if (s_icPanel)    lv_obj_add_flag(s_icPanel,    LV_OBJ_FLAG_HIDDEN);
             if (s_favPanel)   lv_obj_add_flag(s_favPanel,   LV_OBJ_FLAG_HIDDEN);

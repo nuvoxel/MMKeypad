@@ -118,6 +118,20 @@ static void fill_sample_state(media_state_t *st)
     strncpy(st->meta[0].id, "Bitrate", 23); strncpy(st->meta[0].name, "320 kbps", 47);
     strncpy(st->meta[1].id, "Codec",   23); strncpy(st->meta[1].name, "AAC",      47);
 
+    /* MMK_VIDEO=1: a VIDEO source (the driver's shape for "TV on"): room on, a
+     * selected source, but no title/artist/album and so media_type "other". The
+     * home bar must still show (labelled with the source name) -- it went missing
+     * between 2026-09-14 and this check. */
+    if (env_int("MMK_VIDEO", 0)) {
+        st->power = 1; st->playing = false;
+        st->title[0] = st->artist[0] = st->album[0] = 0;
+        strncpy(st->media_type, "other", sizeof(st->media_type) - 1);
+        strncpy(st->source.id,   "2687",     sizeof(st->source.id)   - 1);
+        strncpy(st->source.name, "Apple TV", sizeof(st->source.name) - 1);
+        st->duration = st->position = 0;
+        st->n_meta = 0;
+    }
+
     st->show_title = st->show_artist = st->show_info = st->show_progress = true;
     st->can_pause = st->can_stop = st->can_next = st->can_prev = true;
     st->can_thumbs_up = st->can_thumbs_down = true;
@@ -373,8 +387,9 @@ int main(int argc, char **argv)
         g_sim_favs[5].on = !g_sim_favs[5].on;            /* a favourite light flips   */
         ui_set_favorites(g_sim_favs, nf);
         st.buttons[0].on = !st.buttons[0].on;            /* a keypad LED changes      */
-        st.title[0] = 0; st.playing = false;             /* playback stops: bar goes  */
+        st.title[0] = 0; st.playing = false;             /* source deselected: bar goes */
         snprintf(st.media_type, sizeof(st.media_type), "%s", "");
+        st.source.id[0] = st.source.name[0] = 0;         /* (a bare stop keeps the bar)  */
         ui_set_state(&st);
         for (int i = 0; i < 6; i++) { ui_tick_progress(); lv_timer_handler(); }
         printf("churn: top-layer objects before forced rebuilds: %u\n",
