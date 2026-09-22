@@ -68,6 +68,15 @@ gh release create v$VER --repo nuvoxel/MMKeypad --target main \
 tools/verify-release.sh v$VER   # mandatory -- fails loudly if any SKU is missing
 ```
 
+**Keep at most ~10 releases published.** Panels on firmware older than
+2026.09.15 (before 67bb619) still ask the REST API for 30 releases into a 128KB
+buffer, at roughly 10KB per release, and silently see nothing once the list grows
+past that: on 2026-09-22 three WS43s on 09.11/09.14 builds ignored every
+`Update Firmware` until the list was cut from 20 to 10. Convert old releases to
+**drafts** (`gh release edit vX --draft`), which hides them from the API and the
+feed without deleting anything and is reversible; do not delete them. Firmware
+from 2026.09.22.003 on reads the feed and is not affected.
+
 **Every SKU, every release.** (The lcdwiki 2.8" `mmk-s3` image was retired in
 2026.09.18 -- the shared UI needs a short side of at least 480px -- so releases
 from then on carry four assets.) All of them share `firmware-idf/version.txt`, so a
